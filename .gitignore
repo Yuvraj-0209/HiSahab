@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+
+# Virtualenv
+venv/
+.venv/
+
+# Environment — never commit real secrets (CLAUDE.md §16)
+.env
+
+# Test / coverage artefacts
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# macOS
+.DS_Store

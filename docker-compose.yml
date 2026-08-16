@@ -1,0 +1,27 @@
+# Local Postgres for development and tests.
+#
+# CLAUDE.md §10 forbids SQLite for tests: SQLite does not enforce the constraints
+# this project depends on, so a green SQLite suite would give false confidence about
+# exactly the rules that matter most.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: hisahab-db
+    environment:
+      POSTGRES_USER: hisahab
+      POSTGRES_PASSWORD: hisahab
+      POSTGRES_DB: hisahab
+    ports:
+      # Host 5433, not 5432, so this never collides with an existing local Postgres.
+      - "5433:5432"
+    volumes:
+      - hisahab_pgdata:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hisahab -d hisahab"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  hisahab_pgdata:
