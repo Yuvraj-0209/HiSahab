@@ -608,7 +608,7 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 
 | Action | attendant | manager | admin |
 |---|:--:|:--:|:--:|
-| Create readings/collections/expenses/credit sales on **own open shift** | ✅ | ✅ | ✅ |
+| Create readings/collections/expenses/credit sales on an open shift | own only | any | any |
 | Read own shift | ✅ | ✅ | ✅ |
 | Read all shifts / reports | ❌ | ✅ | ✅ |
 | Close a shift | ❌ | ✅ | ✅ |
@@ -619,6 +619,16 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | Manage users, nozzles, customers | ❌ | ❌ | ✅ |
 | Override credit limit / manual litres | ❌ | ❌ | ✅ |
 | Seed initial opening balance | ❌ | ❌ | ✅ |
+
+**Ownership is a separate axis from role.** The first row is constrained by *ownership* as
+well as role: an attendant may write only to a shift whose `attendant_id` is their own user
+id. Managers and admins may write to any open shift at their outlet. Role alone cannot
+express this, so `require_role` handles the role floor only, and the shift-scoped dependency
+(Phase 4) applies the ownership check **only when the actor's role is `attendant`**.
+
+**Roles are hierarchical:** `attendant < manager < admin`. A manager can do everything an
+attendant can, and an admin everything a manager can, so every check is a minimum-role
+comparison (`app/core/roles.py::satisfies`), never exact matching.
 
 **Enforced server-side on every endpoint.** Hiding a button is UX, not a control.
 Write a permission test for the attendant-touching-another-shift case specifically.

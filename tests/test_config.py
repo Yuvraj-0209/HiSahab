@@ -71,3 +71,71 @@ def test_default_outlet_id_is_the_well_known_seed() -> None:
     settings = _settings()
 
     assert str(settings.DEFAULT_OUTLET_ID) == "00000000-0000-0000-0000-000000000001"
+
+
+def test_prod_requires_the_jwt_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CLAUDE.md §8: a production deployment with no JWT secret must not boot.
+
+    The alternative is an app that starts fine and then 500s on every authenticated
+    request -- or, worse, one where a future refactor lets an absent secret mean
+    "skip verification".
+
+    Deleted from the environment because conftest exports a test secret for the whole
+    session, the same way test_database_url_is_required does.
+    """
+    monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
+
+    with pytest.raises(ValidationError, match="SUPABASE_JWT_SECRET"):
+        _settings(ENV="prod", SUPABASE_URL="https://project.supabase.co")
+
+
+def test_prod_requires_the_supabase_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """It supplies the expected `iss`; without it, any project's token would pass."""
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+
+    with pytest.raises(ValidationError, match="SUPABASE_URL"):
+        _settings(ENV="prod", SUPABASE_JWT_SECRET="a-secret-of-at-least-32-bytes-here")
+
+
+def test_prod_boots_when_supabase_is_fully_configured() -> None:
+    settings = _settings(
+        ENV="prod",
+        SUPABASE_URL="https://project.supabase.co",
+        SUPABASE_JWT_SECRET="a-secret-of-at-least-32-bytes-here",
+    )
+
+    assert settings.ENV == "prod"
+
+
+def test_dev_does_not_require_supabase_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Local development has no Supabase project; tests mint their own tokens."""
+    monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+
+    settings = _settings(ENV="dev")
+
+    assert settings.SUPABASE_JWT_SECRET is None
+
+
+def test_supabase_issuer_is_derived_from_the_url() -> None:
+    settings = _settings(SUPABASE_URL="https://project.supabase.co")
+
+    assert settings.supabase_issuer == "https://project.supabase.co/auth/v1"
+
+
+def test_supabase_issuer_tolerates_a_trailing_slash() -> None:
+    """Otherwise a stray slash in .env yields a doubled one and every token fails."""
+    settings = _settings(SUPABASE_URL="https://project.supabase.co/")
+
+    assert settings.supabase_issuer == "https://project.supabase.co/auth/v1"
+
+
+def test_supabase_issuer_is_none_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """None tells decode_access_token() to skip the issuer check."""
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+
+    settings = _settings()
+
+    assert settings.supabase_issuer is None

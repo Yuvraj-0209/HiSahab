@@ -11,7 +11,7 @@ from functools import lru_cache
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import Field, PostgresDsn, field_validator
+from pydantic import Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -31,8 +31,12 @@ class Settings(BaseSettings):
     TEST_DATABASE_URL: PostgresDsn | None = None
 
     # --- Supabase -----------------------------------------------------------
-    # Declared now because §16 presents the environment surface as a whole.
-    # Nothing reads these in Phase 1; auth arrives in Phase 2 and storage in Phase 8.
+    # Optional at the type level so local development works without a Supabase project
+    # (tests mint their own tokens). Made mandatory in production by
+    # _supabase_auth_must_be_configured_in_prod below.
+    #
+    # SUPABASE_SERVICE_KEY is still unread: it is needed for Storage in Phase 8, not for
+    # verifying tokens, which uses the JWT secret alone.
     SUPABASE_URL: str | None = None
     SUPABASE_SERVICE_KEY: str | None = None
     SUPABASE_JWT_SECRET: str | None = None
@@ -90,6 +94,43 @@ class Settings(BaseSettings):
         if value <= 0:
             raise ValueError("EXPENSE_REVIEW_THRESHOLD must be greater than zero.")
         return value
+
+    @model_validator(mode="after")
+    def _supabase_auth_must_be_configured_in_prod(self) -> Settings:
+        """A production deployment with no JWT secret must refuse to boot.
+
+        Without this it would start happily and then reject every authenticated request
+        with a 500 -- or, far worse, a future refactor could make an absent secret mean
+        "skip verification". Failing at startup is the only safe direction.
+
+        SUPABASE_URL is required alongside it because it supplies the expected `iss` claim;
+        without it, a token minted by any other Supabase project would pass.
+        """
+        if self.ENV != "prod":
+            return self
+
+        missing = [
+            name
+            for name in ("SUPABASE_JWT_SECRET", "SUPABASE_URL")
+            if not (getattr(self, name) or "").strip()
+        ]
+        if missing:
+            raise ValueError(
+                f"{', '.join(missing)} must be set when ENV=prod (CLAUDE.md §8, §16)."
+            )
+        return self
+
+    @property
+    def supabase_issuer(self) -> str | None:
+        """The `iss` claim Supabase stamps on its access tokens.
+
+        Built in one place so the "/auth/v1" suffix cannot drift between the verifier and
+        anything else that needs it. None when SUPABASE_URL is unset, which tells
+        decode_access_token() to skip the issuer check.
+        """
+        if not (self.SUPABASE_URL or "").strip():
+            return None
+        return f"{self.SUPABASE_URL.rstrip('/')}/auth/v1"
 
 
 @lru_cache

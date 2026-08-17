@@ -12,6 +12,9 @@ dependencies = [
     "sqlalchemy>=2.0.36",
     "psycopg[binary]>=3.2",
     "alembic>=1.14",
+    # Supabase signs access tokens with HS256, which is symmetric -- so no
+    # cryptography extra is needed. Plain PyJWT covers verification.
+    "PyJWT>=2.9",
 ]
 
 [project.optional-dependencies]

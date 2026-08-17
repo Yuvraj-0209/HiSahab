@@ -11,6 +11,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+import app.models  # noqa: F401 -- registers every model on Base.metadata
 from app.core.config import get_settings
 from app.db.base import Base
 
@@ -24,8 +25,8 @@ if config.config_file_name is not None:
 _url = config.get_main_option("sqlalchemy.url") or str(get_settings().DATABASE_URL)
 config.set_main_option("sqlalchemy.url", _url)
 
-# Empty in Phase 1 -- no models exist yet. Models registered on Base from Phase 2
-# onward become visible to `alembic revision --autogenerate` automatically.
+# Models become visible to `alembic revision --autogenerate` by virtue of the
+# `import app.models` above, which is why that import exists despite looking unused.
 target_metadata = Base.metadata
 
 # compare_type / compare_server_default matter for this project specifically:

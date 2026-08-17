@@ -1,8 +1,14 @@
 """Declarative base for all ORM models.
 
-Deliberately empty of models in Phase 1. It exists because alembic/env.py needs a
-target_metadata to compare against. Models arrive from Phase 2 onward and must be
-imported here so that autogenerate can see them.
+This module holds *only* Base. Models live in app/models/ and are registered on
+Base.metadata by `import app.models` in alembic/env.py, which is what autogenerate
+compares against.
+
+Phase 1's version of this docstring said to import the models *here*. That would
+deadlock: app/models/user.py imports Base from this module, so a model import at the
+bottom of this file re-enters a half-initialised module the moment anything (e.g.
+app/api/deps.py) imports a model directly, and raises ImportError. Registering in
+alembic/env.py keeps the dependency one-directional.
 """
 
 from __future__ import annotations
