@@ -63,8 +63,10 @@ These are not preferences. Violating any of them is a bug, even if tests pass.
    `0.1 + 0.2 != 0.3` in binary floating point; in a cash system this compounds into
    unexplainable variance.
 
-2. **Volumes are `NUMERIC(10,3)`** (millilitre precision). Totalizer readings are
-   `NUMERIC(12,2)`.
+2. **Quantities are `NUMERIC(10,3)`** — litres for liquid fuel, kilograms for gas
+   (millilitre / gram precision). Totalizer readings are `NUMERIC(12,2)`.
+   **The unit is an attribute of the fuel type (`fuel_types.unit_of_measure`), never
+   assumed.** See §4.5 — this outlet sells CBG by the kilogram.
 
 3. **All endpoints live under `/api/v1/`.** No exceptions, not even health checks
    that "obviously won't change".
@@ -120,10 +122,15 @@ for exclusive pump-testing use. Delivery accuracy is checked against a tolerance
 expressed per 5 litres. This testing fuel is dispensed (totalizer increments) and
 poured back into the tank. **It was never sold.**
 
-**Consequence:** `litres_sold = closing − opening − testing_litres`.
-Omitting `testing_litres` produces a small, permanent, daily cash shortfall that is
+**Consequence:** `quantity_sold = closing − opening − testing_quantity`.
+Omitting `testing_quantity` produces a small, permanent, daily cash shortfall that is
 extremely hard to diagnose. This is the single most common bug in home-grown pump
 software.
+
+**This is a liquid-fuel rule.** The 5-litre standard measure does not apply to gas.
+CBG is not calibration-tested at this outlet, so `testing_quantity` is always 0 for it
+(§4.5). The column and the `TESTING_EXCEEDS_THROUGHPUT` guard remain and still apply in
+full to petrol and diesel — nothing is removed.
 
 ### 4.3 Totalizers are per-nozzle, mechanical, and imperfect
 
@@ -145,6 +152,50 @@ corresponding sale on the day it arrives.
 
 **Consequence:** if repayments are not modelled, expected cash is wrong every time
 someone settles up.
+
+### 4.5 CBG (compressed bio gas) is sold here, and it is not measured in litres
+
+This outlet sells CBG alongside petrol and diesel. It is dispensed through a nozzle with
+a totalizer exactly like liquid fuel, but:
+
+- It is **priced and metered per kilogram**, not per litre. The rate is ₹/kg and the
+  totalizer counts kilograms.
+- **No stock is held.** A cascade truck stands on site and is swapped out when the gas is
+  nearly finished. There is no tank, so tank-dip reconciliation is not merely out of
+  scope (§12) — for CBG it is meaningless.
+- **It is not calibration-tested** at this outlet, so `testing_quantity` is always 0.
+- The **dealer margin is a fixed ₹/kg** (currently ₹2.28). IOCL deducts
+  `(retail_rate − margin) × kg` from a running ledger balance. See §4.6.
+- IOCL bills fortnightly and **splits the invoice at each price revision** — one invoice
+  per price period. That is real-world confirmation that prices must be effective-dated.
+
+**Consequence:** a quantity in this system is a *measure*, not necessarily a *volume*.
+Any code, column name, comment or variable that assumes litres is wrong. The unit lives on
+`fuel_types.unit_of_measure` and must be read, never inferred.
+
+**Consequence:** the §6.2 sanity ceiling cannot be one global litres-per-minute figure.
+A CBG dispenser does single-digit kg/min while a petrol nozzle does ~60 L/min; one shared
+number would either never fire or reject every real sale. The ceiling is per fuel type.
+
+### 4.6 Dealer margin is constant; price changes pass straight through
+
+The gap between what the dealer pays and what the dealer charges does **not** move when
+the retail price moves. If retail rises ₹1/litre, the next tanker invoice rises ₹1/litre
+too. For CBG the same holds by construction: IOCL deducts retail minus a fixed ₹2.28/kg.
+The margin changes only when the OMC revises the commission itself, which is rare.
+
+**Consequence:** margin is stored **directly and effective-dated** (`fuel_margins`), not
+derived from purchase invoices. This is the entire reason V1 needs no purchase, tanker or
+stock data in order to report fuel profit:
+
+```
+dealer_profit = quantity_sold × margin_at(fuel_type, at)
+```
+
+**Consequence:** this figure is *gross margin on quantity sold*. It deliberately excludes
+stock revaluation — holding 12 kL when the price rises ₹1 is a real ₹12,000 gain that this
+system will never show. See §13.7; that limitation must be stated wherever profit is
+displayed, or the number is plausible and wrong.
 
 ---
 
@@ -191,7 +242,7 @@ Per-phase landing schedule:
 | 2 | `user_profiles` | No — scoped via `outlet_memberships` |
 | 2 | `outlet_memberships` | **Yes** |
 | 3 | `fuel_types` | No — global reference data |
-| 3 | `fuel_prices`, `nozzles` | **Yes** |
+| 3 | `fuel_prices`, `fuel_margins`, `nozzles` | **Yes** |
 | 4 | `shifts` | **Yes** |
 | 5–7 | `nozzle_readings`, `collections`, `expenses` | No — derivable via `shift_id` |
 | 8 | `attachments` | **Yes** — no parent shift |
@@ -233,15 +284,27 @@ Supabase Auth owns `auth.users`. This table holds application concerns.
 > on `user_profiles` would hardcode one-user-one-outlet — the same retrofit this
 > section exists to avoid, merely moved to a different table.
 
-**`fuel_types`**
-- `code` — text unique (`PETROL`, `DIESEL`, `PREMIUM_PETROL`)
+**`fuel_types`** — global reference data, **admin-managed**
+- `code` — text unique (`PETROL`, `DIESEL`, `PREMIUM_PETROL`, `CBG`)
 - `display_name` — text
+- `unit_of_measure` — enum: `litre` | `kilogram` (§4.5)
+- `max_flow_rate_per_minute` — NUMERIC(10,3), the §6.2 sanity ceiling **for this fuel**
 - `is_active` — boolean
+
+> Admins add fuel types through the API, not through a migration. Outlets sell products
+> this list does not anticipate (XP-95, Extra Green, and whatever comes next); adding a
+> product you sell is data entry, and requiring a schema change for it would be wrong.
+>
+> **`code` and `unit_of_measure` are immutable once created.** Changing a unit would
+> retroactively reinterpret every quantity ever recorded against that fuel — litres read
+> as kilograms, and every historical sale value silently wrong. A fuel that is genuinely
+> different is a new row. Deactivate rather than delete (§3 rule 6); `display_name`,
+> `max_flow_rate_per_minute` and `is_active` remain editable.
 
 **`fuel_prices`** — **append-only, never updated, never deleted**
 - `outlet_id` — FK to outlets, NOT NULL
 - `fuel_type_id` — FK
-- `rate_per_litre` — NUMERIC(12,2)
+- `rate_per_unit` — NUMERIC(12,2)
 - `effective_from` — TIMESTAMPTZ (the moment this rate became live)
 - `entered_by` — FK to user_profiles
 - Unique constraint on `(outlet_id, fuel_type_id, effective_from)`
@@ -253,6 +316,22 @@ Supabase Auth owns `auth.users`. This table holds application concerns.
 > Prices are outlet-scoped, not national: dealers are supplied by different OMCs
 > (IOCL / BPCL / HPCL) and rates vary by state and district. A global price table is
 > wrong the moment a second outlet exists.
+
+**`fuel_margins`** — **append-only, never updated, never deleted**
+- `outlet_id` — FK to outlets, NOT NULL
+- `fuel_type_id` — FK
+- `margin_per_unit` — NUMERIC(12,2) — ₹ per litre or per kg, per §4.6
+- `effective_from` — TIMESTAMPTZ (the moment this margin became live)
+- `entered_by` — FK to user_profiles
+- Unique constraint on `(outlet_id, fuel_type_id, effective_from)`
+- **Lookup pattern:** identical to `fuel_prices` — greatest `effective_from <= T`. Shares
+  the same helper shape, `margin_at(outlet_id, fuel_type_id, at)`.
+
+> **Why a separate table rather than a column on `fuel_prices`:** the two revise on
+> different schedules. Price moves often (§4.1); margin almost never (§4.6). Sharing a row
+> would force re-entry of an unchanged margin on every single price revision — and the
+> first time someone forgets, that period's profit is null or wrong with no error raised.
+> Independent revision cadences need independent effective-dating.
 
 **`nozzles`**
 Dispensers are deliberately *not* a separate table in V1 (YAGNI — a label suffices).
@@ -294,10 +373,10 @@ that is itself audit-logged. Nothing referencing a `locked` shift may be modifie
 - `nozzle_id` — FK
 - `opening_reading` — NUMERIC(12,2)
 - `closing_reading` — NUMERIC(12,2), nullable until shift close
-- `testing_litres` — NUMERIC(10,3), NOT NULL DEFAULT 0
+- `testing_quantity` — NUMERIC(10,3), NOT NULL DEFAULT 0
 - `rollover_occurred` — boolean, default false
 - `meter_reset_occurred` — boolean, default false
-- `manual_litres_override` — NUMERIC(10,3) nullable (admin-only, see §6.2)
+- `manual_quantity_override` — NUMERIC(10,3) nullable (admin-only, see §6.2)
 - `override_reason` — text, nullable, required if override is set
 - Unique constraint on `(shift_id, nozzle_id)`
 
@@ -311,7 +390,7 @@ that is itself audit-logged. Nothing referencing a `locked` shift may be modifie
 - `shift_id` — FK
 - `credit_customer_id` — FK
 - `fuel_type_id` — FK, nullable (null = non-fuel credit sale)
-- `litres` — NUMERIC(10,3), nullable
+- `quantity` — NUMERIC(10,3), nullable (litres or kg, per the fuel's unit — §4.5)
 - `amount` — NUMERIC(12,2)
 - `vehicle_number` — text nullable
 - **`attachment_id` — FK to `attachments`, `NOT NULL`** ← the receipt constraint,
@@ -413,41 +492,53 @@ day. Always read `shifts.business_date`.
 
 The business date is chosen when the shift is opened and is immutable thereafter.
 
-### 6.2 Litres sold, including the ugly cases
+### 6.2 Quantity sold, including the ugly cases
 
 Normal case:
 
 ```
-litres_sold = closing_reading − opening_reading − testing_litres
+quantity_sold = closing_reading − opening_reading − testing_quantity
 ```
 
 **Rollover case** (`closing < opening` and `rollover_occurred = true`):
 
 ```
-litres_sold = (nozzle.totalizer_max_value − opening_reading) + closing_reading − testing_litres
+quantity_sold = (nozzle.totalizer_max_value − opening_reading) + closing_reading − testing_quantity
 ```
 
 **Meter reset case** (`meter_reset_occurred = true`): the reading pair is meaningless.
-Require `manual_litres_override` plus `override_reason`, settable by admin only, and
+Require `manual_quantity_override` plus `override_reason`, settable by admin only, and
 audit-log it. Do not attempt to infer the split automatically.
 
 **Guards that must exist:**
 - If `closing < opening` and neither `rollover_occurred` nor `meter_reset_occurred`
   is set → reject with 422, code `TOTALIZER_DECREASED`. Never compute a negative.
-- If `testing_litres > (closing − opening)` → reject, code `TESTING_EXCEEDS_THROUGHPUT`.
-- Sanity ceiling: reject if implied litres exceed a configurable max flow rate per
-  nozzle per hour (default 60 L/min × shift duration). Catches a mistyped extra digit,
-  which is the most common data-entry error.
-- `litres_sold` must never be negative. If a code path can produce one, that path is wrong.
+- If `testing_quantity > (closing − opening)` → reject, code `TESTING_EXCEEDS_THROUGHPUT`.
+- Sanity ceiling: reject if the implied quantity exceeds
+  `fuel_types.max_flow_rate_per_minute × shift duration in minutes`. Catches a mistyped
+  extra digit, which is the most common data-entry error.
+  **The ceiling is per fuel type, not one global constant** — a petrol nozzle does ~60
+  L/min while a CBG dispenser does single-digit kg/min (§4.5). `MAX_FLOW_RATE_LPM` in
+  §16 only *seeds* the column for litre fuels; do not read it here.
+- `quantity_sold` must never be negative. If a code path can produce one, that path is wrong.
 
 ### 6.3 Valuing sales
 
 ```
-sale_value = litres_sold × rate_at(fuel_type, transaction_time)
+sale_value = quantity_sold × rate_at(fuel_type, transaction_time)
 ```
 
 The rate comes from `fuel_prices` via the shared lookup helper (§5.1), never from a
 "current price" column.
+
+Profit uses the same shape against `fuel_margins` (§4.6):
+
+```
+dealer_profit = quantity_sold × margin_at(fuel_type, transaction_time)
+```
+
+Both figures carry the same shift-start approximation described below, and both exclude
+stock revaluation — see §13.7.
 
 **Mid-shift price change:** because revisions happen at 06:00 IST, a morning shift
 starting at, say, 05:30 spans a price change. V1 handling: **value the whole shift's
@@ -524,7 +615,7 @@ Tuesday's opening.
 Reject shift close (409) if any of:
 - Any active nozzle lacks a `closing_reading` → `MISSING_NOZZLE_READINGS`
 - Any credit sale lacks a confirmed attachment → `CREDIT_SALE_MISSING_RECEIPT`
-- Cash collections are absent while `litres_sold > 0` → `MISSING_COLLECTIONS`
+- Cash collections are absent while `quantity_sold > 0` → `MISSING_COLLECTIONS`
 
 Locking (admin-only) additionally requires all flagged expenses reviewed.
 
@@ -615,7 +706,8 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | Record bank deposits | ❌ | ✅ | ✅ |
 | Review flagged expenses | ❌ | ✅ | ✅ |
 | Lock a shift / finalise a day | ❌ | ❌ | ✅ |
-| Enter fuel prices | ❌ | ❌ | ✅ |
+| Enter fuel prices and margins | ❌ | ❌ | ✅ |
+| Manage fuel types (add a new product, e.g. XP-95) | ❌ | ❌ | ✅ |
 | Manage users, nozzles, customers | ❌ | ❌ | ✅ |
 | Override credit limit / manual litres | ❌ | ❌ | ✅ |
 | Seed initial opening balance | ❌ | ❌ | ✅ |
@@ -665,15 +757,26 @@ test suite would give false confidence about exactly the rules that matter most.
 - Normal reading pair
 - Rollover: `closing < opening` with flag set → correct positive litres
 - `closing < opening` with no flag → 422, no row written
-- `testing_litres` correctly subtracted
-- `testing_litres` exceeding throughput → 422
+- `testing_quantity` correctly subtracted
+- `testing_quantity` exceeding throughput → 422
 - Implied flow rate above sanity ceiling → 422
 - Meter reset requires override + reason, admin only
 
-*Pricing*
+*Pricing and margin*
 - Sale valued at historical rate, not current rate
 - Price change after a shift does not alter that shift's recorded sales
 - Warning logged when a revision falls inside the shift window
+- `at` exactly equal to an `effective_from` resolves to that row (the boundary is `<=`)
+- A lookup with no prior row raises, rather than returning null or zero
+- Prices and margins are isolated by outlet and by fuel type
+- **Margin is unchanged by price revisions** (§4.6) — enter a margin, then revise the
+  price twice; `margin_at` still returns the original figure
+- Neither table can be `UPDATE`d or `DELETE`d
+
+*Units*
+- CBG resolves as `kilogram` while petrol resolves as `litre`
+- The sanity ceiling used is the fuel's own, not a global constant
+- A fuel type's `unit_of_measure` cannot be changed after creation
 
 *Business date*
 - Night shift spanning midnight assigned to a single correct `business_date`
@@ -725,7 +828,9 @@ ahead — no empty modules for later phases.
    works, and the `outlets` table with its single seeded row (§5.0)
 2. **Auth** — Supabase JWT verification, `user_profiles`, `outlet_memberships`,
    per-outlet role dependency, permission tests
-3. **Reference data** — `fuel_types`, `nozzles`, `fuel_prices` (append-only) + rate lookup helper
+3. **Reference data** — `fuel_types` (admin-managed, unit-aware), `nozzles`,
+   `fuel_prices` and `fuel_margins` (both append-only) + the shared `rate_at` /
+   `margin_at` lookup helpers
 4. **Shifts** — open/close/lock lifecycle and status guards
 5. **Nozzle readings & sales math** — the whole of §6.2 and §6.3, heavily tested
 6. **Collections**
@@ -746,8 +851,18 @@ Do not build these. Do not add columns "ready for" them. If one seems necessary,
 and ask.
 
 - OCR / automatic reading of receipt images
-- Tank dip readings and stock reconciliation (litres in tank vs litres sold)
-- Fuel purchase / tanker delivery intake
+- Tank dip readings and stock reconciliation (litres in tank vs litres sold).
+  **Stock stays out of V1 entirely**, including revaluation when prices move — see §13.7.
+  Note this is not needed for profit: margin is constant, so profit comes from the
+  totalizer alone (§4.6)
+- Fuel purchase / tanker delivery intake, including per-delivery invoice rates
+- **Bank balances, the IOCL virtual account / PAD statement ledger, and net-position
+  ("where is my money") reporting.** The PAD statement is **bank-only — it never touches
+  the cash drawer**, so an IOCL payment must *never* be recorded as an expense (§6.4
+  would invent a daily cash shortage that never happened). The ledger balance is
+  meaningless until bank balances exist, so these three are **one post-V1 module, built
+  together**. Recorded here rather than forgotten: the balance can be positive
+  (prepayment, because restocks are paid in rounded amounts) or negative (payable)
 - GST, invoicing, statutory reporting
 - Payroll, attendance
 - Multi-outlet *features* — switching UI, cross-outlet reporting, RLS policies.
@@ -776,6 +891,19 @@ future reader must be able to tell the difference.
    scoped row references it. There is no outlet-switching UI, no cross-outlet
    reporting, and no RLS. The columns exist so that adding a second outlet is a
    feature change rather than a data migration with no correct answer. §5.0
+7. **Profit excludes stock revaluation.** V1 reports `quantity_sold × margin`. Holding
+   12 kL of petrol when the rate rises ₹1 is a real ₹12,000 gain that this system will
+   never see, because nothing moved through a nozzle. Reported profit is therefore
+   *gross fuel margin on quantity sold*, not business profit, and will be understated or
+   overstated whenever prices move against held stock. The owner monitors this outside
+   the system. **Label it accordingly wherever it is displayed** — an unlabelled "profit"
+   figure here is exactly the plausible-but-wrong number this document exists to prevent.
+   §4.6, §12
+8. **CBG revenue will not tie exactly to IOCL's invoice.** IOCL splits its fortnightly
+   billing at the exact moment of a price revision; §6.3 values a whole shift at the rate
+   effective at `started_at`. On revision days the two figures differ slightly. §4.5
+9. Profit reporting is **fuel-margin only** — it excludes the IOCL ledger balance and any
+   non-fuel income. §12
 
 ---
 
@@ -789,7 +917,14 @@ to occur on this specific project.
 - Compute sales from a client-supplied total
 - Store fuel price as a mutable single-value column
 - Attach totalizer fields directly to `shifts` (they belong on `nozzle_readings`)
-- Skip `testing_litres` because it seems like a rounding detail — it is not
+- Skip `testing_quantity` because it seems like a rounding detail — it is not
+- Assume a quantity is in litres — read `fuel_types.unit_of_measure` (§4.5)
+- Hardcode the ₹2.28 CBG margin, or any margin — it is effective-dated data, not a constant
+- Derive margin from a purchase price — V1 stores margin directly and holds no purchase
+  data at all (§4.6)
+- Read `MAX_FLOW_RATE_LPM` in the §6.2 guard — it only seeds `fuel_types`
+- Record an IOCL / PAD payment as an expense — it is a bank movement, not a drawer
+  movement, and §6.4 would invent a cash shortage (§12)
 - Use offset pagination
 - Set `allow_origins=["*"]`
 - Add a frontend framework, bundler, or npm dependency
@@ -815,6 +950,15 @@ to occur on this specific project.
 - Who physically counts the cash, and at what time?
 - Is non-fuel (lubricant) sales volume significant enough to itemise in V2?
 - Does the pump currently record testing litres on paper? In what unit?
+- What is the real maximum flow rate of the CBG dispenser, in kg/min? Migration `0003`
+  seeds a deliberately generous 15; confirm before Phase 5 consumes it in §6.2.
+- What are the petrol and diesel dealer commissions per litre? Needed to enter
+  `fuel_margins` rows for them; CBG's ₹2.28 is known. Until entered, profit reporting
+  covers CBG only.
+- **§6.4 vs §5.2 contradiction, decide before Phase 7:** §6.4 subtracts `cash_expenses`
+  from expected drawer cash, implying some expenses are not cash — but `expenses` has no
+  payment-mode column, so every expense is implicitly cash. Either `expenses` gains a
+  `mode`, or §6.4 must say expenses are cash-only. Cheap now, ugly once rows exist.
 
 ---
 
@@ -853,7 +997,9 @@ SUPABASE_JWT_SECRET
 SUPABASE_STORAGE_BUCKET=receipts
 EXPENSE_REVIEW_THRESHOLD=1000.00
 MAX_UPLOAD_BYTES=5242880
-MAX_FLOW_RATE_LPM=60
+MAX_FLOW_RATE_LPM=60           # seeds fuel_types.max_flow_rate_per_minute for litre
+                              # fuels in migration 0003 ONLY. The §6.2 guard reads the
+                              # per-fuel column, never this. See §4.5.
 SIGNED_URL_TTL_SECONDS=300
 CORS_ALLOWED_ORIGINS            # comma-separated, never "*"
 TZ_DISPLAY=Asia/Kolkata
