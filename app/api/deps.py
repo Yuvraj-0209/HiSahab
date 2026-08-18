@@ -16,8 +16,9 @@ Where the outlet comes from depends on the endpoint's shape:
 * **Acting on an existing row** -- the outlet must come from *the row*, via a resolver
   passed to `require_role`. In V1 that will always equal DEFAULT_OUTLET_ID, but wiring the
   check to ask the row means that the day a second outlet exists, this fails loudly rather
-  than authorising against the wrong one. The first such resolver arrives with `shifts` in
-  Phase 4.
+  than authorising against the wrong one. The first such resolver is
+  `app/api/v1/nozzles.py::resolve_outlet_from_nozzle` (Phase 3 -- a phase earlier than this
+  docstring originally predicted, because PATCH /nozzles/{id} needed one).
 
 ## Status codes (§9)
 

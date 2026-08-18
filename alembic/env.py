@@ -18,7 +18,18 @@ from app.db.base import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False is load-bearing, not tidiness.
+    #
+    # fileConfig() defaults it to True, which disables every logger that already exists --
+    # including all of app.*, whenever this module is imported after the application is.
+    # In-process that is exactly what the test suite does: pytest imports the app during
+    # collection, then the session fixture runs migrations, and from that point on every
+    # logger.warning() in the application is silently dropped. Tests asserting on a log
+    # line then pass or fail depending purely on module import order.
+    #
+    # The same hazard applies to anything that runs migrations in-process before serving.
+    # Alembic's own loggers are configured by alembic.ini either way.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Injected by the test suite so migrations can be run against hisahab_test without
 # mutating the developer's environment. Falls back to the configured DATABASE_URL.

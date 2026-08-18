@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -61,11 +62,20 @@ async def http_exception_handler(
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    """422 keeps FastAPI's field-level shape, which §3 rule 10 explicitly permits."""
+    """422 keeps FastAPI's field-level shape, which §3 rule 10 explicitly permits.
+
+    `exc.errors()` echoes the offending input back inside each error, so for a money field
+    that value is a `Decimal` -- which `json.dumps` refuses. Without jsonable_encoder the
+    handler raises *inside* the exception handler and the caller gets an opaque 500 instead
+    of being told which field was wrong. That is worst precisely where it matters most, on
+    the `condecimal` money fields of §3 rule 1.
+
+    Not caught until Phase 3 because no endpoint accepted a Decimal before `fuel_prices`.
+    """
     return JSONResponse(
         status_code=422,
         content={
-            "detail": exc.errors(),
+            "detail": jsonable_encoder(exc.errors()),
             "code": "VALIDATION_ERROR",
             "request_id": _request_id(request),
         },

@@ -8,7 +8,17 @@ autogenerate will not see it.
 
 from __future__ import annotations
 
+from app.models.fuel import FuelMargin, FuelPrice, FuelType
+from app.models.nozzle import Nozzle
 from app.models.outlet import Outlet
 from app.models.user import OutletMembership, UserProfile
 
-__all__ = ["Outlet", "OutletMembership", "UserProfile"]
+__all__ = [
+    "FuelMargin",
+    "FuelPrice",
+    "FuelType",
+    "Nozzle",
+    "Outlet",
+    "OutletMembership",
+    "UserProfile",
+]
