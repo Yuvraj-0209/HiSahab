@@ -10,6 +10,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     collections,
+    expenses,
     fuel_margins,
     fuel_prices,
     fuel_types,
@@ -46,3 +47,8 @@ api_router.include_router(readings.router)
 # Phase 6 -- collections hang off a shift too, same depth as readings and with no path
 # overlap between them.
 api_router.include_router(collections.router)
+
+# Phase 7 -- expenses, same depth and shape as collections. Its one top-level route,
+# /expenses/flagged, is a static path shared with nothing else, so there is no ordering
+# hazard against /shifts/{shift_id}/... routes either.
+api_router.include_router(expenses.router)

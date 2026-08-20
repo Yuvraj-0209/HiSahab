@@ -305,7 +305,12 @@ def test_the_close_precondition_never_prices_the_shift() -> None:
 
 def test_the_credit_sale_precondition_is_still_only_a_comment() -> None:
     """§11: do not scaffold ahead. `credit_sales` does not exist until Phase 9, and an
-    empty check that always passes is indistinguishable from a check that was forgotten."""
+    empty check that always passes is indistinguishable from a check that was forgotten.
+
+    `UNREVIEWED_EXPENSES_EXIST` landed with Phase 7 -- see
+    tests/test_shift_lock_expenses.py for its behaviour -- so it has moved out of this
+    test and into the "no longer a comment" assertion below, alongside
+    `MISSING_COLLECTIONS`."""
     tree = ast.parse(Path("app/api/v1/shifts.py").read_text())
     literals = {
         node.value
@@ -313,6 +318,7 @@ def test_the_credit_sale_precondition_is_still_only_a_comment() -> None:
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
     assert "CREDIT_SALE_MISSING_RECEIPT" not in literals
-    assert "UNREVIEWED_EXPENSES_EXIST" not in literals
-    # ...but MISSING_COLLECTIONS is no longer a comment. It landed with its phase.
+    # ...but MISSING_COLLECTIONS and UNREVIEWED_EXPENSES_EXIST are no longer comments.
+    # Each landed with its phase.
     assert "MISSING_COLLECTIONS" in literals
+    assert "UNREVIEWED_EXPENSES_EXIST" in literals

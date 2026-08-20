@@ -8,8 +8,12 @@ after *this exact row*", which is stable under concurrent inserts.
 **Scope.** This is not a general pagination framework. It holds one encoder per sort key
 that some endpoint actually uses, and nothing speculative:
 
-* `encode_cursor` / `decode_cursor` -- `(effective_from DESC, id DESC)`, for the two
-  append-only history tables `fuel_prices` and `fuel_margins`.
+* `encode_cursor` / `decode_cursor` -- `(datetime DESC, id DESC)`. Originally built for
+  the two append-only history tables `fuel_prices` and `fuel_margins`, keyed on
+  `effective_from`; Phase 7 reuses it unchanged for `/expenses/flagged`, keyed on
+  `created_at` instead. The pair serves any `(TIMESTAMPTZ, UUID)` sort key, not only
+  `effective_from` -- the parameter names below say "effective_from" for history, but the
+  function does nothing effective-dating-specific with the value.
 * `encode_shift_cursor` / `decode_shift_cursor` -- `(business_date DESC, sequence DESC)`,
   for `/shifts` (Phase 4).
 

@@ -211,6 +211,16 @@ def make_user(engine: Engine) -> Iterator[Callable[..., UUID]]:
                     " WHERE s.attendant_id = ANY(:ids) OR s.created_by = ANY(:ids))"
                 ).bindparams(ids=created)
             )
+            # Phase 7 added a sixth: expenses also hang off a shift and, like
+            # nozzle_readings, point at a user through BOTH created_by and reviewed_by.
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE record_id IN "
+                    "(SELECT e.id FROM expenses e JOIN shifts s ON s.id = e.shift_id "
+                    "WHERE s.attendant_id = ANY(:ids) OR s.created_by = ANY(:ids) "
+                    "OR e.created_by = ANY(:ids) OR e.reviewed_by = ANY(:ids))"
+                ).bindparams(ids=created)
+            )
             connection.execute(
                 text(
                     "DELETE FROM audit_logs WHERE record_id IN "
@@ -240,6 +250,22 @@ def make_user(engine: Engine) -> Iterator[Callable[..., UUID]]:
             ):
                 connection.execute(
                     text(f"DELETE FROM collections WHERE {clause}").bindparams(
+                        ids=created
+                    )
+                )
+            # Phase 7: expenses, same two-pass shape, plus reviewed_by -- a user can
+            # review an expense on a shift they neither own nor created.
+            for clause in (
+                "reverses_id IS NOT NULL AND (created_by = ANY(:ids) "
+                "OR reviewed_by = ANY(:ids) OR shift_id IN "
+                "(SELECT id FROM shifts WHERE attendant_id = ANY(:ids) "
+                "OR created_by = ANY(:ids)))",
+                "created_by = ANY(:ids) OR reviewed_by = ANY(:ids) OR shift_id IN "
+                "(SELECT id FROM shifts WHERE attendant_id = ANY(:ids) "
+                "OR created_by = ANY(:ids))",
+            ):
+                connection.execute(
+                    text(f"DELETE FROM expenses WHERE {clause}").bindparams(
                         ids=created
                     )
                 )
@@ -599,6 +625,13 @@ def make_shift(engine: Engine) -> Iterator[Callable[..., UUID]]:
                     "(SELECT id FROM collections WHERE shift_id = ANY(:ids))"
                 ).bindparams(ids=created)
             )
+            # Phase 7: expenses hang off a shift too, same shape as collections.
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE record_id IN "
+                    "(SELECT id FROM expenses WHERE shift_id = ANY(:ids))"
+                ).bindparams(ids=created)
+            )
             connection.execute(
                 text(
                     "DELETE FROM audit_logs WHERE table_name = 'shifts' "
@@ -626,6 +659,19 @@ def make_shift(engine: Engine) -> Iterator[Callable[..., UUID]]:
                     ids=created
                 )
             )
+            # Phase 7: expenses, same two-pass shape as collections -- a reversal points
+            # back at the row it cancels, so it must go first.
+            connection.execute(
+                text(
+                    "DELETE FROM expenses WHERE shift_id = ANY(:ids) "
+                    "AND reverses_id IS NOT NULL"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("DELETE FROM expenses WHERE shift_id = ANY(:ids)").bindparams(
+                    ids=created
+                )
+            )
             connection.execute(
                 text("DELETE FROM shifts WHERE id = ANY(:ids)").bindparams(ids=created)
             )
@@ -640,6 +686,14 @@ def clean_shifts(engine: Engine) -> Iterator[None]:
     rows are the ones that must be reachable by the endpoint under test, and the
     one-open-shift-per-outlet rule (§5.2) means a leaked open shift fails every later test
     in the run with SHIFT_ALREADY_OPEN.
+
+    **Phase 7 audit finding, fixed here.** This fixture swept `nozzle_readings` but never
+    `collections`, so a test that opened a shift through the API *and* created a collection
+    through the API -- rather than `make_collection` -- would leave that collection behind,
+    and `DELETE FROM shifts` below would then fail every later test in the run with a
+    foreign-key violation, not just this one. `expenses` hangs off a shift the same way and
+    would have failed identically the moment a test needed both fixtures together, so both
+    are swept now rather than waiting for a second occurrence to notice the pattern.
     """
     yield
     with engine.begin() as connection:
@@ -648,14 +702,21 @@ def clean_shifts(engine: Engine) -> Iterator[None]:
         )
         connection.execute(
             text(
-                "DELETE FROM audit_logs WHERE table_name IN ('shifts', 'nozzle_readings')"
+                "DELETE FROM audit_logs WHERE table_name IN "
+                "('shifts', 'nozzle_readings', 'collections', 'expenses')"
             )
         )
         connection.execute(
             text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
         )
-        # Readings before shifts -- they hold the foreign key.
+        # Readings, then reversals (collections and expenses), before shifts -- all of
+        # them hold the foreign key that DELETE FROM shifts needs clear.
         connection.execute(text("DELETE FROM nozzle_readings"))
+        connection.execute(text("DELETE FROM collections WHERE reverses_id IS NOT NULL"))
+        connection.execute(text("DELETE FROM collections"))
+        connection.execute(text("DELETE FROM expenses WHERE reverses_id IS NOT NULL"))
+        connection.execute(text("DELETE FROM expenses"))
+        connection.execute(text("DELETE FROM idempotency_keys"))
         connection.execute(text("DELETE FROM shifts"))
 
 
@@ -836,6 +897,106 @@ def clean_collections(engine: Engine) -> Iterator[None]:
         )
         connection.execute(text("DELETE FROM collections WHERE reverses_id IS NOT NULL"))
         connection.execute(text("DELETE FROM collections"))
+        connection.execute(text("DELETE FROM idempotency_keys"))
+
+
+@pytest.fixture
+def make_expense(engine: Engine) -> Iterator[Callable[..., UUID]]:
+    """Create an expenses row directly, bypassing the API.
+
+    Mirrors `make_collection` exactly. Amounts arrive as strings and are cast in SQL,
+    never passed as Python floats -- §3 rule 1 applies "including in a quick test
+    fixture".
+    """
+    created: list[UUID] = []
+
+    def _make(
+        shift_id: UUID,
+        *,
+        category: str = "maintenance",
+        mode: str = "cash",
+        amount: str = "500.00",
+        description: str = "Test expense",
+        paid_to: str | None = None,
+        reverses_id: UUID | None = None,
+        reversal_reason: str | None = None,
+        requires_review: bool = False,
+        created_by: UUID | None = None,
+    ) -> UUID:
+        expense_id = uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO expenses (id, shift_id, category, mode, amount, "
+                    "description, paid_to, reverses_id, reversal_reason, "
+                    "requires_review, created_by) VALUES (:id, :shift_id, "
+                    "CAST(:category AS expense_category), CAST(:mode AS expense_mode), "
+                    "CAST(:amount AS numeric), :description, :paid_to, :reverses_id, "
+                    ":reversal_reason, :requires_review, :created_by)"
+                ).bindparams(
+                    id=expense_id,
+                    shift_id=shift_id,
+                    category=category,
+                    mode=mode,
+                    amount=amount,
+                    description=description,
+                    paid_to=paid_to,
+                    reverses_id=reverses_id,
+                    reversal_reason=reversal_reason,
+                    requires_review=requires_review,
+                    created_by=created_by,
+                )
+            )
+        created.append(expense_id)
+        return expense_id
+
+    yield _make
+
+    if created:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE table_name = 'expenses' "
+                    "AND record_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+            )
+            # Reversals point at the rows they cancel, so children first.
+            connection.execute(
+                text("DELETE FROM expenses WHERE reverses_id = ANY(:ids)").bindparams(
+                    ids=created
+                )
+            )
+            connection.execute(
+                text("DELETE FROM expenses WHERE id = ANY(:ids)").bindparams(ids=created)
+            )
+
+
+@pytest.fixture
+def clean_expenses(engine: Engine) -> Iterator[None]:
+    """Remove every expense created during a test, for tests that go through the API.
+
+    The counterpart to `clean_collections`: an expense created over HTTP has no id to hand
+    back. Unlike collections, there is no natural key a leaked row could collide with, but
+    a leaked flagged row would still pollute `GET /expenses/flagged` and the §6.7 aggregate
+    for any later test sharing the same outlet and business date.
+    """
+    yield
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+        )
+        connection.execute(text("DELETE FROM audit_logs WHERE table_name = 'expenses'"))
+        connection.execute(
+            text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+        )
+        connection.execute(text("DELETE FROM expenses WHERE reverses_id IS NOT NULL"))
+        connection.execute(text("DELETE FROM expenses"))
         connection.execute(text("DELETE FROM idempotency_keys"))
 
 

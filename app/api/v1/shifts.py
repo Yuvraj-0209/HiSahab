@@ -9,11 +9,14 @@ reopen. Ownership is enforced separately from role by `require_shift_access` in
 app/api/deps.py -- an attendant may act only on a shift whose `attendant_id` is their own.
 
 **What is deliberately not here.** Of §6.8's three close preconditions,
-`MISSING_NOZZLE_READINGS` landed with Phase 5 and is enforced in `close_shift` below.
-`CREDIT_SALE_MISSING_RECEIPT` and `MISSING_COLLECTIONS`, and §6.7's lock precondition
-`UNREVIEWED_EXPENSES_EXIST`, still read tables that do not exist yet. §11 forbids
-scaffolding ahead, so there is no empty registry waiting for them -- only a named comment
-at the exact line each one belongs on.
+`MISSING_NOZZLE_READINGS` landed with Phase 5 and `MISSING_COLLECTIONS` with Phase 6;
+both are enforced in `close_shift` below. `CREDIT_SALE_MISSING_RECEIPT` still reads a
+table that does not exist yet (`credit_sales`, Phase 9). §11 forbids scaffolding ahead, so
+there is no empty registry waiting for it -- only a named comment at the exact line it
+belongs on.
+
+§6.7's lock precondition, `UNREVIEWED_EXPENSES_EXIST`, landed with Phase 7 and is enforced
+in `lock_shift` below.
 """
 
 from __future__ import annotations
@@ -51,6 +54,7 @@ from app.models.user import OutletMembership
 from app.services import (
     audit,
     collections as collection_service,
+    expenses as expense_service,
     readings as reading_service,
     shifts as shift_service,
 )
@@ -633,11 +637,26 @@ def lock_shift(
     _guard_transition(shift, ShiftStatus.locked)
     before = _audit_snapshot(shift)
 
-    # ---------------------------------------------------------------------
-    # §6.7's lock precondition belongs HERE:
-    #   UNREVIEWED_EXPENSES_EXIST -- Phase 7, needs `expenses`
-    # Same reasoning as the close preconditions above: not stubbed.
-    # ---------------------------------------------------------------------
+    # §6.7, Phase 7. A flagged row can belong to *this* shift even though the aggregate
+    # rule that set it may have summed a category across every shift on the business
+    # date -- app/services/expenses.py::apply_review_flags flags every live row in the
+    # group, in whichever shift each one happens to sit. The check here stays
+    # shift-scoped: locking is a per-shift action, and a row flagged on a *different*
+    # shift blocks that other shift's lock, not this one's.
+    flagged = expense_service.unreviewed_flagged_expenses(db, shift=shift)
+    if flagged:
+        named = ", ".join(
+            f"{expense.category} {expense.amount}" for expense in flagged
+        )
+        raise AppError(
+            status_code=409,
+            code="UNREVIEWED_EXPENSES_EXIST",
+            detail=(
+                f"This shift has {len(flagged)} flagged expense(s) still awaiting "
+                f"review: {named}. A shift cannot be locked until every flagged expense "
+                "has been signed off."
+            ),
+        )
 
     shift.status = ShiftStatus.locked.value
     shift.locked_by = access.actor.user.id
