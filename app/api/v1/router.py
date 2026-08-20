@@ -8,7 +8,18 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1 import fuel_margins, fuel_prices, fuel_types, health, me, nozzles
+from app.api.v1 import (
+    collections,
+    fuel_margins,
+    fuel_prices,
+    fuel_types,
+    health,
+    me,
+    nozzles,
+    readings,
+    shift_templates,
+    shifts,
+)
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health.router)
@@ -21,3 +32,17 @@ api_router.include_router(fuel_types.router)
 api_router.include_router(nozzles.router)
 api_router.include_router(fuel_prices.router)
 api_router.include_router(fuel_margins.router)
+
+# Phase 4 -- the shift spine. Same caveat as above about intra-module ordering:
+# "/shifts/current" must precede "/shifts/{shift_id}" inside shifts.py.
+api_router.include_router(shift_templates.router)
+api_router.include_router(shifts.router)
+
+# Phase 5 -- readings hang off a shift, so this follows shifts. Its paths are all
+# /shifts/{shift_id}/... which is one segment deeper than anything in shifts.py, so
+# there is no ordering hazard between the two routers.
+api_router.include_router(readings.router)
+
+# Phase 6 -- collections hang off a shift too, same depth as readings and with no path
+# overlap between them.
+api_router.include_router(collections.router)

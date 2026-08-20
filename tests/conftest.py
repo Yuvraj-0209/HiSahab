@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator, Callable, Iterator
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from alembic import command
@@ -179,7 +180,87 @@ def make_user(engine: Engine) -> Iterator[Callable[..., UUID]]:
 
     if created:
         with engine.begin() as connection:
-            # Memberships first: they hold the foreign key.
+            # Children first -- nothing here has ON DELETE CASCADE, deliberately. Same
+            # rule `make_fuel_type` follows.
+            #
+            # Shifts have to go before the profiles they point at, and their audit rows
+            # before them, which needs the append-only trigger off (§5.3's documented
+            # escape hatch). This cannot be left to `clean_shifts`: pytest tears fixtures
+            # down in reverse setup order, and a usefixtures-declared fixture is set up
+            # first, so it would run *after* this and the foreign key would already have
+            # blown up.
+            connection.execute(
+                text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+            )
+            # Phase 5: a reading's audit rows go before the reading, which goes before the
+            # shift, which goes before the user. Four levels now, and getting the order
+            # wrong shows up as a foreign-key error in an unrelated test.
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE record_id IN "
+                    "(SELECT r.id FROM nozzle_readings r JOIN shifts s ON s.id = r.shift_id"
+                    " WHERE s.attendant_id = ANY(:ids) OR s.created_by = ANY(:ids))"
+                ).bindparams(ids=created)
+            )
+            # Phase 6 added a fifth level: collections also hang off a shift and point at
+            # a user. Their audit rows go with them.
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE record_id IN "
+                    "(SELECT c.id FROM collections c JOIN shifts s ON s.id = c.shift_id"
+                    " WHERE s.attendant_id = ANY(:ids) OR s.created_by = ANY(:ids))"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE record_id IN "
+                    "(SELECT id FROM shifts WHERE attendant_id = ANY(:ids)) "
+                    "OR changed_by = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM nozzle_readings WHERE created_by = ANY(:ids) "
+                    "OR reviewed_by = ANY(:ids) OR shift_id IN "
+                    "(SELECT id FROM shifts WHERE attendant_id = ANY(:ids) "
+                    "OR created_by = ANY(:ids))"
+                ).bindparams(ids=created)
+            )
+            # Reversals reference the rows they cancel, so they go in their own pass first.
+            for clause in (
+                "reverses_id IS NOT NULL AND (created_by = ANY(:ids) OR shift_id IN "
+                "(SELECT id FROM shifts WHERE attendant_id = ANY(:ids) "
+                "OR created_by = ANY(:ids)))",
+                "created_by = ANY(:ids) OR shift_id IN "
+                "(SELECT id FROM shifts WHERE attendant_id = ANY(:ids) "
+                "OR created_by = ANY(:ids))",
+            ):
+                connection.execute(
+                    text(f"DELETE FROM collections WHERE {clause}").bindparams(
+                        ids=created
+                    )
+                )
+            connection.execute(
+                text(
+                    "DELETE FROM idempotency_keys WHERE user_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM shifts WHERE attendant_id = ANY(:ids) "
+                    "OR created_by = ANY(:ids) OR closed_by = ANY(:ids) "
+                    "OR locked_by = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM outlet_shift_templates WHERE created_by = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            # Memberships next: they hold the foreign key.
             connection.execute(
                 text(
                     "DELETE FROM outlet_memberships WHERE user_id = ANY(:ids)"
@@ -257,6 +338,30 @@ def make_fuel_type(engine: Engine) -> Iterator[Callable[..., UUID]]:
     if created:
         with engine.begin() as connection:
             # Children first -- nothing here has ON DELETE CASCADE, deliberately.
+            #
+            # Phase 5 added a generation: readings hang off nozzles, so they must go before
+            # the nozzles do. This fixture cannot rely on `make_reading` having cleaned up
+            # first: pytest tears fixtures down in reverse *setup* order, and a test that
+            # names make_fuel_type after make_reading tears this one down first.
+            connection.execute(
+                text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE record_id IN (SELECT r.id FROM "
+                    "nozzle_readings r JOIN nozzles n ON n.id = r.nozzle_id "
+                    "WHERE n.fuel_type_id = ANY(:ids))"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM nozzle_readings WHERE nozzle_id IN "
+                    "(SELECT id FROM nozzles WHERE fuel_type_id = ANY(:ids))"
+                ).bindparams(ids=created)
+            )
             for table in ("fuel_prices", "fuel_margins", "nozzles"):
                 connection.execute(
                     text(
@@ -290,7 +395,14 @@ def make_nozzle(engine: Engine) -> Iterator[Callable[..., UUID]]:
         totalizer_max_value: str = "999999.99",
         is_active: bool = True,
         outlet_id: UUID | None = None,
+        meter_installed_at: datetime | None = None,
     ) -> UUID:
+        # Phase 5 made this overridable and moved the default into the past. A nozzle
+        # installed at now() is *out of scope* for any shift dated earlier (§6.8's close
+        # precondition only counts nozzles that existed), so a now() default would make
+        # every reading test silently see zero nozzles. The distant past is the safe
+        # default; tests exercising NOZZLE_NOT_YET_INSTALLED pass a future value.
+        installed = meter_installed_at or datetime(2020, 1, 1, tzinfo=timezone.utc)
         nozzle_id = uuid4()
         with engine.begin() as connection:
             connection.execute(
@@ -298,7 +410,7 @@ def make_nozzle(engine: Engine) -> Iterator[Callable[..., UUID]]:
                     "INSERT INTO nozzles (id, outlet_id, label, dispenser_label, "
                     "fuel_type_id, totalizer_max_value, meter_installed_at, is_active) "
                     "VALUES (:id, :outlet_id, :label, :dispenser_label, :fuel_type_id, "
-                    "CAST(:max_value AS numeric), now(), :is_active)"
+                    "CAST(:max_value AS numeric), :installed, :is_active)"
                 ).bindparams(
                     id=nozzle_id,
                     outlet_id=outlet_id or get_settings().DEFAULT_OUTLET_ID,
@@ -306,6 +418,7 @@ def make_nozzle(engine: Engine) -> Iterator[Callable[..., UUID]]:
                     dispenser_label=dispenser_label,
                     fuel_type_id=fuel_type_id,
                     max_value=totalizer_max_value,
+                    installed=installed,
                     is_active=is_active,
                 )
             )
@@ -316,6 +429,25 @@ def make_nozzle(engine: Engine) -> Iterator[Callable[..., UUID]]:
 
     if created:
         with engine.begin() as connection:
+            # Readings first -- they hold the foreign key. Their audit rows go before them,
+            # which needs §5.3's documented escape hatch.
+            connection.execute(
+                text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE record_id IN "
+                    "(SELECT id FROM nozzle_readings WHERE nozzle_id = ANY(:ids))"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM nozzle_readings WHERE nozzle_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
             connection.execute(
                 text("DELETE FROM nozzles WHERE id = ANY(:ids)").bindparams(ids=created)
             )
@@ -389,6 +521,344 @@ def make_fuel_price(engine: Engine) -> Iterator[Callable[..., UUID]]:
 @pytest.fixture
 def make_fuel_margin(engine: Engine) -> Iterator[Callable[..., UUID]]:
     yield from _make_effective_dated_fixture(engine, "fuel_margins", "margin_per_unit")
+
+
+@pytest.fixture
+def make_shift(engine: Engine) -> Iterator[Callable[..., UUID]]:
+    """Create a shift row directly, bypassing the API.
+
+    Same commit-and-clean contract as `make_user` and `make_nozzle`: committed, never held
+    in an open transaction, because the ASGI app takes its own connection from
+    SessionLocal and cannot see uncommitted work.
+
+    Teardown must delete `audit_logs` first, and that needs the append-only trigger turned
+    off -- exactly the documented escape hatch `_make_effective_dated_fixture` uses for the
+    price tables. The trigger doing its job is the point; the production rule stays strict.
+    """
+    from app.core.config import get_settings
+
+    created: list[UUID] = []
+
+    def _make(
+        attendant_id: UUID,
+        *,
+        business_date: date | None = None,
+        sequence: int = 1,
+        started_at: datetime | None = None,
+        ended_at: datetime | None = None,
+        status: str = "open",
+        outlet_id: UUID | None = None,
+    ) -> UUID:
+        shift_id = uuid4()
+        on = business_date or date(2026, 8, 18)
+        # 06:00 IST on the shift's own business date -- this outlet's trading window
+        # (CLAUDE.md §4.7) -- expressed as the UTC instant it actually is. Derived from
+        # `on` rather than hardcoded, so a test that passes a business_date does not end up
+        # with a started_at months away from it and trip
+        # ck_shifts_ended_after_started on close.
+        start = started_at or datetime.combine(
+            on, time(6, 0), tzinfo=ZoneInfo("Asia/Kolkata")
+        ).astimezone(timezone.utc)
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO shifts (id, outlet_id, business_date, sequence, "
+                    "started_at, ended_at, attendant_id, status) VALUES (:id, :outlet_id, "
+                    ":business_date, :sequence, :started_at, :ended_at, :attendant_id, "
+                    "CAST(:status AS shift_status))"
+                ).bindparams(
+                    id=shift_id,
+                    outlet_id=outlet_id or get_settings().DEFAULT_OUTLET_ID,
+                    business_date=on,
+                    sequence=sequence,
+                    started_at=start,
+                    ended_at=ended_at,
+                    attendant_id=attendant_id,
+                    status=status,
+                )
+            )
+        created.append(shift_id)
+        return shift_id
+
+    yield _make
+
+    if created:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE record_id IN "
+                    "(SELECT id FROM nozzle_readings WHERE shift_id = ANY(:ids))"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE record_id IN "
+                    "(SELECT id FROM collections WHERE shift_id = ANY(:ids))"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE table_name = 'shifts' "
+                    "AND record_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM nozzle_readings WHERE shift_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            # Phase 6: collections hang off a shift too, and reversals hang off
+            # collections, so this needs two passes before the shift can go.
+            connection.execute(
+                text(
+                    "DELETE FROM collections WHERE shift_id = ANY(:ids) "
+                    "AND reverses_id IS NOT NULL"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("DELETE FROM collections WHERE shift_id = ANY(:ids)").bindparams(
+                    ids=created
+                )
+            )
+            connection.execute(
+                text("DELETE FROM shifts WHERE id = ANY(:ids)").bindparams(ids=created)
+            )
+
+
+@pytest.fixture
+def clean_shifts(engine: Engine) -> Iterator[None]:
+    """Remove every shift and shift-related audit row created during a test.
+
+    `make_shift` cleans up only what it created. Tests that open shifts *through the API*
+    have no id to hand back, so they use this instead. Both exist because the API-created
+    rows are the ones that must be reachable by the endpoint under test, and the
+    one-open-shift-per-outlet rule (§5.2) means a leaked open shift fails every later test
+    in the run with SHIFT_ALREADY_OPEN.
+    """
+    yield
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+        )
+        connection.execute(
+            text(
+                "DELETE FROM audit_logs WHERE table_name IN ('shifts', 'nozzle_readings')"
+            )
+        )
+        connection.execute(
+            text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+        )
+        # Readings before shifts -- they hold the foreign key.
+        connection.execute(text("DELETE FROM nozzle_readings"))
+        connection.execute(text("DELETE FROM shifts"))
+
+
+@pytest.fixture
+def make_reading(engine: Engine) -> Iterator[Callable[..., UUID]]:
+    """Create a nozzle_readings row directly, bypassing the API.
+
+    For tests that need a chain already in place -- a previous shift's closing reading to
+    carry forward -- without driving six HTTP calls to build it. Same commit-and-clean
+    contract as `make_shift`: committed, never held in an open transaction, because the
+    ASGI app takes its own connection from SessionLocal and cannot see uncommitted work.
+
+    Values arrive as strings and are cast in SQL, never passed as Python floats. §3 rule 1
+    is explicit that this applies "including in a quick test fixture" -- a float here would
+    round-trip through binary floating point before it ever reached NUMERIC.
+    """
+    created: list[UUID] = []
+
+    def _make(
+        shift_id: UUID,
+        nozzle_id: UUID,
+        *,
+        opening_reading: str = "1000.00",
+        chained_opening_reading: str | None = None,
+        closing_reading: str | None = "1500.00",
+        testing_quantity: str = "0",
+        rollover_occurred: bool = False,
+        meter_reset_occurred: bool = False,
+        requires_review: bool = False,
+        created_by: UUID | None = None,
+    ) -> UUID:
+        reading_id = uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO nozzle_readings (id, shift_id, nozzle_id, "
+                    "opening_reading, chained_opening_reading, closing_reading, "
+                    "testing_quantity, rollover_occurred, meter_reset_occurred, "
+                    "requires_review, created_by) VALUES (:id, :shift_id, :nozzle_id, "
+                    "CAST(:opening AS numeric), CAST(:chained AS numeric), "
+                    "CAST(:closing AS numeric), CAST(:testing AS numeric), "
+                    ":rollover, :reset, :review, :created_by)"
+                ).bindparams(
+                    id=reading_id,
+                    shift_id=shift_id,
+                    nozzle_id=nozzle_id,
+                    opening=opening_reading,
+                    chained=chained_opening_reading,
+                    closing=closing_reading,
+                    testing=testing_quantity,
+                    rollover=rollover_occurred,
+                    reset=meter_reset_occurred,
+                    review=requires_review,
+                    created_by=created_by,
+                )
+            )
+        created.append(reading_id)
+        return reading_id
+
+    yield _make
+
+    if created:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE table_name = 'nozzle_readings' "
+                    "AND record_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text("DELETE FROM nozzle_readings WHERE id = ANY(:ids)").bindparams(
+                    ids=created
+                )
+            )
+
+
+@pytest.fixture
+def make_collection(engine: Engine) -> Iterator[Callable[..., UUID]]:
+    """Create a collections row directly, bypassing the API.
+
+    For tests that need money already recorded -- most often a cash declaration so that
+    §6.8's MISSING_COLLECTIONS does not block a close that is not what the test is about.
+
+    Amounts arrive as strings and are cast in SQL, never passed as Python floats. §3 rule 1
+    is explicit that this applies "including in a quick test fixture": a float here would
+    round-trip through binary floating point before it ever reached NUMERIC.
+    """
+    created: list[UUID] = []
+
+    def _make(
+        shift_id: UUID,
+        *,
+        mode: str = "cash",
+        amount: str = "5000.00",
+        reference: str | None = None,
+        reverses_id: UUID | None = None,
+        reversal_reason: str | None = None,
+        created_by: UUID | None = None,
+    ) -> UUID:
+        collection_id = uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO collections (id, shift_id, mode, amount, reference, "
+                    "reverses_id, reversal_reason, created_by) VALUES (:id, :shift_id, "
+                    "CAST(:mode AS collection_mode), CAST(:amount AS numeric), "
+                    ":reference, :reverses_id, :reversal_reason, :created_by)"
+                ).bindparams(
+                    id=collection_id,
+                    shift_id=shift_id,
+                    mode=mode,
+                    amount=amount,
+                    reference=reference,
+                    reverses_id=reverses_id,
+                    reversal_reason=reversal_reason,
+                    created_by=created_by,
+                )
+            )
+        created.append(collection_id)
+        return collection_id
+
+    yield _make
+
+    if created:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE table_name = 'collections' "
+                    "AND record_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+            )
+            # Reversals point at the rows they cancel, so children first.
+            connection.execute(
+                text(
+                    "DELETE FROM collections WHERE reverses_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("DELETE FROM collections WHERE id = ANY(:ids)").bindparams(
+                    ids=created
+                )
+            )
+
+
+@pytest.fixture
+def clean_collections(engine: Engine) -> Iterator[None]:
+    """Remove every collection created during a test, for tests that go through the API.
+
+    The counterpart to `clean_readings`: a collection created over HTTP has no id to hand
+    back, and §5.2's one-live-row-per-mode rule means a leaked row fails the next test that
+    posts the same mode to the same shift with COLLECTION_ALREADY_EXISTS.
+
+    Also clears `idempotency_keys`, because a leaked reservation makes the next test using
+    the same key meet REQUEST_IN_PROGRESS rather than doing its work.
+    """
+    yield
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+        )
+        connection.execute(
+            text("DELETE FROM audit_logs WHERE table_name = 'collections'")
+        )
+        connection.execute(
+            text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+        )
+        connection.execute(text("DELETE FROM collections WHERE reverses_id IS NOT NULL"))
+        connection.execute(text("DELETE FROM collections"))
+        connection.execute(text("DELETE FROM idempotency_keys"))
+
+
+@pytest.fixture
+def clean_readings(engine: Engine) -> Iterator[None]:
+    """Remove every reading created during a test, for tests that go through the API.
+
+    The counterpart to `clean_shifts`: a reading created over HTTP has no id to hand back,
+    and `uq_nozzle_readings_shift_nozzle` means a leaked row fails the next test that
+    touches the same nozzle with READING_ALREADY_EXISTS.
+    """
+    yield
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+        )
+        connection.execute(
+            text("DELETE FROM audit_logs WHERE table_name = 'nozzle_readings'")
+        )
+        connection.execute(
+            text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+        )
+        connection.execute(text("DELETE FROM nozzle_readings"))
 
 
 @pytest.fixture

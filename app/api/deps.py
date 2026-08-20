@@ -18,7 +18,17 @@ Where the outlet comes from depends on the endpoint's shape:
   check to ask the row means that the day a second outlet exists, this fails loudly rather
   than authorising against the wrong one. The first such resolver is
   `app/api/v1/nozzles.py::resolve_outlet_from_nozzle` (Phase 3 -- a phase earlier than this
-  docstring originally predicted, because PATCH /nozzles/{id} needed one).
+  docstring originally predicted, because PATCH /nozzles/{id} needed one). The second is
+  `resolve_outlet_from_shift`, below.
+
+## Ownership is a separate axis from role (§8)
+
+`require_role` answers "does this user clear role R here". It cannot answer "is this the
+attendant's *own* shift", because that is not a property of the role -- an attendant may
+write to a shift they hold and not to one they do not, at the same role. §8 states this
+outright, and Phase 4 is where it lands: `require_shift_access` composes the role floor
+with the ownership check, and applies ownership **only when the actor's role is
+`attendant`**. Managers and admins may act on any shift at their outlet.
 
 ## Status codes (§9)
 
@@ -44,7 +54,9 @@ from app.core.config import Settings, get_settings
 from app.core.errors import AppError
 from app.core.roles import Role, satisfies
 from app.core.security import decode_access_token
+from app.core.shifts import ShiftStatus
 from app.db.session import get_db
+from app.models.shift import Shift
 from app.models.user import OutletMembership, UserProfile
 
 logger = logging.getLogger(__name__)
@@ -220,5 +232,114 @@ def require_role(
             )
 
         return Actor(user=user, outlet_id=outlet_id, role=held)
+
+    return dependency
+
+
+def resolve_outlet_from_shift(shift_id: UUID, db: Session = Depends(get_db)) -> UUID:
+    """The outlet that owns this shift, for `require_role` to authorise against.
+
+    Mirrors `app/api/v1/nozzles.py::resolve_outlet_from_nozzle`, including the 404: it lives
+    in the dependency rather than the handler because this runs first, and without it a
+    request against a nonexistent shift would report a permission failure instead of a
+    missing row.
+    """
+    outlet_id = db.execute(
+        select(Shift.outlet_id).where(Shift.id == shift_id)
+    ).scalar_one_or_none()
+    if outlet_id is None:
+        raise AppError(
+            status_code=404,
+            code="SHIFT_NOT_FOUND",
+            detail="No shift with that id.",
+        )
+    return outlet_id
+
+
+@dataclass(frozen=True)
+class ShiftAccess:
+    """A passed permission check against one specific shift.
+
+    Carries the loaded `Shift` so the endpoint does not re-query it, in the same spirit as
+    `Actor` carrying the role. Frozen for the same reason: nothing downstream has any
+    business rewriting which shift was authorised.
+    """
+
+    actor: Actor
+    shift: Shift
+
+
+def require_shift_access(
+    minimum: Role, *, writable: bool = False
+) -> Callable[..., ShiftAccess]:
+    """Build a dependency asserting role, ownership and (optionally) writability.
+
+    This is the §8 ownership axis, and Phases 5-10 are expected to depend on it rather than
+    re-implementing any part of it:
+
+        @router.post("/shifts/{shift_id}/collections")
+        def add_collection(access: ShiftAccess = Depends(require_shift_access(
+            Role.attendant, writable=True
+        ))): ...
+
+    `writable=True` means "this call is about to change financial state", and enforces §6.9:
+    no writes to a shift that is closed or locked. Reads leave it False.
+
+    `SHIFT_NOT_OPEN` and `SHIFT_LOCKED` are separate codes on purpose. One is recoverable by
+    an admin (§6.8's reopen) and the other never is, and a client should be able to tell the
+    user which without parsing prose.
+    """
+
+    role_dependency = require_role(minimum, resolve_outlet_from_shift)
+
+    def dependency(
+        shift_id: UUID,
+        actor: Actor = Depends(role_dependency),
+        db: Session = Depends(get_db),
+    ) -> ShiftAccess:
+        # Not None: resolve_outlet_from_shift already 404'd inside role_dependency.
+        shift = db.get(Shift, shift_id)
+
+        # §8: ownership applies to attendants only. A manager or admin may act on any shift
+        # at their outlet, so this is a role-conditional check rather than an unconditional
+        # one -- writing it unconditionally would lock managers out of the shifts they are
+        # specifically there to close.
+        if actor.role is Role.attendant and shift.attendant_id != actor.user.id:
+            logger.info(
+                "attendant reached for another attendant's shift",
+                extra={
+                    "user_id": str(actor.user.id),
+                    "shift_id": str(shift_id),
+                    "shift_attendant_id": str(shift.attendant_id),
+                },
+            )
+            raise AppError(
+                status_code=403,
+                code="NOT_YOUR_SHIFT",
+                detail="This shift belongs to another attendant.",
+            )
+
+        if writable:
+            status = ShiftStatus(shift.status)
+            if status is ShiftStatus.locked:
+                raise AppError(
+                    status_code=409,
+                    code="SHIFT_LOCKED",
+                    detail=(
+                        "This shift has been locked and can no longer be changed. "
+                        "Corrections must be recorded as reversal entries."
+                    ),
+                )
+            if status is ShiftStatus.closed:
+                raise AppError(
+                    status_code=409,
+                    code="SHIFT_NOT_OPEN",
+                    detail=(
+                        "This shift is closed. An admin must reopen it before it can be "
+                        "changed."
+                    ),
+                )
+
+        return ShiftAccess(actor=actor, shift=shift)
 
     return dependency

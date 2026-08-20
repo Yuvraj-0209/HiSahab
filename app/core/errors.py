@@ -14,9 +14,30 @@ from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 logger = logging.getLogger(__name__)
+
+# A database constraint is the last line of defence, not the first. Every rule below is
+# *also* enforced in application code -- §6.6 calls this belt and braces -- so reaching
+# one of these means either a bug or a client that found a path the application missed.
+# Either way the caller deserves the §3 rule 10 envelope rather than a bare 500.
+#
+# This is an allowlist on purpose. Blanket-converting IntegrityError to 409 would turn an
+# unforeseen constraint failure -- the kind that means the code is wrong -- into a tidy
+# business error the client is invited to retry, and it would disappear from the logs as a
+# handled response. An unrecognised constraint stays a 500 and stays loud.
+_CONSTRAINT_ERRORS: dict[str, tuple[int, str, str]] = {
+    "ck_nozzle_readings_flags_exclusive": (
+        422,
+        "METER_FLAGS_MUTUALLY_EXCLUSIVE",
+        "A rollover and a meter reset cannot both have happened to one nozzle in one "
+        "shift. §6.2 has a formula for a rollover and a manual, admin-entered path for a "
+        "reset; together they have no defined meaning. Record whichever actually "
+        "occurred.",
+    ),
+}
 
 
 class AppError(Exception):
@@ -82,6 +103,28 @@ async def validation_exception_handler(
     )
 
 
+async def integrity_error_handler(
+    request: Request, exc: IntegrityError
+) -> JSONResponse:
+    """Translate a *known* database constraint failure into the standard envelope.
+
+    Anything not in `_CONSTRAINT_ERRORS` falls through to the same 500 the generic handler
+    would have produced, with the traceback logged. See that dict for why this allowlists
+    rather than converting every IntegrityError.
+    """
+    message = str(getattr(exc, "orig", exc))
+    for constraint, (status_code, code, detail) in _CONSTRAINT_ERRORS.items():
+        if constraint in message:
+            logger.warning(
+                "database constraint refused a write",
+                extra={"constraint": constraint, "code": code},
+            )
+            return _envelope(request, status_code, code, detail)
+
+    logger.exception("unmapped integrity error")
+    return _envelope(request, 500, "INTERNAL_ERROR", "An unexpected error occurred.")
+
+
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Never leak a traceback to a client; the request_id ties it to the logs."""
     logger.exception("unhandled exception")
@@ -94,4 +137,5 @@ def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppError, app_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(IntegrityError, integrity_error_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)

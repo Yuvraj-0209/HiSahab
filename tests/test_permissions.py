@@ -142,10 +142,20 @@ async def test_expired_token_is_rejected_over_http(
 async def test_tampered_token_is_rejected(
     client: AsyncClient, make_token: Callable[..., str], make_user: Callable[..., UUID]
 ) -> None:
-    """Flip one character of the signature and the whole token is worthless."""
+    """Flip one character of the signature and the whole token is worthless.
+
+    **Tamper with the FIRST character of the signature, never the last.** An HS256
+    signature is 32 bytes, which base64url-encodes to 43 characters carrying 258 bits --
+    so the final character has 2 bits of slack and four different characters decode to the
+    same signature. Editing it therefore produced a *still-valid* token roughly one run in
+    four, and this test failed intermittently for reasons that had nothing to do with the
+    code under test. The first character carries all six of its bits.
+    """
     user_id = make_user(Role.admin)
     token = make_token(user_id)
-    tampered = token[:-1] + ("a" if token[-1] != "a" else "b")
+    header, payload, signature = token.split(".")
+    flipped = ("a" if signature[0] != "a" else "b") + signature[1:]
+    tampered = f"{header}.{payload}.{flipped}"
 
     response = await client.get(ATTENDANT_FLOOR, headers=_auth(tampered))
 

@@ -48,3 +48,54 @@ async def test_a_rejected_decimal_field_still_produces_a_422_envelope(client) ->
     # 401 (no token) is fine -- the point is that it is a clean envelope, never a 500.
     assert response.status_code != 500
     assert set(response.json()) >= {"detail", "code", "request_id"}
+
+
+# --- database constraint failures (Phase 6 Step 0) ---------------------------
+
+
+async def test_an_unmapped_constraint_failure_is_still_a_500() -> None:
+    """The IntegrityError handler allowlists; it must never blanket-convert.
+
+    A constraint nobody anticipated firing means the application let through something it
+    should have refused -- that is a bug. Turning it into a tidy 409 would invite the
+    client to retry a write that will never succeed, and would drop it out of the logs as
+    a handled response. So an unrecognised constraint keeps the loud 500 it had before,
+    and only names listed in `_CONSTRAINT_ERRORS` get the §3 rule 10 treatment.
+    """
+    from fastapi import Request
+    from sqlalchemy.exc import IntegrityError
+
+    from app.core.errors import integrity_error_handler
+
+    request = Request({"type": "http", "headers": [], "method": "POST", "path": "/"})
+    exc = IntegrityError(
+        "INSERT ...", {}, Exception('violates check constraint "ck_something_nobody_mapped"')
+    )
+
+    response = await integrity_error_handler(request, exc)
+
+    assert response.status_code == 500
+
+
+async def test_a_mapped_constraint_failure_uses_the_standard_envelope() -> None:
+    """The other half of the pair: a listed constraint becomes a readable error."""
+    import json
+
+    from fastapi import Request
+    from sqlalchemy.exc import IntegrityError
+
+    from app.core.errors import integrity_error_handler
+
+    request = Request({"type": "http", "headers": [], "method": "POST", "path": "/"})
+    exc = IntegrityError(
+        "INSERT ...",
+        {},
+        Exception('violates check constraint "ck_nozzle_readings_flags_exclusive"'),
+    )
+
+    response = await integrity_error_handler(request, exc)
+    body = json.loads(response.body)
+
+    assert response.status_code == 422
+    assert set(body) == {"detail", "code", "request_id"}
+    assert body["code"] == "METER_FLAGS_MUTUALLY_EXCLUSIVE"

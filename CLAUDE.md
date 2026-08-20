@@ -197,6 +197,62 @@ stock revaluation — holding 12 kL when the price rises ₹1 is a real ₹12,00
 system will never show. See §13.7; that limitation must be stated wherever profit is
 displayed, or the number is plausible and wrong.
 
+### 4.7 The shift chain (verified against how this outlet actually runs)
+
+The original spec assumed exactly two shifts a day, `morning | night`, with the night
+shift crossing midnight. **That is not this outlet, and it is not general enough to be
+any outlet.** What is actually true:
+
+- This station **trades 06:00 → 22:00** and is shut for eight hours. Nothing is dispensed
+  overnight. It has **one** accounting period per day, not two.
+- The salesman roster runs **09:00 → 09:00**, but the 06:00–09:00 cash is handed to the
+  incoming crew, so one crew ends up holding an entire trading day's takings. **The roster
+  is a labour arrangement, not an accounting boundary**, and the system does not model it.
+- The sales register has **one line per day**. The whole day is typed in **after the
+  fact**, in one sitting — nobody operates the app while trading.
+- Other outlets this software will serve **do** run 24 hours on three 8-hour shifts.
+
+So the number of shifts in a day is data, not schema. Shifts are **sequence-numbered per
+business date**, any number of them, and `shift_type` does not exist.
+
+**The chain.** A nozzle's opening reading is not entered. It is carried forward from the
+**most recent closing reading of that same nozzle**, across shifts and across days. An
+attendant only ever types a closing value. An overnight closure and a 24-hour handover are
+then the same thing: a gap between one shift's close and the next one's open.
+
+The lookup is "the most recent closing reading **for that nozzle**", not "the previous
+shift's reading". A nozzle out of order for one shift, a nozzle installed mid-life, or a
+whole skipped day would all snap a chain built on the latter.
+
+**The chained value is confirmed, never assumed.** This is the rule that matters most, and
+it is not a formality. Auto-filling the opening deletes one of the two independent meter
+observations an attendant makes. Fuel siphoned through a nozzle between shifts still moves
+the totalizer — but an assumed opening says it did not, so the missing quantity is
+absorbed into the next shift as sales that produced no cash. The shift then comes up
+short, and this outlet books a shortfall as **udhaar against the salesman's own name**.
+An assumed opening therefore converts theft into a debt owed by someone who did nothing
+wrong, and leaves no trace pointing at the gap.
+
+So: pre-filled, not typeable, and **confirmed against the physical meter**, with a mismatch
+path that captures the real reading and raises it for review before anybody is blamed.
+Zero typing on a normal day; the abnormal day becomes visible instead of reassigned.
+
+**The chained opening is stored on the row, not computed on read.** Computing it would
+mean that correcting one shift silently rewrites the next shift's history — destroying
+exactly the record §5.2 keeps `expected_closing` for.
+
+**Anchoring.** The first shift ever, and every newly installed nozzle, has no predecessor
+and needs a one-time seeded starting reading (admin-only), the same shape as §6.5's seeded
+first opening balance. A meter reset (§4.3) breaks the chain deliberately and re-anchors
+it through §6.2's admin-only override path.
+
+**The anchor is the first reading itself, not a separate record.** When the chain lookup
+finds no predecessor for a nozzle, `opening_reading` becomes a *required* payload field and
+the caller must be an admin (403 `ANCHOR_REQUIRES_ADMIN` otherwise); the row stores
+`chained_opening_reading = NULL` to mark it as anchored rather than carried. A column on
+`nozzles` or a separate anchor table would both duplicate a value that already exists on
+that first row, and the two copies would eventually disagree about where a meter started.
+
 ---
 
 ## 5. Database Schema
@@ -243,14 +299,16 @@ Per-phase landing schedule:
 | 2 | `outlet_memberships` | **Yes** |
 | 3 | `fuel_types` | No — global reference data |
 | 3 | `fuel_prices`, `fuel_margins`, `nozzles` | **Yes** |
-| 4 | `shifts` | **Yes** |
+| 4 | `shifts`, `outlet_shift_templates` | **Yes** |
+| 4 | `audit_logs` | **Yes** — no parent (moved from Phase 11, see §11) |
 | 5–7 | `nozzle_readings`, `collections`, `expenses` | No — derivable via `shift_id` |
+| 6 | `idempotency_keys` | No — infrastructure, not a business row (§5.3) |
 | 8 | `attachments` | **Yes** — no parent shift |
 | 9 | `credit_customers` | **Yes** |
 | 9 | `credit_sales`, `credit_repayments` | No — derivable via `shift_id` |
 | 10 | `bank_deposits` | No — derivable via `shift_id` |
 | 10 | `daily_cash_summaries` | **Yes** |
-| 11 | `audit_logs` | **Yes** — no parent |
+| ~~11~~ | ~~`audit_logs`~~ | Built in Phase 4 instead — see the row above |
 
 **Unique constraints are the expensive part**, not the columns. Each one below is
 cheap now and horrible to change once there is data. They are written into §5.1–§5.3
@@ -344,6 +402,26 @@ Dispensers are deliberately *not* a separate table in V1 (YAGNI — a label suff
 - `meter_installed_at` — TIMESTAMPTZ
 - `is_active` — boolean
 
+**`outlet_shift_templates`** — the shifts an outlet *usually* runs
+- `outlet_id` — FK to outlets, NOT NULL
+- `sequence` — SMALLINT, matches `shifts.sequence`
+- `label` — text, e.g. `Day`, `Night` (display only; nothing keys off it)
+- `starts_at_local`, `ends_at_local` — TIME
+- `is_active` — boolean
+- Unique constraint on `(outlet_id, sequence)`
+
+> Supplies the default `started_at` / `ended_at` when a shift is opened, because days are
+> typed in after the fact and nobody should retype 06:00 and 22:00 every morning. The
+> defaults are *materialised onto the shift row*, never read back through the template —
+> editing a template must not revalue a shift that already happened (§6.3 prices a shift
+> from its own `started_at`).
+>
+> `TIME`, not `TIMESTAMPTZ`, and this is not a breach of §3 rule 4. That rule governs
+> *instants*. "06:00 local, every day" is a recurring wall-clock time, a genuinely
+> different type that cannot be stored as an instant without inventing a date.
+>
+> This outlet has one row: sequence 1, 06:00 → 22:00. A 24-hour outlet has three.
+
 **`credit_customers`**
 - `outlet_id` — FK to outlets, NOT NULL
 - `name` — text
@@ -354,37 +432,96 @@ Dispensers are deliberately *not* a separate table in V1 (YAGNI — a label suff
 
 ### 5.2 Transactional tables
 
-**`shifts`** — the spine. Everything hangs off this.
+**`shifts`** — the spine. Everything hangs off this. See §4.7 for the chain model.
 - `outlet_id` — FK to outlets, NOT NULL
 - `business_date` — DATE, **explicit, not derived**
-- `shift_type` — enum: `morning` | `night`
-- `started_at`, `ended_at` — TIMESTAMPTZ nullable
-- `attendant_id` — FK to user_profiles
+- `sequence` — SMALLINT, **server-assigned**, 1 for the first shift of that business
+  date, 2 for the next, and so on. There is deliberately **no `shift_type`** — see §4.7
+- `started_at` — TIMESTAMPTZ **NOT NULL**. A shift with no start cannot be priced (§6.3)
+- `ended_at` — TIMESTAMPTZ, nullable until close
+- `attendant_id` — FK to user_profiles, NOT NULL — the one person accountable for this
+  shift's cash. Other staff may be on duty; exactly one name carries the drawer
 - `status` — enum: `open` | `closed` | `locked`
 - `closed_by`, `closed_at` — nullable
 - `locked_by`, `locked_at` — nullable
-- Unique constraint on `(outlet_id, business_date, shift_type)`
+- Unique constraint on `(outlet_id, business_date, sequence)`
 
 Status transitions: `open → closed → locked`. Never backwards without an admin action
 that is itself audit-logged. Nothing referencing a `locked` shift may be modified.
 
+**Only one shift per outlet may be `open` at a time.** This is what makes §4.7's chain
+unambiguous: there is always exactly one closing reading to carry forward.
+
 **`nozzle_readings`** — one row per nozzle per shift. The source of truth for sales.
 - `shift_id` — FK
 - `nozzle_id` — FK
-- `opening_reading` — NUMERIC(12,2)
+- `opening_reading` — NUMERIC(12,2) — the **confirmed** physical value (§4.7)
+- `chained_opening_reading` — NUMERIC(12,2) nullable — what the chain predicted.
+  `NULL` means this row anchored the chain (no predecessor). See below
+- `opening_variance_reason` — text, nullable, **required** when `opening_reading`
+  differs from `chained_opening_reading`
 - `closing_reading` — NUMERIC(12,2), nullable until shift close
 - `testing_quantity` — NUMERIC(10,3), NOT NULL DEFAULT 0
 - `rollover_occurred` — boolean, default false
 - `meter_reset_occurred` — boolean, default false
 - `manual_quantity_override` — NUMERIC(10,3) nullable (admin-only, see §6.2)
 - `override_reason` — text, nullable, required if override is set
+- `requires_review` — boolean, default false (§4.7's mismatch path, and §13.10's
+  downstream flag; same shape as `expenses.requires_review`)
+- `reviewed_by`, `reviewed_at` — nullable
+- `review_note` — text nullable
 - Unique constraint on `(shift_id, nozzle_id)`
+- No `outlet_id` — derivable via `shift_id`, per §5.0's rule
 
-**`collections`** — money received during a shift, one row per payment mode used.
+> **Why `chained_opening_reading` exists as its own column.** §4.7 requires the carried
+> opening to be *confirmed against the physical meter*, not assumed. Without somewhere to
+> keep what the chain predicted, a confirmed reading and an assumed one are indistinguish-
+> able the moment they are written, and a mismatch — the signal that fuel moved between
+> shifts — leaves no trace at all. Storing both makes "the meter did not say what we
+> expected" a fact on the row rather than an event nobody recorded.
+>
+> The three review columns mirror `expenses` deliberately. A flag with no way to clear it
+> is a flag nobody looks at twice.
+
+**`collections`** — money received during a shift, tagged by how it arrived.
 - `shift_id` — FK
 - `mode` — enum: `cash` | `card` | `upi` | `wallet`
-- `amount` — NUMERIC(12,2)
+- `amount` — NUMERIC(12,2); `>= 0` on an ordinary row, `<= 0` only on a reversal
 - `reference` — text nullable (settlement/batch reference)
+- `reverses_id` — FK to `collections.id`, nullable, **unique** — §6.9's correction path
+- `reversal_reason` — text, nullable, **required** when `reverses_id` is set
+- No `outlet_id` — derivable via `shift_id`, per §5.0's rule
+
+> **One *live* row per mode, enforced in the service layer — not by a unique constraint.**
+> This outlet has one card machine and one UPI QR and the register writes one lumped figure
+> per mode, so a second live `cash` row is a mistake and `POST` refuses it with 409
+> `COLLECTION_ALREADY_EXISTS`; the client `PATCH`es instead. *Live* means: not itself a
+> reversal, and not referenced by one.
+>
+> `UNIQUE (shift_id, mode)` would be the obvious way to say that and **cannot be used**,
+> because it is incompatible with §6.9. A reversed row stays in the table forever, so its
+> replacement collides with it on `(shift_id, mode)`. Every partial-index variant fails the
+> same way — the replacement carries `reverses_id IS NULL`, exactly like the original — and
+> the only escape is a `reversed_at` marker stamped onto the original, which is an `UPDATE`
+> on a financial row in a closed shift and therefore the very thing §6.9 forbids.
+>
+> Retry safety therefore comes from `idempotency_keys` (§5.3, §6.10), which a unique
+> constraint would not have provided for the reversal endpoint anyway.
+
+> **`mode = cash` is a *declaration*, not an input to §6.4.** Look at the cash equation:
+> it derives cash as the residual — `total_sales − card − upi − wallet − credit_sales` —
+> and never reads a cash collection row. That is deliberate. The `cash` row is the
+> **independent observation** the derived figure gets checked against:
+>
+> * **derived cash** — what the meters say the salesman should be holding
+> * **declared cash** — the `cash` collection row: what he says he counted into the locker
+>
+> and the gap between them is the shortfall this outlet books as udhaar against his own
+> name (§14). Same shape as §4.7's chain — the system predicts, a human confirms, **both
+> values are stored**, and a disagreement leaves a trace instead of being absorbed.
+>
+> **Never sum the `cash` row together with derived `cash_sales`.** Doing so double-counts
+> the entire day's cash, and the result is plausible.
 
 **`credit_sales`** (udhaar issued)
 - `shift_id` — FK
@@ -455,6 +592,24 @@ never a raw URL string. Single authoritative representation of file knowledge (D
 - `linked_at` — TIMESTAMPTZ nullable (set when referenced by a business row;
   unlinked rows older than 24h are garbage — see §7.4)
 
+**`idempotency_keys`** — §6.10's replay store. Infrastructure, not a business record.
+- `idempotency_key` — text, client-supplied
+- `endpoint` — text, the route template (e.g. `POST /shifts/{shift_id}/collections`)
+- `user_id` — FK to user_profiles
+- `request_fingerprint` — text, SHA-256 of the path params and canonical JSON body
+- `response_status` — smallint nullable (`NULL` = in flight)
+- `response_body` — JSONB nullable
+- Unique constraint on `(idempotency_key, endpoint, user_id)` — §6.10's exact tuple
+- **No `outlet_id`**, and this is not a breach of §5.0. That rule protects tenancy on rows
+  with no correct backfill; these rows are keyed by user and endpoint, carry no business
+  meaning, and are deleted after 24 hours — there is never a migration to get wrong,
+  because the data does not survive to be migrated.
+
+> A repeat with the same key and the **same** body replays the stored response and creates
+> nothing. The same key with a **different** body is a client bug, not a retry, and is
+> refused with 422 `IDEMPOTENCY_KEY_REUSED` rather than silently returning someone else's
+> answer.
+
 **`audit_logs`** — append-only. No updates. No deletes. Ever.
 - `outlet_id` — FK to outlets, NOT NULL
 - `table_name` — text
@@ -491,6 +646,15 @@ timestamps span two calendar dates. Never do `date(created_at)` to determine the
 day. Always read `shifts.business_date`.
 
 The business date is chosen when the shift is opened and is immutable thereafter.
+
+This rule **stops mattering for the outlet described in §4.7**, whose single 06:00–22:00
+shift never crosses midnight. It is kept in full because a 24-hour outlet's night shift
+still does, and because `date(created_at)` is wrong for a further reason here: the whole
+day is typed in **after the fact**, so `created_at` is frequently the *following* day.
+
+A `business_date` in the future is always a data-entry error — trading has not happened
+yet — and is rejected with 422 `BUSINESS_DATE_IN_FUTURE`. "Future" is evaluated in the
+outlet's local timezone (`TZ_DISPLAY`), not UTC.
 
 ### 6.2 Quantity sold, including the ugly cases
 
@@ -548,6 +712,13 @@ price change occurred during the shift window.
 This is a deliberate, documented approximation — the pump has no per-transaction data
 in V1, so exact apportionment is impossible. Write it in a comment where it happens.
 Do not silently pretend it is exact. Revisit when per-transaction data exists.
+
+**It happens to be exact for the outlet in §4.7.** Its single shift starts at 06:00 IST,
+which is the revision instant itself, and `rate_at`'s comparison is `<=` — so the shift
+picks up the new rate and one rate covers the whole day with nothing to apportion. That is
+a property of these particular trading hours, not a general guarantee: a 24-hour outlet's
+02:00–10:00 shift straddles 06:00 and the approximation applies in full. Do not delete the
+warning on the strength of the local case.
 
 ### 6.4 Cash flow engine
 
@@ -615,9 +786,43 @@ Tuesday's opening.
 Reject shift close (409) if any of:
 - Any active nozzle lacks a `closing_reading` → `MISSING_NOZZLE_READINGS`
 - Any credit sale lacks a confirmed attachment → `CREDIT_SALE_MISSING_RECEIPT`
-- Cash collections are absent while `quantity_sold > 0` → `MISSING_COLLECTIONS`
+- Fuel moved and **no `cash` collection has been declared** → `MISSING_COLLECTIONS`
 
-Locking (admin-only) additionally requires all flagged expenses reviewed.
+> **This fires on absence, never on a mismatch.** A shift whose collections total ₹40,000
+> against ₹95,000 of metered sales closes normally: udhaar issued during the shift accounts
+> for part of that gap and the rest is the variance §6.4 exists to record. Refusing to close
+> until the numbers agree would leave the salesman in front of a form with exactly one
+> freely adjustable field, and he will type whatever balances it. The system would then be
+> perfectly reconciled and worthless.
+>
+> An **explicit ₹0** satisfies the check. On a day that genuinely took no cash the salesman
+> declares zero, and that is a different fact from having entered nothing — the same
+> distinction §4.7 draws about an assumed opening reading. Zero as an answer, never zero as
+> an omission.
+>
+> "Fuel moved" is read from `nozzle_readings` alone, never by pricing the shift. §6.3's
+> valuation refuses with `NO_PRICE_FOR_DATE` / `NO_MARGIN_FOR_DATE` when a rate is missing,
+> and a close precondition that inherits that would make a shift unclosable because of a
+> reference-data gap.
+
+Locking (admin-only) additionally requires `status == closed` (otherwise 409
+`SHIFT_NOT_CLOSED`) and all flagged expenses reviewed.
+
+All three close preconditions read tables that do not exist until later phases —
+`nozzle_readings` (5), `collections` (6), `credit_sales` (9) — and the lock precondition
+reads `expenses` (7). Each lands **with its own phase**. Phase 4 builds the lifecycle and
+leaves a named comment at the insertion point rather than an empty stub, per §11's rule
+against scaffolding ahead.
+
+**Reopening.** An admin may move `closed → open` with a mandatory reason, audit-logged
+(§5.2). `locked` is terminal and is refused with 409 `SHIFT_LOCKED` — otherwise locking
+guarantees nothing.
+
+**Any** closed shift may be reopened, including one in the middle of the chain. Phase 4
+refused a mid-chain reopen (409 `NOT_THE_LATEST_SHIFT`) because the following shift's
+chained opening (§4.7) would be left stale; Phase 5 lifted that by **flagging** the stale
+reading for review rather than recomputing it, which would have been the silent rewrite
+§4.7 exists to prevent. `NOT_THE_LATEST_SHIFT` no longer exists. See §13.10.
 
 ### 6.9 Corrections after close
 
@@ -636,6 +841,13 @@ returns the original response without creating a second row.
 
 **This is not optional.** Attendants use phones on patchy rural connectivity. A retry
 after a timeout must not create a duplicate ₹5,000 expense.
+
+**Built in Phase 6, with `collections` — the first table that needs it.** A nozzle reading
+is already idempotent by construction: `UNIQUE (shift_id, nozzle_id)` means a retried POST
+cannot create a second row, it returns 409 `READING_ALREADY_EXISTS` and the client PATCHes
+instead. A collection has no such natural key — two ₹5,000 cash collections in one shift
+are both legitimate — so a timed-out retry genuinely does duplicate money there. Building
+the store in Phase 5 for a POST that cannot duplicate would be scaffolding ahead (§11).
 
 ---
 
@@ -831,15 +1043,22 @@ ahead — no empty modules for later phases.
 3. **Reference data** — `fuel_types` (admin-managed, unit-aware), `nozzles`,
    `fuel_prices` and `fuel_margins` (both append-only) + the shared `rate_at` /
    `margin_at` lookup helpers
-4. **Shifts** — open/close/lock lifecycle and status guards
-5. **Nozzle readings & sales math** — the whole of §6.2 and §6.3, heavily tested
+4. **Shifts** — open/close/lock/reopen lifecycle and status guards, `outlet_shift_templates`,
+   the shift-scoped ownership dependency (§8), and **`audit_logs`** (moved up from 11)
+5. **Nozzle readings & sales math** — the whole of §6.2 and §6.3, heavily tested,
+   plus §4.7's chain: the carried-forward opening and its confirm-don't-assume guard.
+   Also lands §6.8's `MISSING_NOZZLE_READINGS` close precondition and §13.10's
+   flag-don't-recompute resolution
 6. **Collections**
 7. **Expenses** + flagging rules
 8. **Attachments** — upload, validation, signed download, cleanup
 9. **Credit** — customers, sales (receipt-enforced), repayments, outstanding balance
 10. **Cash engine** — daily summary, expected vs actual, rolling balance
-11. **Audit log** — retrofit across all financial writes *(consider building this at
-    step 4 instead if it feels cheap to do early; retrofitting is the usual regret)*
+11. ~~**Audit log**~~ — **built in Phase 4 instead.** The invitation above was taken:
+    §5.2 requires backwards status transitions to be audit-logged and §6.8 lets an admin
+    reopen a shift, so Phase 4 is the first phase that cannot be correct without it.
+    What remains for this slot is retrofitting audit writes onto the Phase 3 admin
+    endpoints (fuel types, nozzles, prices, margins), which is genuinely optional
 12. **Frontend** — minimal HTML/CSS/JS forms and tables
 13. **Reporting** — daily summary, 7-day rolling view, variance alerts
 
@@ -904,6 +1123,28 @@ future reader must be able to tell the difference.
    effective at `started_at`. On revision days the two figures differ slightly. §4.5
 9. Profit reporting is **fuel-margin only** — it excludes the IOCL ledger balance and any
    non-fuel income. §12
+10. **A mid-chain reopen flags the next shift for review; it does not recompute it.**
+    Phase 4 refused a mid-chain reopen outright (409 `NOT_THE_LATEST_SHIFT`) and this
+    section previously said Phase 5 would lift that by implementing a recomputing cascade.
+    **It does not, because it cannot:** §4.7 stores the chained opening on the row
+    precisely so that "correcting one shift silently rewrites the next shift's history"
+    is impossible, and a recomputing cascade is that rewrite.
+
+    So Phase 5 lifts the restriction the other way. A reopened shift's closing reading may
+    change; the following shift's stored `opening_reading` is **left exactly as it was**
+    and marked `requires_review = true` with a note naming the shift that moved beneath it.
+    A human reconciles the two readings and clears the flag. Nothing is recomputed, nothing
+    is silently rewritten, and the discrepancy surfaces the same way §4.7 wants every
+    opening mismatch to surface — as a question, before anybody is blamed. §4.7, §6.8
+11. **Outlet timezone comes from the global `TZ_DISPLAY`, not a column on `outlets`.**
+    Used to decide whether a `business_date` is in the future and to resolve a shift
+    template's local times to instants. Unlike `outlet_id` this *is* derivable later —
+    every existing outlet backfills to `Asia/Kolkata` correctly — so by §5.0's own rule it
+    can wait. §5.0, §6.1
+12. **An outlet has one cash chain and one drawer.** Two crews working simultaneously on
+    separate drawers is not modelled, which is precisely why only one shift may be `open`
+    at a time (§5.2). An outlet that needs it will need a drawer concept, not a second
+    open shift.
 
 ---
 
@@ -917,6 +1158,13 @@ to occur on this specific project.
 - Compute sales from a client-supplied total
 - Store fuel price as a mutable single-value column
 - Attach totalizer fields directly to `shifts` (they belong on `nozzle_readings`)
+- Reintroduce `shift_type`, or assume a day has exactly two shifts (§4.7)
+- Let a client supply `shifts.sequence` — it is server-assigned, always
+- Treat a carried-forward opening reading as verified fact. It is pre-filled and must be
+  **confirmed**; an assumed opening turns overnight theft into a salesman's debt (§4.7)
+- Compute a shift's opening reading on read instead of storing it (§4.7)
+- Read `started_at` / `ended_at` back through `outlet_shift_templates` — the template
+  supplies a default at creation and is never consulted again (§5.1)
 - Skip `testing_quantity` because it seems like a rounding detail — it is not
 - Assume a quantity is in litres — read `fuel_types.unit_of_measure` (§4.5)
 - Hardcode the ₹2.28 CBG margin, or any margin — it is effective-dated data, not a constant
@@ -925,6 +1173,10 @@ to occur on this specific project.
 - Read `MAX_FLOW_RATE_LPM` in the §6.2 guard — it only seeds `fuel_types`
 - Record an IOCL / PAD payment as an expense — it is a bank movement, not a drawer
   movement, and §6.4 would invent a cash shortage (§12)
+- Block a shift close because collections do not equal sales — that gap is §6.4's variance
+  and §6.6's udhaar, and blocking on it teaches staff to type figures that balance (§6.8)
+- Sum the `cash` collection row together with §6.4's derived `cash_sales` — the cash row is
+  a declaration to check that figure against, not a term in it (§5.2)
 - Use offset pagination
 - Set `allow_origins=["*"]`
 - Add a frontend framework, bundler, or npm dependency
@@ -946,15 +1198,45 @@ to occur on this specific project.
 
 **Open questions to raise with the owner before the relevant phase:**
 - How many nozzles, and what is each meter's rollover ceiling?
-- Are there exactly two shifts a day, always? Any third/relief shift?
-- Who physically counts the cash, and at what time?
+- ~~Are there exactly two shifts a day, always? Any third/relief shift?~~ **Answered:**
+  one 06:00–22:00 shift a day here; other outlets run three. Shifts are now
+  sequence-numbered with no fixed count — see §4.7
+- ~~Who physically counts the cash, and at what time?~~ **Answered:** there is no fixed
+  counting moment. The salesman reconciles his own shift (sales vs UPI, card, credit) and
+  puts the cash in the locker; a shortfall is booked as udhaar **against his own name**.
+  The locker carries a running balance that rolls forward on any day with no bank deposit.
+  Consequences for §6.4/§6.5 are on the Phase 10 list below
 - Is non-fuel (lubricant) sales volume significant enough to itemise in V2?
-- Does the pump currently record testing litres on paper? In what unit?
-- What is the real maximum flow rate of the CBG dispenser, in kg/min? Migration `0003`
-  seeds a deliberately generous 15; confirm before Phase 5 consumes it in §6.2.
+- ~~Does the pump currently record testing litres on paper? In what unit?~~ **Restated
+  above as urgent** — Phase 5 consumes it.
+- **URGENT — What is the real maximum flow rate of the CBG dispenser, in kg/min?**
+  Migration `0003` seeds a deliberately generous 15. **Phase 5 now reads that column in
+  §6.2's guard, so it is live on real money.** Too high and it never fires; too low and it
+  refuses genuine sales on a busy day. The same applies to the 60 L/min seeded for petrol
+  and diesel — the column is authoritative now, and `MAX_FLOW_RATE_LPM` is only its seed.
+- **Do the salesmen record testing quantities on paper today, and in what unit?** §4.2's
+  `testing_quantity` defaults to 0 and Phase 5 requires it to be an *answer*, not an
+  omission. If nothing is recorded on paper, every row will carry 0 and §4.2's small,
+  permanent, daily cash shortfall reappears with the field looking correctly filled in.
 - What are the petrol and diesel dealer commissions per litre? Needed to enter
   `fuel_margins` rows for them; CBG's ₹2.28 is known. Until entered, profit reporting
   covers CBG only.
+- **§5.2 vs §4.7 contradiction, decide before Phase 9 — the salesman shortfall.**
+  §5.2 makes `credit_sales.attachment_id` `NOT NULL` *at the database level*: every udhaar
+  row must carry a receipt photo, enforced so a client cannot bypass it. But this outlet
+  books a salesman's cash shortfall as udhaar **against his own name**, and a shortfall has
+  no receipt — there is nothing to photograph. Either shortfalls become their own record
+  type, or that `NOT NULL` is weakened, and weakening it silently removes the receipt
+  control from genuine *customer* credit sales too. **Recommendation:** keep `credit_sales`
+  receipt-mandatory and give shortfalls a separate table. They are a different economic
+  event — the outcome of a reconciliation, not a sale — and a customer's outstanding
+  balance should not be polluted by staff debts. Cheap now, ugly once rows exist.
+- **Phase 10 consequences of the locker model (§14 above), decide before Phase 10:**
+  cash is not counted at a fixed moment and the drawer is never emptied on a schedule, so
+  §6.5's "opening_balance for day N = actual_counted of day N−1" needs restating for a
+  *running locker* rather than a daily drawer. Also decide whether an occasional full
+  physical locker count is recorded as an audit against the arithmetic balance.
+- Do salesmen hold a change float overnight, and is it counted separately from the locker?
 - **§6.4 vs §5.2 contradiction, decide before Phase 7:** §6.4 subtracts `cash_expenses`
   from expected drawer cash, implying some expenses are not cash — but `expenses` has no
   payment-mode column, so every expense is implicitly cash. Either `expenses` gains a

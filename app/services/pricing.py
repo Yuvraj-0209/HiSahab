@@ -139,3 +139,40 @@ def margin_at(
             ),
         )
     return row.margin_per_unit
+
+
+def revisions_within(
+    db: Session,
+    *,
+    outlet_id: UUID,
+    fuel_type_id: UUID,
+    start: datetime,
+    end: datetime,
+) -> list[datetime]:
+    """Price revisions that fell strictly inside a shift window (§6.3, §13.1).
+
+    Lives here rather than in the sales code so that `fuel_prices` is still queried from
+    exactly one module -- the same reason `rate_at` is here at all.
+
+    §6.3 values a whole shift at the rate effective at its `started_at`, which is an
+    approximation whenever a revision lands mid-shift. The approximation is not silently
+    made: this returns the revisions so the caller can log a warning naming them. §6.3 is
+    explicit that we must "not silently pretend it is exact".
+
+    Strictly greater than `start`: a revision stamped exactly at the shift's start instant
+    is not mid-shift at all. `rate_at` compares with `<=`, so that revision is already the
+    rate the whole shift is valued at -- which is why this outlet's 06:00 shift start makes
+    §6.3 exact rather than approximate (§4.7).
+    """
+    return list(
+        db.execute(
+            select(FuelPrice.effective_from)
+            .where(
+                FuelPrice.outlet_id == outlet_id,
+                FuelPrice.fuel_type_id == fuel_type_id,
+                FuelPrice.effective_from > start,
+                FuelPrice.effective_from < end,
+            )
+            .order_by(FuelPrice.effective_from)
+        ).scalars()
+    )
