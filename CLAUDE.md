@@ -823,8 +823,9 @@ Tuesday's opening.
   amount and hides the ₹1,300 pattern the rule exists to surface. "Live" excludes a
   reversed row and the reversal that cancels it — §6.9's correction, not a fourth expense.
 - **The aggregate check re-runs whenever a row in the group changes** — on create, on a
-  `PATCH` to the amount, and on a reversal — not only at insert. Otherwise three ₹400
-  entries followed by an edit to ₹900 never trips it.
+  `PATCH` to the amount, and on a reversal — not only at insert. Otherwise two ₹300
+  entries (₹600, under the line) followed by an edit of one to ₹800 (₹1,100) never trips
+  it.
 - **Flags are never auto-cleared**, including when a reversal drops a group back under the
   threshold. Auto-clearing would erase a control signal silently; a human clears a flag
   through the review route, the same shape as §13.10's downstream reading flag.

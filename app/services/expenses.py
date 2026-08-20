@@ -142,11 +142,22 @@ def unreviewed_flagged_expenses(db: Session, *, shift: Shift) -> list[Expense]:
     (`PATCH /shifts/{id}/lock`), and a row flagged on a *different* shift by the aggregate
     rule above blocks that other shift's lock, not this one's. Returns rows, not a count,
     so the 409 can name them the way `missing_closing_readings` names nozzle labels.
+
+    **Excludes a flagged row that has since been reversed** (§6.7's Phase 7 amendment): it
+    is money a manager formally cancelled, both rows stay in the audit trail, and blocking
+    a lock on cancelled money is friction with no control value. A bare reversal never
+    clears the original's `requires_review` flag -- flags are never auto-cleared -- so
+    without this exclusion a reversed expense would still block the shift forever, since
+    `review_expense` has nothing left to sign off that changes the drawer.
     """
     return list(
         db.execute(
             select(Expense)
-            .where(Expense.shift_id == shift.id, Expense.requires_review.is_(True))
+            .where(
+                Expense.shift_id == shift.id,
+                Expense.requires_review.is_(True),
+                ~_is_reversed(),
+            )
             .order_by(Expense.created_at, Expense.id)
         )
         .scalars()

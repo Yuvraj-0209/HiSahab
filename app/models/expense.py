@@ -88,13 +88,15 @@ class Expense(Base):
             "reverses_id IS NULL OR reverses_id <> id",
             name="ck_expenses_reversal_not_self",
         ),
-        # `regexp_replace(..., '\s', '', 'g')` rather than `btrim`, deliberately -- 0007
-        # found that one-argument `btrim` strips *spaces only*, so a tab-padded string
-        # would have passed a length check meant to catch content-free descriptions.
-        # Stripping every whitespace character before counting closes that the first time.
+        # Trims only the ENDS, matching the API's `StringConstraints(strip_whitespace=
+        # True)` -- not `regexp_replace(..., '\s', '', 'g')` (every whitespace character,
+        # anywhere), which 0009 replaced after it rejected a genuinely fine description
+        # like "a b": collapsing the internal space left "ab", two characters, and the
+        # database refused input the API had already accepted. `btrim` was never an
+        # option either -- 0007 found it strips spaces only, not tabs or newlines.
         sa.CheckConstraint(
             "description IS NOT NULL "
-            r"AND char_length(regexp_replace(description, '\s', '', 'g')) >= 3",
+            r"AND char_length(regexp_replace(description, '^\s+|\s+$', '', 'g')) >= 3",
             name="ck_expenses_description_length",
         ),
         sa.Index("ix_expenses_shift", "shift_id"),
