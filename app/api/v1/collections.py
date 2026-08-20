@@ -35,7 +35,15 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, condecimal
+from typing import Annotated
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    condecimal,
+)
 from sqlalchemy.orm import Session
 
 from app.api.deps import ShiftAccess, require_shift_access
@@ -128,9 +136,14 @@ class CollectionUpdate(BaseModel):
 class CollectionReversal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # §6.9: "a mandatory reason". min_length so that " " is refused too -- a reason field
-    # that accepts whitespace is a reason field nobody fills in.
-    reason: str = Field(min_length=3, max_length=500)
+    # §6.9: "a mandatory reason". `strip_whitespace` runs BEFORE the length check, which
+    # is the whole point: with a bare `Field(min_length=3)` the check saw the raw string,
+    # so "   " passed at length 3 and the handler's own `.strip()` then stored it as "".
+    # A 60,000 negation with a blank reason is precisely the row §6.9 exists to prevent,
+    # and `ck_collections_reversal_has_reason` only ever required NOT NULL.
+    reason: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)
+    ]
     # Applied in the same transaction. Without it a correction on a closed shift is
     # impossible: the reversal lands and the follow-up POST is refused by `writable=True`.
     replacement_amount: MoneyValue | None = None
@@ -371,6 +384,23 @@ def update_collection(
             ),
         )
 
+    # The mirror of the check above, and the one that was missing. A row that *has been*
+    # reversed is finished: the reversal still carries the negated original amount, so
+    # editing the original to 58,000 after a 60,000 reversal leaves the mode netting to
+    # -2,000 and the audit log claiming a row cancelled at 60,000 now reads 58,000.
+    # §6.9's guarantee is that the original is never touched; `writable=True` alone does
+    # not deliver it, because a reversal is legal on an *open* shift too.
+    if collection_service.reversal_of(db, collection_id=collection.id) is not None:
+        raise AppError(
+            status_code=409,
+            code="COLLECTION_ALREADY_REVERSED",
+            detail=(
+                "This collection has been reversed and its figure is now part of the "
+                "record. Record the corrected amount as a new collection rather than "
+                "editing a cancelled one."
+            ),
+        )
+
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         raise AppError(
@@ -469,7 +499,7 @@ def reverse_collection(
         reversal, replacement = collection_service.reverse(
             db,
             original=original,
-            reason=payload.reason.strip(),
+            reason=payload.reason,  # already stripped by StringConstraints
             actor_id=actor.user.id,
             replacement_amount=payload.replacement_amount,
             replacement_reference=payload.replacement_reference,

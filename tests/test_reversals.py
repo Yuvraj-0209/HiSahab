@@ -397,3 +397,77 @@ async def test_an_over_long_amount_is_refused_at_the_boundary(
 
     assert response.status_code == 422
     assert _net(engine, shift, "cash") == Decimal("60000.00")
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 Step 0: two defects the Phase 6 checklist did not ask about.
+# ---------------------------------------------------------------------------
+
+
+async def test_a_reversed_collection_cannot_be_patched(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_collection: Callable[..., UUID],
+    auth_headers,
+    engine: Engine,
+    clean_collections,
+) -> None:
+    """`test_the_original_row_is_left_byte_identical` guards the reversal call only.
+
+    PATCH refused a row that *was* a reversal but not one that *had been* reversed, and a
+    reversal is legal on an open shift -- so `writable=True` did not close the gap. Editing
+    a cancelled 60,000 down to 58,000 left the reversal still carrying -60,000, netting the
+    mode to -2,000 and making the audit log say a row reversed at 60,000 reads 58,000.
+    """
+    manager = make_user("manager")
+    shift = make_shift(manager, business_date=DAY, sequence=1, status="open")
+    original = make_collection(shift, mode="cash", amount="60000.00")
+
+    reversal = await _reverse(
+        client, shift, original, auth_headers(manager), key="patchguard"
+    )
+    assert reversal.status_code == 201
+
+    response = await client.patch(
+        f"/api/v1/shifts/{shift}/collections/{original}",
+        json={"amount": "58000.00"},
+        headers=auth_headers(manager),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "COLLECTION_ALREADY_REVERSED"
+    assert _net(engine, shift, "cash") == Decimal("0.00")
+
+
+@pytest.mark.parametrize("reason", ["   ", "\t\n ", "  a  "])
+async def test_a_reason_that_is_only_whitespace_is_refused(
+    reason: str,
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_collection: Callable[..., UUID],
+    auth_headers,
+    engine: Engine,
+    clean_collections,
+) -> None:
+    """`Field(min_length=3)` measured the raw string, so three spaces passed.
+
+    The handler then stripped it to "" and `ck_collections_reversal_has_reason` only
+    required NOT NULL -- a permanent 60,000 negation with no stated cause. The sibling
+    test above it parametrises "", "  " and "ab", all of which fail on *length*, so it
+    asserted the module comment's claim without ever exercising it. These cases fail only
+    if stripping happens before the length check.
+    """
+    manager = make_user("manager")
+    shift = make_shift(manager, business_date=DAY, sequence=1, status="closed")
+    original = make_collection(shift, mode="cash", amount="60000.00")
+
+    response = await client.post(
+        f"/api/v1/shifts/{shift}/collections/{original}/reversals",
+        json={"reason": reason},
+        headers={**auth_headers(manager), "Idempotency-Key": f"ws-{len(reason)}"},
+    )
+
+    assert response.status_code == 422
+    assert _net(engine, shift, "cash") == Decimal("60000.00")

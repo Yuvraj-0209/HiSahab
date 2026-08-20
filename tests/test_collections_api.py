@@ -584,3 +584,112 @@ async def test_an_explicit_null_in_a_patch_is_ignored_rather_than_clearing_a_fie
     assert response.status_code == 200
     assert response.json()["amount"] == "9000.00"
     assert response.json()["reference"] == "HDFC-batch-4471"
+
+
+# --- two live rows for one mode (Phase 7 Step 0) ------------------------------
+
+
+async def test_two_live_rows_for_one_mode_are_refused_by_name_not_by_a_500(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_collection: Callable[..., UUID],
+    auth_headers,
+    engine: Engine,
+    clean_collections,
+) -> None:
+    """§5.2's one-live-row rule has no unique constraint, so this state is reachable.
+
+    Two concurrent POSTs under READ COMMITTED both pass the live-row probe and both
+    insert; idempotency only deduplicates the *same* key, and two genuine requests carry
+    different ones. `live_collection_for_mode` used to end in `scalar_one_or_none()`, so
+    the second row turned every later call into `MultipleResultsFound` -- a 500 from GET,
+    from the next POST, and from §6.8's close precondition. The shift became unreadable
+    *and* unclosable, recoverable only by direct SQL.
+
+    The system will not pick between two figures that are both real money, so it refuses
+    and names both. That is what makes the refusal actionable rather than merely loud.
+    """
+    manager = make_user("manager")
+    shift = make_shift(manager, business_date=DAY, sequence=1, status="open")
+    first = make_collection(shift, mode="cash", amount="60000.00")
+    second = make_collection(shift, mode="cash", amount="58000.00")
+
+    response = await client.get(
+        f"/api/v1/shifts/{shift}/collections", headers=auth_headers(manager)
+    )
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["code"] == "DUPLICATE_LIVE_COLLECTIONS"
+    # Both rows named, with their amounts -- the caller can act on the error alone.
+    assert str(first) in body["detail"] and str(second) in body["detail"]
+    assert "60000.00" in body["detail"] and "58000.00" in body["detail"]
+
+
+async def test_the_reversal_route_still_works_while_a_mode_has_two_live_rows(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_collection: Callable[..., UUID],
+    auth_headers,
+    engine: Engine,
+    clean_collections,
+) -> None:
+    """The fix path must stay open while everything else is held shut.
+
+    `reverse_collection` loads its row by id and never calls `live_collection_for_mode`,
+    so the 409 above names two rows *and* the caller can immediately act on that name.
+    Reversing one restores the shift -- no direct SQL, no support ticket.
+    """
+    manager = make_user("manager")
+    shift = make_shift(manager, business_date=DAY, sequence=1, status="open")
+    make_collection(shift, mode="cash", amount="60000.00")
+    duplicate = make_collection(shift, mode="cash", amount="58000.00")
+
+    reversal = await client.post(
+        f"/api/v1/shifts/{shift}/collections/{duplicate}/reversals",
+        json={"reason": "duplicate entry from a retried request"},
+        headers={**auth_headers(manager), "Idempotency-Key": "unwedge"},
+    )
+    assert reversal.status_code == 201
+
+    after = await client.get(
+        f"/api/v1/shifts/{shift}/collections", headers=auth_headers(manager)
+    )
+    assert after.status_code == 200
+    assert after.json()["declared_cash"] == "60000.00"
+
+
+async def test_a_blank_reversal_reason_is_refused_at_the_database_level(
+    engine: Engine,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_collection: Callable[..., UUID],
+) -> None:
+    """0007 strengthened `ck_collections_reversal_has_reason` past NOT NULL.
+
+    The sibling above proves a NULL reason is refused; that was all the constraint ever
+    checked, so an empty string sailed through it -- and the API produced exactly that,
+    because `Field(min_length=3)` measured "   " before the handler stripped it. §6.6's
+    belt-and-braces rule applies here for the same reason it applies to the receipt FK:
+    `services/collections.py::reverse` is reachable from a management command with no
+    Pydantic anywhere in the picture.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    attendant = make_user("attendant")
+    shift = make_shift(attendant, business_date=DAY, sequence=1)
+    original = make_collection(shift, mode="cash", amount="500.00")
+
+    for blank in ("", "   ", "\t"):
+        with pytest.raises(IntegrityError) as caught:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "INSERT INTO collections "
+                        "(shift_id, mode, amount, reverses_id, reversal_reason) "
+                        "VALUES (:s, CAST('cash' AS collection_mode), -500.00, :o, :r)"
+                    ).bindparams(s=shift, o=original, r=blank)
+                )
+        assert "ck_collections_reversal_has_reason" in str(caught.value)

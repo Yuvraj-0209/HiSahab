@@ -1066,6 +1066,54 @@ async def test_a_shift_with_an_overridden_reading_closes(
     assert response.json()["status"] == "closed"
 
 
+async def test_an_override_without_a_meter_reset_is_also_exempt_at_close(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_nozzle: Callable[..., UUID],
+    make_reading: Callable[..., UUID],
+    make_collection: Callable[..., UUID],
+    fuel_type_ids: dict[str, UUID],
+    auth_headers,
+) -> None:
+    """The sibling above sets `meter_reset_occurred=True`, so the `or` short-circuits.
+
+    That made the override half of `revalidate_flow_rates`'s exemption dead weight: the
+    clause could be deleted and the suite would stay green, while a manager who overrode a
+    runaway meter *without* a reset could no longer close the shift -- and the error would
+    name a flow rate rather than the override. This test is the one that fails if the
+    clause goes.
+
+    The reading pair implies 2,000 L across a 20-minute window: 100 L/min against petrol's
+    60 L/min ceiling. Without the exemption the close is refused with FLOW_RATE_IMPLAUSIBLE.
+    """
+    admin = make_user("admin")
+    nozzle = make_nozzle(fuel_type_ids["PETROL"], label="DU-1/N-1")
+    shift = make_shift(admin, business_date=DAY, sequence=1)
+    make_reading(
+        shift, nozzle, opening_reading="1000.00", closing_reading="3000.00",
+    )
+    make_collection(shift, mode="cash", amount="1000.00")
+    override = await client.post(
+        f"/api/v1/shifts/{shift}/readings/{nozzle}/override",
+        json={
+            "manual_quantity_override": "180.000",
+            "override_reason": "Meter ran on after the nozzle was hung up; counted by dip.",
+        },
+        headers=auth_headers(admin),
+    )
+    assert override.status_code == 200
+
+    response = await client.patch(
+        f"/api/v1/shifts/{shift}/close",
+        json={"ended_at": "2026-03-10T06:20:00+05:30"},
+        headers=auth_headers(admin),
+    )
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["status"] == "closed"
+
+
 async def test_an_unread_nozzle_appears_on_the_sales_report_as_unknown(
     client: AsyncClient,
     make_user: Callable[..., UUID],

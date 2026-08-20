@@ -37,6 +37,15 @@ _CONSTRAINT_ERRORS: dict[str, tuple[int, str, str]] = {
         "reset; together they have no defined meaning. Record whichever actually "
         "occurred.",
     ),
+    # Reached only when two managers reverse the same row at the same instant: the
+    # service-level ALREADY_REVERSED check passes for both, and the unique index refuses
+    # the second INSERT. Without this entry that manager got an opaque 500 and no way to
+    # tell whether their reversal had landed.
+    "uq_collections_reverses_id": (
+        409,
+        "ALREADY_REVERSED",
+        "This collection has already been reversed.",
+    ),
 }
 
 

@@ -66,7 +66,9 @@ class Collection(Base):
     __table_args__ = (
         sa.UniqueConstraint("reverses_id", name="uq_collections_reverses_id"),
         sa.CheckConstraint(
-            "reverses_id IS NULL OR reversal_reason IS NOT NULL",
+            # Strengthened in 0007: NOT NULL alone let a whitespace-only reason through.
+            "reverses_id IS NULL "
+            "OR (reversal_reason IS NOT NULL AND reversal_reason ~ '[^[:space:]]')",
             name="ck_collections_reversal_has_reason",
         ),
         sa.CheckConstraint(

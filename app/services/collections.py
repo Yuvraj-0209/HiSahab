@@ -74,14 +74,68 @@ def live_collection_for_mode(
     constraint -- see the long comment in migration 0006. One card machine and one UPI QR
     (confirmed with the owner), and a register that writes one lumped figure per mode, so a
     second live row is a mistake rather than a second genuine payment channel.
+
+    **Two live rows raise, loudly, naming both.** Because there is no unique constraint,
+    two concurrent POSTs under READ COMMITTED can both pass the live-row probe and both
+    insert -- idempotency only deduplicates the *same* key, and two genuine requests carry
+    different ones. This used to end in `scalar_one_or_none()` and therefore in
+    `MultipleResultsFound`, which surfaced as a 500 from `GET`, from the next `POST`, and
+    from §6.8's close precondition: the shift became unreadable *and* unclosable, and only
+    direct SQL got it back.
+
+    Choosing between the two figures is not this function's call -- one of them is real
+    money somebody received. So it refuses, and the refusal carries both ids and both
+    amounts, which is exactly what a human needs to reverse the wrong one. The reversal
+    route loads a row by id and never comes through here, so the fix path stays open while
+    everything else is held shut.
+    """
+    rows = list(
+        db.execute(
+            select(Collection)
+            .where(
+                Collection.shift_id == shift_id,
+                Collection.mode == mode.value,
+                Collection.reverses_id.is_(None),
+                ~_is_reversed(),
+            )
+            .order_by(Collection.created_at, Collection.id)
+        )
+        .scalars()
+        .all()
+    )
+    if len(rows) > 1:
+        named = "; ".join(f"{row.id} for {row.amount}" for row in rows)
+        logger.error(
+            "duplicate live collections for one mode",
+            extra={
+                "shift_id": str(shift_id),
+                "mode": mode.value,
+                "collection_ids": [str(row.id) for row in rows],
+            },
+        )
+        raise AppError(
+            status_code=409,
+            code="DUPLICATE_LIVE_COLLECTIONS",
+            detail=(
+                f"This shift holds {len(rows)} live {mode.value} figures where §5.2 "
+                f"allows one: {named}. Both are real rows and the system will not pick "
+                "between them. Reverse whichever should not be there (§6.9) and this "
+                "shift reads normally again."
+            ),
+        )
+    return rows[0] if rows else None
+
+
+def reversal_of(db: Session, *, collection_id: UUID) -> UUID | None:
+    """The id of the row that cancels this one, if any.
+
+    Extracted so `reverse` and the `PATCH` route ask the question the same way. They used
+    to disagree: `reverse` refused to reverse an already-reversed row, while `PATCH` only
+    refused to edit a row that *was* a reversal -- so a cancelled original stayed editable
+    and the mode's net total could be driven negative.
     """
     return db.execute(
-        select(Collection).where(
-            Collection.shift_id == shift_id,
-            Collection.mode == mode.value,
-            Collection.reverses_id.is_(None),
-            ~_is_reversed(),
-        )
+        select(Collection.id).where(Collection.reverses_id == collection_id)
     ).scalar_one_or_none()
 
 
@@ -191,10 +245,7 @@ def reverse(
             ),
         )
 
-    already = db.execute(
-        select(Collection.id).where(Collection.reverses_id == original.id)
-    ).scalar_one_or_none()
-    if already is not None:
+    if reversal_of(db, collection_id=original.id) is not None:
         raise AppError(
             status_code=409,
             code="ALREADY_REVERSED",
