@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from app.models.audit import AuditLog
 from app.models.collection import Collection
+from app.models.expense import Expense
 from app.models.fuel import FuelMargin, FuelPrice, FuelType
 from app.models.idempotency import IdempotencyKey
 from app.models.nozzle import Nozzle
@@ -21,6 +22,7 @@ from app.models.user import OutletMembership, UserProfile
 __all__ = [
     "AuditLog",
     "Collection",
+    "Expense",
     "FuelMargin",
     "FuelPrice",
     "FuelType",

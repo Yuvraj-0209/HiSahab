@@ -18,7 +18,7 @@ def test_schema_is_at_head(engine: Engine) -> None:
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert version == "0007"
+    assert version == "0008"
 
 
 def test_pgcrypto_extension_is_installed(engine: Engine) -> None:
@@ -1022,3 +1022,160 @@ def test_the_collection_mode_enum_is_its_own_type(engine: Engine) -> None:
             )
         }
     assert labels == {"cash", "card", "upi", "wallet"}
+
+
+# --- Phase 7: expenses ---------------------------------------------------------
+
+
+def test_expenses_are_not_append_only(engine: Engine) -> None:
+    """Same deliberate difference as `collections`.
+
+    An expense is corrected while its shift is open -- that is the normal workflow -- so
+    immutability comes from shift *status* (§6.9) via `require_shift_access`, not from a
+    trigger.
+    """
+    with engine.connect() as connection:
+        triggers = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                    "WHERE c.relname = 'expenses' AND NOT t.tgisinternal"
+                )
+            )
+        }
+    assert triggers == set()
+
+
+def test_expenses_have_no_unique_category_constraint(engine: Engine) -> None:
+    """Unlike `collections`' one-live-row-per-mode rule, several expenses in one category
+    on one shift are completely normal -- two maintenance call-outs in a day is not a
+    mistake. The only unique constraint here is the reversal-once-ever rule."""
+    with engine.connect() as connection:
+        constraints = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT conname FROM pg_constraint c "
+                    "JOIN pg_class t ON t.oid = c.conrelid "
+                    "WHERE t.relname = 'expenses' AND c.contype = 'u'"
+                )
+            )
+        }
+    assert constraints == {"uq_expenses_reverses_id"}
+
+
+def test_expenses_carry_every_check_constraint(engine: Engine) -> None:
+    with engine.connect() as connection:
+        checks = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT conname FROM pg_constraint c "
+                    "JOIN pg_class t ON t.oid = c.conrelid "
+                    "WHERE t.relname = 'expenses' AND c.contype = 'c' "
+                    "AND conname LIKE 'ck_%'"
+                )
+            )
+        }
+    assert checks == {
+        "ck_expenses_reversal_has_reason",
+        "ck_expenses_amount_sign",
+        "ck_expenses_reversal_not_self",
+        "ck_expenses_description_length",
+    }
+
+
+def test_expenses_have_no_outlet_id(engine: Engine) -> None:
+    """§5.0's rule: derivable via `shift_id -> shifts.outlet_id`, so it waits."""
+    with engine.connect() as connection:
+        columns = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'expenses'"
+                )
+            )
+        }
+    assert "outlet_id" not in columns
+
+
+def test_expenses_have_no_attachment_column_yet(engine: Engine) -> None:
+    """§5.2 lists `attachment_id`, but `attachments` does not exist until Phase 8 and §11
+    forbids scaffolding ahead of a table that isn't built yet. It lands as a nullable-FK
+    ALTER TABLE in that phase's migration."""
+    with engine.connect() as connection:
+        columns = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'expenses'"
+                )
+            )
+        }
+    assert "attachment_id" not in columns
+
+
+def test_money_on_expenses_is_numeric_not_float(engine: Engine) -> None:
+    """§3 rule 1, asserted against the live database rather than the model."""
+    with engine.connect() as connection:
+        data_type, precision, scale = connection.execute(
+            text(
+                "SELECT data_type, numeric_precision, numeric_scale "
+                "FROM information_schema.columns "
+                "WHERE table_name = 'expenses' AND column_name = 'amount'"
+            )
+        ).one()
+    assert (data_type, precision, scale) == ("numeric", 12, 2)
+
+
+def test_the_expense_category_enum_has_no_fuel_purchase_and_no_misc(
+    engine: Engine,
+) -> None:
+    """CLAUDE.md §5.2's Phase 7 note: `fuel_purchase` invited recording a bank/IOCL
+    settlement as a drawer expense, and `misc`/`other` were synonyms that could split one
+    real expense across both labels and defeat §6.7's per-category aggregate."""
+    with engine.connect() as connection:
+        labels = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+                    "WHERE t.typname = 'expense_category'"
+                )
+            )
+        }
+    assert labels == {"salary", "maintenance", "electricity", "other"}
+
+
+def test_the_expense_mode_enum_is_its_own_type(engine: Engine) -> None:
+    """Not shared with `collection_mode`: an expense can be paid `bank_transfer`, a
+    collection cannot, and `collections` has no `wallet`-equivalent for money going out."""
+    with engine.connect() as connection:
+        labels = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+                    "WHERE t.typname = 'expense_mode'"
+                )
+            )
+        }
+    assert labels == {"cash", "card", "upi", "bank_transfer"}
+
+
+def test_expenses_review_index_is_partial(engine: Engine) -> None:
+    """Copied from `nozzle_readings`' `ix_nozzle_readings_review` -- an index over every
+    row that is *not* flagged is dead weight; the review queue only ever scans the flagged
+    ones."""
+    with engine.connect() as connection:
+        definition = connection.execute(
+            text(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE tablename = 'expenses' AND indexname = 'ix_expenses_review'"
+            )
+        ).scalar_one()
+    assert "WHERE" in definition
+    assert "requires_review" in definition
