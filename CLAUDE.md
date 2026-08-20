@@ -545,15 +545,47 @@ unambiguous: there is always exactly one closing reading to carry forward.
 **`expenses`** (renamed from `cash_flows` — the old name was ambiguous, since
 collections and deposits are also cash flows)
 - `shift_id` — FK
-- `category` — enum: `salary` | `maintenance` | `electricity` | `fuel_purchase` |
-  `misc` | `other` (extend as needed; keep it an enum, not free text)
-- `amount` — NUMERIC(12,2), CHECK > 0
-- `description` — text, max 500 chars
+- `category` — enum: `salary` | `maintenance` | `electricity` | `other`
+  (extend as needed; keep it an enum, not free text)
+- `mode` — enum: `cash` | `card` | `upi` | `bank_transfer`. **Phase 7 amendment.**
+- `amount` — NUMERIC(12,2). **Sign rule, not a bare `CHECK > 0`** — see the note below
+- `description` — text, NOT NULL, 3–500 chars
 - `paid_to` — text nullable
-- `attachment_id` — FK nullable
+- `attachment_id` — FK nullable. **Deferred to Phase 8** — `attachments` does not exist
+  until then, and §11 forbids scaffolding ahead. The column lands with that phase's
+  migration, not Phase 7's
+- `reverses_id` — FK to `expenses.id`, nullable, unique. **Phase 7 amendment**
+- `reversal_reason` — text, nullable, required (and non-blank) when `reverses_id` is set.
+  **Phase 7 amendment**
 - `requires_review` — boolean, default false
 - `reviewed_by`, `reviewed_at` — nullable
 - `review_note` — text nullable
+
+> **Why `fuel_purchase` was removed from the category enum.** Restocking the tank is paid
+> from the bank account and settles against the IOCL ledger — it never touches the drawer,
+> so it is not a cash expense in any sense §6.4 or §6.7 can reason about. It belongs to the
+> post-V1 bank/PAD module §12 already scopes out (see the §14 note below). Leaving the label
+> in the category dropdown invited exactly the mistake §14 forbids: recording a lakh-rupee
+> bank settlement as a drawer expense. `misc` was folded into `other` at the same time —
+> two synonymous categories can split one real expense across both labels, silently
+> defeating §6.7's per-category daily aggregate (₹600 under `misc` plus ₹600 under `other`
+> never sums to ₹1,200).
+>
+> **Why `mode` was added.** §6.4 subtracts `cash_expenses`, which only makes sense if some
+> expenses are *not* cash — but the original column list had no way to say that. Without
+> `mode`, Phase 10 would have had to treat every expense as a drawer movement: a ₹40,000
+> electricity bill paid online would then read as a ₹40,000 cash shortfall, and §14 already
+> records that this outlet books a shortfall as udhaar against the salesman's own name. `mode`
+> is NOT NULL with no default — an answer, never an omission, exactly as §6.8 requires an
+> explicit ₹0 cash declaration rather than accepting silence. Phase 10 filters `mode == cash`
+> when assembling §6.4's equation; a `card`/`upi`/`bank_transfer` expense is on the record but
+> never subtracted from the drawer.
+>
+> **Why the sign rule replaces `CHECK > 0`.** §6.9 corrections are negative rows, which a
+> bare `CHECK > 0` makes impossible the moment the first expense needs reversing. The rule
+> is the same shape as `collections`: `(reverses_id IS NULL AND amount > 0) OR (reverses_id
+> IS NOT NULL AND amount < 0)`. Strict, not `>=`/`<=` — unlike a cash collection, a ₹0
+> expense records nothing and has no reason to exist.
 
 **`bank_deposits`**
 - `shift_id` — FK
@@ -742,6 +774,13 @@ variance          = actual_counted − expected_closing
 - Only `mode = cash` repayments enter this equation. UPI/bank repayments do not touch
   the drawer.
 - `total_sales` is derived from nozzle readings, never entered.
+- **`cash_expenses` means `expenses` rows with `mode = cash`, and only those.** §5.2 gives
+  `expenses` a `mode` column precisely so this line is answerable — before Phase 7, every
+  expense was implicitly cash because there was nowhere to record otherwise, and that read
+  a bank-paid bill as a drawer withdrawal that never happened. A `card` / `upi` /
+  `bank_transfer` expense is on the record for reporting but contributes nothing to this
+  equation, the same way a `card`/`upi`/`wallet` collection contributes nothing to
+  `cash_sales` except through the subtraction already shown.
 
 ### 6.5 Rolling balance
 
@@ -778,6 +817,20 @@ Tuesday's opening.
 - **Also flag** when the sum of a single category for one `business_date` exceeds
   the threshold. A single ₹1,000 rule is trivially defeated by two ₹600 entries;
   without this, the control is theatre.
+- **The aggregate rule flags every live, unreviewed row in that `(business_date, category)`
+  group, not only the row that crossed the line.** Three maintenance entries of ₹400, ₹400
+  and ₹500 cross ₹1,000 together; flagging only the ₹500 row shows a manager a trivial
+  amount and hides the ₹1,300 pattern the rule exists to surface. "Live" excludes a
+  reversed row and the reversal that cancels it — §6.9's correction, not a fourth expense.
+- **The aggregate check re-runs whenever a row in the group changes** — on create, on a
+  `PATCH` to the amount, and on a reversal — not only at insert. Otherwise three ₹400
+  entries followed by an edit to ₹900 never trips it.
+- **Flags are never auto-cleared**, including when a reversal drops a group back under the
+  threshold. Auto-clearing would erase a control signal silently; a human clears a flag
+  through the review route, the same shape as §13.10's downstream reading flag.
+- **A reversed expense does not block a lock.** It is money a manager formally cancelled;
+  both rows stay in the audit trail, but blocking a lock on cancelled money is friction with
+  no control value.
 - A shift **cannot be locked** while it has unreviewed flagged expenses.
   Return 409, code `UNREVIEWED_EXPENSES_EXIST`.
 
@@ -1173,6 +1226,11 @@ to occur on this specific project.
 - Read `MAX_FLOW_RATE_LPM` in the §6.2 guard — it only seeds `fuel_types`
 - Record an IOCL / PAD payment as an expense — it is a bank movement, not a drawer
   movement, and §6.4 would invent a cash shortage (§12)
+- **Record a fuel restock / tanker settlement as an expense, in any `mode`.** This is why
+  `fuel_purchase` was removed from `expenses.category` in Phase 7 — the payment settles
+  against the IOCL ledger, not the drawer, and §12 already puts tanker delivery entirely out
+  of V1. Adding it back as a category, in any mode, reopens exactly the trap the line above
+  already forbids for the IOCL/PAD case
 - Block a shift close because collections do not equal sales — that gap is §6.4's variance
   and §6.6's udhaar, and blocking on it teaches staff to type figures that balance (§6.8)
 - Sum the `cash` collection row together with §6.4's derived `cash_sales` — the cash row is
@@ -1237,10 +1295,9 @@ to occur on this specific project.
   *running locker* rather than a daily drawer. Also decide whether an occasional full
   physical locker count is recorded as an audit against the arithmetic balance.
 - Do salesmen hold a change float overnight, and is it counted separately from the locker?
-- **§6.4 vs §5.2 contradiction, decide before Phase 7:** §6.4 subtracts `cash_expenses`
-  from expected drawer cash, implying some expenses are not cash — but `expenses` has no
-  payment-mode column, so every expense is implicitly cash. Either `expenses` gains a
-  `mode`, or §6.4 must say expenses are cash-only. Cheap now, ugly once rows exist.
+- ~~§6.4 vs §5.2 contradiction, decide before Phase 7~~ **Answered in Phase 7:**
+  `expenses` gained a `mode` column (§5.2), and §6.4 now states that `cash_expenses` means
+  `mode = cash` rows only.
 
 ---
 
