@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import date
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -23,16 +23,40 @@ pytestmark = pytest.mark.anyio
 DAY = date(2026, 4, 20)
 
 
-def _post(client: AsyncClient, shift_id: UUID, headers: dict[str, str], key: str, **body):
-    return client.post(
+async def _category_id(client: AsyncClient, headers: dict[str, str], code: str) -> str:
+    """Resolve a category code to its id through the API.
+
+    Phase 8 made the category an FK (§5.1), so a test can no longer name one inline. Read
+    back over HTTP rather than from a fixture dict for two reasons: it keeps `_post`'s
+    signature -- and therefore every call site -- unchanged, and it deliberately does not
+    cache. `test_migrations.py` downgrades to base and back part-way through the run,
+    re-seeding these rows with fresh ids; a cached id would be a foreign key to a row that
+    no longer exists, which is the exact hazard `expense_category_ids` documents.
+    """
+    response = await client.get("/api/v1/expense-categories", headers=headers)
+    return next(
+        row["id"] for row in response.json() if row["code"] == code.upper()
+    )
+
+
+async def _post(
+    client: AsyncClient, shift_id: UUID, headers: dict[str, str], key: str, **body
+):
+    payload = {
+        "mode": "cash",
+        "amount": "500.00",
+        "description": "routine upkeep",
+        **body,
+    }
+    # `category="electricity"` stays a legible way for a test to say what it means; the
+    # translation to an id lives here rather than at forty call sites.
+    code = payload.pop("category", "maintenance")
+    if "category_id" not in payload:
+        payload["category_id"] = await _category_id(client, headers, code)
+
+    return await client.post(
         f"/api/v1/shifts/{shift_id}/expenses",
-        json={
-            "category": "maintenance",
-            "mode": "cash",
-            "amount": "500.00",
-            "description": "routine upkeep",
-            **body,
-        },
+        json=payload,
         headers={**headers, "Idempotency-Key": key},
     )
 
@@ -67,7 +91,9 @@ async def test_an_expense_is_recorded_with_its_category_mode_and_amount(
 
     assert response.status_code == 201
     body = response.json()
-    assert body["category"] == "electricity"
+    assert body["category_code"] == "ELECTRICITY"
+    # The id is the fact the row stores; the code is the convenience alongside it (§5.1).
+    assert body["category_id"] is not None
     assert body["mode"] == "bank_transfer"
     # A string, not a number -- §3 rule 1 end to end.
     assert body["amount"] == "820.00"
@@ -95,7 +121,9 @@ async def test_several_expenses_may_share_a_category_on_one_shift(
     assert second.status_code == 201
 
     listing = await client.get(f"/api/v1/shifts/{shift}/expenses", headers=headers)
-    assert listing.json()["totals_by_category"] == {"maintenance": "500.00"}
+    # Keyed by category *code* since Phase 8 -- a UUID key would force every reader to
+    # carry a second lookup around just to say "maintenance" (§5.1).
+    assert listing.json()["totals_by_category"] == {"MAINTENANCE": "500.00"}
 
 
 async def test_a_zero_amount_is_refused(
@@ -174,7 +202,34 @@ async def test_a_missing_mode_is_refused(
     assert _count(engine, shift) == 0
 
 
-async def test_fuel_purchase_is_not_a_valid_category(
+async def test_there_is_no_fuel_purchase_category_to_spend_against(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """§5.2's Phase 7 amendment removed `fuel_purchase`: a tanker restock settles against
+    the IOCL ledger and never touches the drawer, so recording one here would be exactly
+    the mistake §14 forbids for IOCL/PAD payments.
+
+    **This test is weaker than the one it replaces, and deliberately so.** Until Phase 8 the
+    enum made a fuel-purchase expense *unrepresentable* -- there was no such value to send.
+    Now that categories are admin-managed data (§5.1), an admin can create one, and the
+    schema guarantees nothing. All that can be asserted is that none ships by default; the
+    real control moved to §14's guardrail list and is enforced by a human, not a type.
+    Recorded here so a green suite is not mistaken for a safety net.
+    """
+    attendant = make_user("attendant")
+
+    response = await client.get(
+        "/api/v1/expense-categories?include_inactive=true",
+        headers=auth_headers(attendant),
+    )
+
+    codes = {row["code"] for row in response.json()}
+    assert not {c for c in codes if "FUEL" in c or "IOCL" in c or "PAD" in c}
+
+
+async def test_an_unknown_category_id_is_refused_and_writes_nothing(
     client: AsyncClient,
     make_user: Callable[..., UUID],
     make_shift: Callable[..., UUID],
@@ -182,17 +237,19 @@ async def test_fuel_purchase_is_not_a_valid_category(
     engine: Engine,
     clean_expenses,
 ) -> None:
-    """§5.2's Phase 7 amendment removed it: a tanker restock settles against the IOCL
-    ledger and never touches the drawer, so recording one here would be exactly the
-    mistake §14 forbids for IOCL/PAD payments."""
+    """The FK guarantees a category *exists*; it cannot say the id was meant for this
+    outlet. `resolve_category` is what closes that, and it must refuse before any row is
+    written -- a partially-applied create is what §6.9's whole append-only discipline
+    exists to avoid."""
     attendant = make_user("attendant")
     shift = make_shift(attendant, business_date=DAY, sequence=1)
 
     response = await _post(
-        client, shift, auth_headers(attendant), "fp", category="fuel_purchase"
+        client, shift, auth_headers(attendant), "unknown-cat", category_id=str(uuid4())
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 404
+    assert response.json()["code"] == "CATEGORY_NOT_FOUND"
     assert _count(engine, shift) == 0
 
 
@@ -209,9 +266,11 @@ async def test_the_amount_sign_rule_is_enforced_at_the_database_level(
         with engine.begin() as connection:
             connection.execute(
                 text(
-                    "INSERT INTO expenses (shift_id, category, mode, amount, "
-                    "description) VALUES (:s, CAST('maintenance' AS expense_category), "
-                    "CAST('cash' AS expense_mode), 0.00, 'zero expense')"
+                    "INSERT INTO expenses (shift_id, category_id, mode, amount, "
+                    "description) SELECT :s, ec.id, CAST('cash' AS expense_mode), "
+                    "0.00, 'zero expense' FROM expense_categories ec "
+                    "JOIN shifts sh ON sh.outlet_id = ec.outlet_id "
+                    "WHERE sh.id = :s AND ec.code = 'MAINTENANCE'"
                 ).bindparams(s=shift)
             )
     assert "ck_expenses_amount_sign" in str(caught.value)
@@ -232,9 +291,11 @@ async def test_a_description_of_only_whitespace_is_refused_at_the_database_level
         with engine.begin() as connection:
             connection.execute(
                 text(
-                    "INSERT INTO expenses (shift_id, category, mode, amount, "
-                    "description) VALUES (:s, CAST('maintenance' AS expense_category), "
-                    "CAST('cash' AS expense_mode), 500.00, :d)"
+                    "INSERT INTO expenses (shift_id, category_id, mode, amount, "
+                    "description) SELECT :s, ec.id, CAST('cash' AS expense_mode), "
+                    "500.00, :d FROM expense_categories ec "
+                    "JOIN shifts sh ON sh.outlet_id = ec.outlet_id "
+                    "WHERE sh.id = :s AND ec.code = 'MAINTENANCE'"
                 ).bindparams(s=shift, d="\t\t")
             )
     assert "ck_expenses_description_length" in str(caught.value)
@@ -278,7 +339,10 @@ async def test_a_post_without_the_idempotency_key_is_refused(
     response = await client.post(
         f"/api/v1/shifts/{shift}/expenses",
         json={
-            "category": "maintenance", "mode": "cash", "amount": "500.00",
+            "category_id": await _category_id(
+                client, auth_headers(attendant), "MAINTENANCE"
+            ),
+            "mode": "cash", "amount": "500.00",
             "description": "upkeep",
         },
         headers=auth_headers(attendant),
@@ -427,7 +491,7 @@ async def test_listing_nets_a_reversal_into_the_category_total(
         f"/api/v1/shifts/{shift}/expenses", headers=auth_headers(manager)
     )
 
-    assert response.json()["totals_by_category"] == {"maintenance": "0.00"}
+    assert response.json()["totals_by_category"] == {"MAINTENANCE": "0.00"}
     items = response.json()["items"]
     assert len(items) == 2
     reversed_flags = {item["id"]: item["is_reversed"] for item in items}
@@ -470,9 +534,11 @@ async def test_the_description_check_still_trims_leading_and_trailing_whitespace
         with engine.begin() as connection:
             connection.execute(
                 text(
-                    "INSERT INTO expenses (shift_id, category, mode, amount, "
-                    "description) VALUES (:s, CAST('maintenance' AS expense_category), "
-                    "CAST('cash' AS expense_mode), 500.00, '  ab  ')"
+                    "INSERT INTO expenses (shift_id, category_id, mode, amount, "
+                    "description) SELECT :s, ec.id, CAST('cash' AS expense_mode), "
+                    "500.00, '  ab  ' FROM expense_categories ec "
+                    "JOIN shifts sh ON sh.outlet_id = ec.outlet_id "
+                    "WHERE sh.id = :s AND ec.code = 'MAINTENANCE'"
                 ).bindparams(s=shift)
             )
     assert "ck_expenses_description_length" in str(caught.value)
@@ -552,7 +618,10 @@ async def test_a_refused_create_releases_its_idempotency_key(
     shift = make_shift(attendant, business_date=DAY, sequence=1)
     headers = {**auth_headers(attendant), "Idempotency-Key": "release-me"}
     body = {
-        "category": "maintenance", "mode": "cash", "amount": "500.00",
+        "category_id": await _category_id(
+            client, auth_headers(attendant), "MAINTENANCE"
+        ),
+        "mode": "cash", "amount": "500.00",
         "description": "upkeep",
     }
 
@@ -604,3 +673,25 @@ async def test_patch_ignores_an_explicit_null_rather_than_clearing_the_field(
     body = response.json()
     assert body["paid_to"] == "ABC Electricals"
     assert body["amount"] == "550.00"
+
+
+async def test_listing_a_shift_with_no_expenses_returns_an_empty_page(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """The empty-batch branch of `category_codes`: with no rows there are no category ids
+    to look up, and the lookup must short-circuit rather than issue `WHERE id IN ()`."""
+    attendant = make_user("attendant")
+    shift = make_shift(attendant, business_date=DAY, sequence=1)
+
+    response = await client.get(
+        f"/api/v1/shifts/{shift}/expenses", headers=auth_headers(attendant)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["items"] == []
+    assert body["totals_by_category"] == {}
+    assert body["truncated"] is False

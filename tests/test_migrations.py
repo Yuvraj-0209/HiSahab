@@ -18,7 +18,7 @@ def test_schema_is_at_head(engine: Engine) -> None:
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert version == "0009"
+    assert version == "0010"
 
 
 def test_pgcrypto_extension_is_installed(engine: Engine) -> None:
@@ -1131,23 +1131,29 @@ def test_money_on_expenses_is_numeric_not_float(engine: Engine) -> None:
     assert (data_type, precision, scale) == ("numeric", 12, 2)
 
 
-def test_the_expense_category_enum_has_no_fuel_purchase_and_no_misc(
+def test_no_seeded_category_is_a_fuel_purchase_or_a_synonym_of_other(
     engine: Engine,
 ) -> None:
-    """CLAUDE.md §5.2's Phase 7 note: `fuel_purchase` invited recording a bank/IOCL
-    settlement as a drawer expense, and `misc`/`other` were synonyms that could split one
-    real expense across both labels and defeat §6.7's per-category aggregate."""
+    """CLAUDE.md §5.2's Phase 7 note, carried onto 0010's table.
+
+    `fuel_purchase` invited recording a bank/IOCL settlement as a drawer expense, and
+    `misc`/`other` were synonyms that could split one real expense across both labels and
+    defeat §6.7's per-category aggregate.
+
+    **This test got weaker in Phase 8 and that is worth being honest about.** Until 0010,
+    the absence of `fuel_purchase` was enforced by the enum -- there was no way to record
+    one. Now an admin can create any category through the API, so the schema guarantees
+    nothing and this only checks that the *seed* stays clean. The real control moved to
+    §14's guardrail list and `app/core/expenses.py`'s docstring, where a human has to keep
+    making the choice. Recorded here so nobody mistakes a passing test for a safety net.
+    """
     with engine.connect() as connection:
-        labels = {
+        codes = {
             row[0]
-            for row in connection.execute(
-                text(
-                    "SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
-                    "WHERE t.typname = 'expense_category'"
-                )
-            )
+            for row in connection.execute(text("SELECT code FROM expense_categories"))
         }
-    assert labels == {"salary", "maintenance", "electricity", "other"}
+    assert codes == {"SALARY", "MAINTENANCE", "ELECTRICITY", "OTHER"}
+    assert not {c for c in codes if "FUEL" in c or "IOCL" in c or "PAD" in c or c == "MISC"}
 
 
 def test_the_expense_mode_enum_is_its_own_type(engine: Engine) -> None:
@@ -1179,3 +1185,151 @@ def test_expenses_review_index_is_partial(engine: Engine) -> None:
         ).scalar_one()
     assert "WHERE" in definition
     assert "requires_review" in definition
+
+
+# --- 0010: the category enum becomes a table (Phase 8) -----------------------
+
+
+def test_expense_categories_are_seeded_and_outlet_scoped(engine: Engine) -> None:
+    with engine.connect() as connection:
+        rows = {
+            row[0]: row[1]
+            for row in connection.execute(
+                text("SELECT code, requires_receipt FROM expense_categories")
+            )
+        }
+    # The four 0008 shipped, so the backfill has somewhere to point. Everything else is
+    # data entry now -- that is the whole purpose of the table.
+    assert set(rows) == {"SALARY", "MAINTENANCE", "ELECTRICITY", "OTHER"}
+    # §6.11: `OTHER` is the bucket for spending nobody anticipated, which is exactly the
+    # spending that most deserves a piece of paper behind it.
+    assert rows["OTHER"] is True
+    assert not any(rows[code] for code in ("SALARY", "MAINTENANCE", "ELECTRICITY"))
+
+
+def test_the_expense_category_enum_type_is_gone(engine: Engine) -> None:
+    """`op.drop_column` does not drop an enum type -- 0008's own downgrade documents that
+    trap, and 0010 is where forgetting it would bite: the orphaned type would collide with
+    the `CREATE TYPE` in 0010's downgrade."""
+    with engine.connect() as connection:
+        remaining = connection.execute(
+            text("SELECT count(*) FROM pg_type WHERE typname = 'expense_category'")
+        ).scalar_one()
+    assert remaining == 0
+
+
+def test_expenses_no_longer_has_a_category_enum_column(engine: Engine) -> None:
+    with engine.connect() as connection:
+        columns = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'expenses'"
+                )
+            )
+        }
+    assert "category" not in columns
+    assert "category_id" in columns
+
+
+def test_a_lowercase_category_code_is_refused_at_the_database_level(
+    engine: Engine,
+) -> None:
+    """Belt and braces (§6.6). The API validates the same pattern, but the constraint is
+    what actually stops `TEA`/`tea`/`Tea` becoming three categories and quietly disabling
+    §6.7's aggregate rule -- the exact failure §5.2's "not free text" warning names."""
+    with pytest.raises(IntegrityError, match="ck_expense_categories_code_format"):
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO expense_categories (outlet_id, code, display_name) "
+                    "SELECT id, 'tea', 'Tea' FROM outlets LIMIT 1"
+                )
+            )
+
+
+def test_0010_backfills_existing_expenses_onto_the_new_category_table(
+    engine: Engine, alembic_config: Config
+) -> None:
+    """The one path the rest of the suite can never reach.
+
+    Every other migration test runs against a database migrated from empty, so 0010's
+    `UPDATE ... FROM shifts, expense_categories` never touches a row and its correctness is
+    taken on faith. A backfill that silently maps nothing still passes `alembic upgrade`,
+    and the damage -- every historical expense pointing at the wrong category, or the
+    migration aborting on real data during a deploy -- only shows up where it costs most.
+
+    So: roll back to 0009, write an expense through the *old* enum column, migrate forward,
+    and prove the row landed on the matching `expense_categories` id.
+    """
+    command.downgrade(alembic_config, "0009")
+
+    user_id = uuid4()
+    shift_id = uuid4()
+    expense_id = uuid4()
+
+    try:
+        with engine.begin() as connection:
+            outlet_id = connection.execute(
+                text("SELECT id FROM outlets LIMIT 1")
+            ).scalar_one()
+            connection.execute(
+                text(
+                    "INSERT INTO user_profiles (id, full_name) "
+                    "VALUES (:id, 'Backfill Tester')"
+                ).bindparams(id=user_id)
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO shifts "
+                    "(id, outlet_id, business_date, sequence, started_at, attendant_id, "
+                    " status) "
+                    "VALUES (:id, :outlet, DATE '2026-03-01', 1, "
+                    "        TIMESTAMPTZ '2026-03-01 06:00+05:30', :att, "
+                    "        CAST('open' AS shift_status))"
+                ).bindparams(id=shift_id, outlet=outlet_id, att=user_id)
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO expenses "
+                    "(id, shift_id, category, mode, amount, description) "
+                    "VALUES (:id, :shift, CAST('maintenance' AS expense_category), "
+                    "        CAST('cash' AS expense_mode), 500.00, 'pump servicing')"
+                ).bindparams(id=expense_id, shift=shift_id)
+            )
+
+        command.upgrade(alembic_config, "0010")
+
+        with engine.connect() as connection:
+            code = connection.execute(
+                text(
+                    "SELECT ec.code FROM expenses e "
+                    "JOIN expense_categories ec ON ec.id = e.category_id "
+                    "WHERE e.id = :id"
+                ).bindparams(id=expense_id)
+            ).scalar_one()
+
+        assert code == "MAINTENANCE"
+
+        # And the round trip back, which is where the lossy branch lives.
+        command.downgrade(alembic_config, "0009")
+        with engine.connect() as connection:
+            restored = connection.execute(
+                text("SELECT category::text FROM expenses WHERE id = :id").bindparams(
+                    id=expense_id
+                )
+            ).scalar_one()
+        assert restored == "maintenance"
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM expenses WHERE id = :id").bindparams(id=expense_id)
+            )
+            connection.execute(
+                text("DELETE FROM shifts WHERE id = :id").bindparams(id=shift_id)
+            )
+            connection.execute(
+                text("DELETE FROM user_profiles WHERE id = :id").bindparams(id=user_id)
+            )
+        command.upgrade(alembic_config, "head")

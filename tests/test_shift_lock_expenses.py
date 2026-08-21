@@ -40,7 +40,9 @@ async def test_a_shift_with_an_unreviewed_flagged_expense_cannot_lock(
     assert body["code"] == "UNREVIEWED_EXPENSES_EXIST"
     # The message names the flagged row -- category and amount -- so an admin blocked
     # from locking knows what to review.
-    assert "maintenance" in body["detail"]
+    # The category *code*, since Phase 8 -- the message names what a manager is being asked
+    # to look at, and `category_codes` is what resolves the FK back to a readable label.
+    assert "MAINTENANCE" in body["detail"]
     assert "1500.00" in body["detail"]
 
 

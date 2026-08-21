@@ -58,10 +58,6 @@ from app.db.base import Base
 # Literal labels and create_type=False, matching collection_mode in 0006. sa.Enum(PyEnum)
 # would derive the labels from Python declaration order, so reordering the enum members
 # would produce phantom autogenerate drift against a database that never changed.
-_expense_category_enum = postgresql.ENUM(
-    "salary", "maintenance", "electricity", "other",
-    name="expense_category", create_type=False,
-)
 _expense_mode_enum = postgresql.ENUM(
     "cash", "card", "upi", "bank_transfer", name="expense_mode", create_type=False
 )
@@ -100,7 +96,7 @@ class Expense(Base):
             name="ck_expenses_description_length",
         ),
         sa.Index("ix_expenses_shift", "shift_id"),
-        sa.Index("ix_expenses_shift_category", "shift_id", "category"),
+        sa.Index("ix_expenses_shift_category", "shift_id", "category_id"),
         sa.Index(
             "ix_expenses_review",
             "requires_review",
@@ -114,7 +110,12 @@ class Expense(Base):
     shift_id: Mapped[UUID] = mapped_column(
         sa.UUID(), sa.ForeignKey("shifts.id"), nullable=False
     )
-    category: Mapped[str] = mapped_column(_expense_category_enum, nullable=False)
+    # §5.1: an FK, not an enum, since Phase 8. Adding a category you actually spend on is
+    # data entry, not a migration -- and `ck_expense_categories_code_format` is what keeps
+    # that from becoming the free text §5.2 warns about.
+    category_id: Mapped[UUID] = mapped_column(
+        sa.UUID(), sa.ForeignKey("expense_categories.id"), nullable=False
+    )
     mode: Mapped[str] = mapped_column(_expense_mode_enum, nullable=False)
     amount: Mapped[Decimal] = mapped_column(sa.Numeric(12, 2), nullable=False)
     description: Mapped[str] = mapped_column(sa.Text(), nullable=False)

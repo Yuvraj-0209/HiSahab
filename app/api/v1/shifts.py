@@ -645,8 +645,9 @@ def lock_shift(
     # shift blocks that other shift's lock, not this one's.
     flagged = expense_service.unreviewed_flagged_expenses(db, shift=shift)
     if flagged:
+        codes = expense_service.category_codes(db, flagged)
         named = ", ".join(
-            f"{expense.category} {expense.amount}" for expense in flagged
+            f"{codes[expense.category_id]} {expense.amount}" for expense in flagged
         )
         raise AppError(
             status_code=409,

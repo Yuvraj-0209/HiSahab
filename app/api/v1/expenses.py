@@ -40,11 +40,12 @@ from app.core import idempotency
 from app.core.audit import AuditAction
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
-from app.core.expenses import ExpenseCategory, ExpenseMode
+from app.core.expenses import ExpenseMode
 from app.core.roles import Role, satisfies
 from app.core.shifts import ShiftStatus
 from app.db.session import get_db
 from app.models.expense import Expense
+from app.models.expense_category import ExpenseCategory
 from app.models.shift import Shift
 from app.services import audit, expenses as expense_service
 
@@ -80,7 +81,12 @@ DescriptionValue = Annotated[
 class ExpenseResponse(BaseModel):
     id: UUID
     shift_id: UUID
-    category: ExpenseCategory
+    # Both, deliberately. `category_id` is the fact -- it is what the row stores and what a
+    # client sends back on the next write. `category_code` saves every reader a second
+    # request purely to render the word "maintenance", the same argument §4.5 makes for
+    # always returning `unit_of_measure` alongside a quantity.
+    category_id: UUID
+    category_code: str
     mode: ExpenseMode
     amount: Decimal
     description: str
@@ -110,7 +116,7 @@ class ExpensePage(BaseModel):
 class ExpenseCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    category: ExpenseCategory
+    category_id: UUID
     mode: ExpenseMode
     amount: MoneyValue
     description: DescriptionValue
@@ -120,7 +126,7 @@ class ExpenseCreate(BaseModel):
 class ExpenseUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # No `category`. Changing what an expense was *for* is not a correction of this row,
+    # No `category_id`. Changing what an expense was *for* is not a correction of this row,
     # it is a different row -- and allowing it here would let a PATCH silently move an
     # expense out of the category group §6.7's aggregate rule already flagged it under.
     mode: ExpenseMode | None = None
@@ -155,7 +161,8 @@ class FlaggedExpenseResponse(BaseModel):
     id: UUID
     shift_id: UUID
     business_date: str
-    category: ExpenseCategory
+    category_id: UUID
+    category_code: str
     amount: Decimal
     description: str
 
@@ -168,11 +175,21 @@ class FlaggedExpensePage(BaseModel):
 # --- helpers -----------------------------------------------------------------
 
 
-def _to_response(expense: Expense, *, is_reversed: bool = False) -> ExpenseResponse:
+def _category_code(db: Session, category_id: UUID) -> str:
+    """The single-row form. The FK guarantees the row exists, so this cannot miss."""
+    return db.execute(
+        select(ExpenseCategory.code).where(ExpenseCategory.id == category_id)
+    ).scalar_one()
+
+
+def _to_response(
+    expense: Expense, *, category_code: str, is_reversed: bool = False
+) -> ExpenseResponse:
     return ExpenseResponse(
         id=expense.id,
         shift_id=expense.shift_id,
-        category=ExpenseCategory(expense.category),
+        category_id=expense.category_id,
+        category_code=category_code,
         mode=ExpenseMode(expense.mode),
         amount=expense.amount,
         description=expense.description,
@@ -194,7 +211,7 @@ def _audit_snapshot(expense: Expense) -> dict[str, object]:
     entry that echoes every column makes the change itself hard to find.
     """
     return {
-        "category": expense.category,
+        "category_id": str(expense.category_id),
         "mode": expense.mode,
         "amount": expense.amount,
         "description": expense.description,
@@ -260,8 +277,16 @@ def list_expenses(
     truncated = len(rows) > _MAX_ROWS
     rows = rows[:_MAX_ROWS]
 
+    codes = expense_service.category_codes(db, rows)
     return ExpensePage(
-        items=[_to_response(row, is_reversed=row.id in reversed_ids) for row in rows],
+        items=[
+            _to_response(
+                row,
+                category_code=codes[row.category_id],
+                is_reversed=row.id in reversed_ids,
+            )
+            for row in rows
+        ],
         totals_by_category=expense_service.totals_by_category(db, shift_id=shift.id),
         truncated=truncated,
     )
@@ -296,9 +321,15 @@ def create_expense(
         return _replayed(replay)
 
     try:
+        # Inside the try/except so a bad category releases the idempotency key like every
+        # other refusal here -- otherwise a typo'd id would wedge that key for 24 hours and
+        # the retry, with the *right* category, would be refused as a duplicate.
+        category = expense_service.resolve_category(
+            db, category_id=payload.category_id, outlet_id=shift.outlet_id
+        )
         expense = Expense(
             shift_id=shift.id,
-            category=payload.category.value,
+            category_id=category.id,
             mode=payload.mode.value,
             amount=payload.amount,
             description=payload.description,
@@ -331,7 +362,8 @@ def create_expense(
         idempotency.discard(db, key=key, endpoint=endpoint, user_id=actor.user.id)
         raise
 
-    body = jsonable_encoder(_to_response(expense))
+    response = _to_response(expense, category_code=category.code)
+    body = jsonable_encoder(response)
     idempotency.store(
         db, key=key, endpoint=endpoint, user_id=actor.user.id, status_code=201, body=body
     )
@@ -341,11 +373,11 @@ def create_expense(
         extra={
             "expense_id": str(expense.id),
             "shift_id": str(shift.id),
-            "category": expense.category,
+            "category_code": category.code,
             "amount": str(expense.amount),
         },
     )
-    return _to_response(expense)
+    return response
 
 
 @router.patch(
@@ -438,7 +470,9 @@ def update_expense(
         "expense updated",
         extra={"expense_id": str(expense.id), "fields": sorted(changes)},
     )
-    return _to_response(expense)
+    return _to_response(
+        expense, category_code=_category_code(db, expense.category_id)
+    )
 
 
 @router.post(
@@ -546,10 +580,17 @@ def reverse_expense(
         idempotency.discard(db, key=key, endpoint=endpoint, user_id=actor.user.id)
         raise
 
+    category_code = _category_code(db, original.category_id)
     result = ReversalResponse(
-        reversal=_to_response(reversal),
-        replacement=_to_response(replacement) if replacement is not None else None,
-        original=_to_response(original, is_reversed=True),
+        # All three rows share the original's category by construction -- a correction is
+        # "the same expense, the right amount" (§6.9), so one lookup covers the lot.
+        reversal=_to_response(reversal, category_code=category_code),
+        replacement=(
+            _to_response(replacement, category_code=category_code)
+            if replacement is not None
+            else None
+        ),
+        original=_to_response(original, category_code=category_code, is_reversed=True),
     )
     idempotency.store(
         db,
@@ -623,7 +664,9 @@ def review_expense(
         "expense review cleared",
         extra={"expense_id": str(expense.id), "reviewed_by": str(actor.user.id)},
     )
-    return _to_response(expense)
+    return _to_response(
+        expense, category_code=_category_code(db, expense.category_id)
+    )
 
 
 @router.get("/expenses/flagged", response_model=FlaggedExpensePage)
@@ -649,6 +692,9 @@ def list_flagged_expenses(
     statement = (
         select(Expense)
         .join(Shift, Shift.id == Expense.shift_id)
+        # Joined rather than looked up per row: this endpoint pages, so a per-row lookup
+        # would be `limit` extra round trips on every scroll.
+        .join(ExpenseCategory, ExpenseCategory.id == Expense.category_id)
         .where(Shift.outlet_id == actor.outlet_id, Expense.requires_review.is_(True))
         .order_by(Expense.created_at.desc(), Expense.id.desc())
     )
@@ -659,7 +705,7 @@ def list_flagged_expenses(
         )
 
     rows_with_shift = db.execute(
-        statement.add_columns(Shift.business_date).limit(limit + 1)
+        statement.add_columns(Shift.business_date, ExpenseCategory.code).limit(limit + 1)
     ).all()
     has_more = len(rows_with_shift) > limit
     page = rows_with_shift[:limit]
@@ -670,11 +716,12 @@ def list_flagged_expenses(
                 id=expense.id,
                 shift_id=expense.shift_id,
                 business_date=business_date.isoformat(),
-                category=ExpenseCategory(expense.category),
+                category_id=expense.category_id,
+                category_code=category_code,
                 amount=expense.amount,
                 description=expense.description,
             )
-            for expense, business_date in page
+            for expense, business_date, category_code in page
         ],
         next_cursor=(
             encode_cursor(page[-1][0].created_at, page[-1][0].id)

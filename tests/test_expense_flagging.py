@@ -20,16 +20,27 @@ pytestmark = pytest.mark.anyio
 DAY = date(2026, 5, 11)
 
 
-def _post(client: AsyncClient, shift_id, headers, key: str, **body):
-    return client.post(
+async def _category_id(client: AsyncClient, headers, code: str) -> str:
+    """Resolve a category code to its id through the API. See the twin in
+    tests/test_expenses_api.py for why this reads back over HTTP and never caches."""
+    response = await client.get("/api/v1/expense-categories", headers=headers)
+    return next(row["id"] for row in response.json() if row["code"] == code.upper())
+
+
+async def _post(client: AsyncClient, shift_id, headers, key: str, **body):
+    payload = {
+        "mode": "cash",
+        "amount": "500.00",
+        "description": "routine upkeep",
+        **body,
+    }
+    code = payload.pop("category", "maintenance")
+    if "category_id" not in payload:
+        payload["category_id"] = await _category_id(client, headers, code)
+
+    return await client.post(
         f"/api/v1/shifts/{shift_id}/expenses",
-        json={
-            "category": "maintenance",
-            "mode": "cash",
-            "amount": "500.00",
-            "description": "routine upkeep",
-            **body,
-        },
+        json=payload,
         headers={**headers, "Idempotency-Key": key},
     )
 
@@ -283,9 +294,11 @@ async def test_the_aggregate_spans_shifts_on_the_same_business_date(
     with engine.begin() as connection:
         first_id = connection.execute(
             text(
-                "INSERT INTO expenses (shift_id, category, mode, amount, description) "
-                "VALUES (:s, CAST('maintenance' AS expense_category), "
-                "CAST('cash' AS expense_mode), 600.00, 'first shift maintenance') "
+                "INSERT INTO expenses (shift_id, category_id, mode, amount, description) "
+                "SELECT :s, ec.id, CAST('cash' AS expense_mode), 600.00, "
+                "'first shift maintenance' FROM expense_categories ec "
+                "JOIN shifts sh ON sh.outlet_id = ec.outlet_id "
+                "WHERE sh.id = :s AND ec.code = 'MAINTENANCE' "
                 "RETURNING id"
             ).bindparams(s=locked_shift)
         ).scalar_one()

@@ -901,6 +901,118 @@ def clean_collections(engine: Engine) -> Iterator[None]:
 
 
 @pytest.fixture
+def expense_category_ids(engine: Engine) -> dict[str, UUID]:
+    """Map the category codes seeded by migration 0010 to their ids, for one outlet.
+
+    The `fuel_type_ids` pattern, and function-scoped for the same reason it documents:
+    test_migrations.py downgrades to base and back part-way through the run, re-seeding
+    these rows with fresh `gen_random_uuid()` ids. A session-scoped cache would hand every
+    later test a foreign key to a row that no longer exists.
+
+    Scoped to DEFAULT_OUTLET_ID because codes are unique *per outlet* (§5.1) -- unlike
+    `fuel_types`, where a code is global.
+    """
+    from app.core.config import get_settings
+
+    with engine.connect() as connection:
+        return {
+            code: row_id
+            for code, row_id in connection.execute(
+                text(
+                    "SELECT code, id FROM expense_categories WHERE outlet_id = :outlet"
+                ).bindparams(outlet=get_settings().DEFAULT_OUTLET_ID)
+            )
+        }
+
+
+@pytest.fixture
+def make_expense_category(engine: Engine) -> Iterator[Callable[..., UUID]]:
+    """Create a category beyond the four seeded ones.
+
+    For the case the whole table exists to serve -- proving an admin can add `TEA` without
+    a migration -- and for tests needing a category with a specific `requires_receipt` or
+    `is_active` state.
+    """
+    created: list[UUID] = []
+
+    def _make(
+        code: str,
+        *,
+        display_name: str = "Test Category",
+        requires_receipt: bool = False,
+        is_active: bool = True,
+        outlet_id: UUID | None = None,
+    ) -> UUID:
+        from app.core.config import get_settings
+
+        category_id = uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO expense_categories (id, outlet_id, code, display_name, "
+                    "requires_receipt, is_active) VALUES (:id, :outlet, :code, :name, "
+                    ":requires_receipt, :is_active)"
+                ).bindparams(
+                    id=category_id,
+                    outlet=outlet_id or get_settings().DEFAULT_OUTLET_ID,
+                    code=code,
+                    name=display_name,
+                    requires_receipt=requires_receipt,
+                    is_active=is_active,
+                )
+            )
+        created.append(category_id)
+        return category_id
+
+    yield _make
+
+    if created:
+        with engine.begin() as connection:
+            # Expenses point at categories, so children first -- the same generation rule
+            # every other fixture here follows. Nothing has ON DELETE CASCADE, deliberately.
+            connection.execute(
+                text(
+                    "DELETE FROM expenses WHERE category_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("DELETE FROM expense_categories WHERE id = ANY(:ids)").bindparams(
+                    ids=created
+                )
+            )
+
+
+@pytest.fixture
+def clean_expense_categories(engine: Engine) -> Iterator[None]:
+    """Remove every category created during a test, for tests that go through the API.
+
+    The counterpart to `clean_expenses`: a category created over HTTP has no id to hand
+    back, and `make_expense_category`'s own teardown only knows about rows it made itself.
+
+    Sweeps by exclusion rather than by id -- anything that is not one of migration 0010's
+    four seeded codes. A leaked category is worse here than a leaked expense: `(outlet_id,
+    code)` is unique, so the *next* test to create `TEA` fails on a constraint rather than
+    on its own assertion, and the error points at the wrong test entirely.
+    """
+    yield
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "DELETE FROM expenses WHERE category_id IN ("
+                "  SELECT id FROM expense_categories "
+                "   WHERE code NOT IN ('SALARY', 'MAINTENANCE', 'ELECTRICITY', 'OTHER')"
+                ")"
+            )
+        )
+        connection.execute(
+            text(
+                "DELETE FROM expense_categories "
+                "WHERE code NOT IN ('SALARY', 'MAINTENANCE', 'ELECTRICITY', 'OTHER')"
+            )
+        )
+
+
+@pytest.fixture
 def make_expense(engine: Engine) -> Iterator[Callable[..., UUID]]:
     """Create an expenses row directly, bypassing the API.
 
@@ -914,6 +1026,7 @@ def make_expense(engine: Engine) -> Iterator[Callable[..., UUID]]:
         shift_id: UUID,
         *,
         category: str = "maintenance",
+        category_id: UUID | None = None,
         mode: str = "cash",
         amount: str = "500.00",
         description: str = "Test expense",
@@ -925,18 +1038,33 @@ def make_expense(engine: Engine) -> Iterator[Callable[..., UUID]]:
     ) -> UUID:
         expense_id = uuid4()
         with engine.begin() as connection:
+            if category_id is None:
+                # Phase 8 turned the category into an FK (§5.1), but callers still name a
+                # category the way a human does. Resolving the code here rather than making
+                # forty tests carry an id keeps them readable and keeps the change where it
+                # belongs -- in the one place that knows the schema.
+                #
+                # Scoped through the shift's outlet, because codes are unique per outlet,
+                # not globally.
+                category_id = connection.execute(
+                    text(
+                        "SELECT ec.id FROM expense_categories ec "
+                        "JOIN shifts s ON s.outlet_id = ec.outlet_id "
+                        "WHERE s.id = :shift_id AND ec.code = :code"
+                    ).bindparams(shift_id=shift_id, code=category.upper())
+                ).scalar_one()
             connection.execute(
                 text(
-                    "INSERT INTO expenses (id, shift_id, category, mode, amount, "
+                    "INSERT INTO expenses (id, shift_id, category_id, mode, amount, "
                     "description, paid_to, reverses_id, reversal_reason, "
                     "requires_review, created_by) VALUES (:id, :shift_id, "
-                    "CAST(:category AS expense_category), CAST(:mode AS expense_mode), "
+                    ":category_id, CAST(:mode AS expense_mode), "
                     "CAST(:amount AS numeric), :description, :paid_to, :reverses_id, "
                     ":reversal_reason, :requires_review, :created_by)"
                 ).bindparams(
                     id=expense_id,
                     shift_id=shift_id,
-                    category=category,
+                    category_id=category_id,
                     mode=mode,
                     amount=amount,
                     description=description,

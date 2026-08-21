@@ -10,6 +10,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     collections,
+    expense_categories,
     expenses,
     fuel_margins,
     fuel_prices,
@@ -52,3 +53,9 @@ api_router.include_router(collections.router)
 # /expenses/flagged, is a static path shared with nothing else, so there is no ordering
 # hazard against /shifts/{shift_id}/... routes either.
 api_router.include_router(expenses.router)
+
+# Phase 8 -- expense categories, reference data like fuel_types but outlet-scoped. Grouped
+# with the Phase 3 reference-data block conceptually, but included here because its paths
+# (/expense-categories, /expense-categories/{id}) overlap with nothing at all -- in
+# particular they do not collide with expenses.py's /expenses/flagged.
+api_router.include_router(expense_categories.router)

@@ -11,6 +11,7 @@ from __future__ import annotations
 from app.models.audit import AuditLog
 from app.models.collection import Collection
 from app.models.expense import Expense
+from app.models.expense_category import ExpenseCategory
 from app.models.fuel import FuelMargin, FuelPrice, FuelType
 from app.models.idempotency import IdempotencyKey
 from app.models.nozzle import Nozzle
@@ -23,6 +24,7 @@ __all__ = [
     "AuditLog",
     "Collection",
     "Expense",
+    "ExpenseCategory",
     "FuelMargin",
     "FuelPrice",
     "FuelType",

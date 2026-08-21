@@ -8,6 +8,7 @@ human types against a category, not a figure derived from three others.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from decimal import Decimal
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.models.expense import Expense
+from app.models.expense_category import ExpenseCategory
 from app.models.shift import Shift
 
 logger = logging.getLogger(__name__)
@@ -56,14 +58,90 @@ def totals_by_category(db: Session, *, shift_id: UUID) -> dict[str, Decimal]:
     Summed across every row rather than filtered to the live ones, so a reversal that has
     not yet been replaced shows as the reduction it is instead of vanishing -- same
     reasoning as `collections.totals_by_mode`.
+
+    **Keyed by category `code`, not `category_id`.** Phase 8 turned the category into an FK
+    (§5.1), and keying this by UUID would force every reader -- the API response, a report,
+    a human reading a log line -- to carry a second lookup around just to say "maintenance".
+    The code is unique per outlet and immutable, so it is a safe key and a legible one.
     """
     rows = db.execute(
-        select(Expense.category, Expense.amount).where(Expense.shift_id == shift_id)
+        select(ExpenseCategory.code, Expense.amount)
+        .join(ExpenseCategory, ExpenseCategory.id == Expense.category_id)
+        .where(Expense.shift_id == shift_id)
     ).all()
     totals: dict[str, Decimal] = {}
-    for category, amount in rows:
-        totals[category] = totals.get(category, Decimal("0.00")) + amount
+    for code, amount in rows:
+        totals[code] = totals.get(code, Decimal("0.00")) + amount
     return totals
+
+
+def category_codes(db: Session, expenses: Sequence[Expense]) -> dict[UUID, str]:
+    """Look up the human-readable codes for a batch of expenses in one query.
+
+    `app/models/` uses column-level foreign keys and no `relationship()` anywhere, so there
+    is no `expense.category.code` to reach for -- and that is a feature here, because the
+    lazy-loaded version would issue one SELECT per row wherever a list is rendered.
+
+    Lives in the service rather than in `app/api/v1/expenses.py` because two routers need
+    it: the expenses endpoints, and `shifts.py`'s `UNREVIEWED_EXPENSES_EXIST` message, which
+    names the flagged rows by category so a manager knows what they are being asked to look
+    at. Phase 8 Step 2 found the second caller by breaking it.
+    """
+    ids = {expense.category_id for expense in expenses}
+    if not ids:
+        return {}
+    return {
+        row[0]: row[1]
+        for row in db.execute(
+            select(ExpenseCategory.id, ExpenseCategory.code).where(
+                ExpenseCategory.id.in_(ids)
+            )
+        )
+    }
+
+
+def resolve_category(
+    db: Session, *, category_id: UUID, outlet_id: UUID
+) -> ExpenseCategory:
+    """Load the category an expense is being filed under, refusing the two bad cases.
+
+    Phase 8. Before this, `category` was an enum and the database did the checking for
+    free -- an invalid value could not be expressed. An FK is weaker in one specific way:
+    `expenses.category_id` guarantees the row *exists*, not that it belongs to this outlet
+    or that it is still in use. Both are now the application's job.
+
+    **Cross-outlet is a 404, not a 403.** A caller who is allowed to create expenses at
+    their own outlet learns nothing about whether some id exists elsewhere -- the same
+    posture §7.3 takes for attachments. Leaking "that id is real, just not yours" across
+    tenants is a small hole that costs nothing to close now and cannot be closed later
+    without changing a response code clients depend on.
+
+    **Inactive is a 409, not a 404.** The row plainly exists and the caller can see it in
+    `GET /expense-categories?include_inactive=true`; the conflict is with the world, not
+    the payload. Retiring a category has to stop *new* expenses while leaving every
+    historical row readable and reportable (§5.1) -- so this refuses here, at write time,
+    and nothing anywhere filters old rows out.
+    """
+    category = db.get(ExpenseCategory, category_id)
+
+    if category is None or category.outlet_id != outlet_id:
+        raise AppError(
+            status_code=404,
+            code="CATEGORY_NOT_FOUND",
+            detail="No expense category with that id at this outlet.",
+        )
+
+    if not category.is_active:
+        raise AppError(
+            status_code=409,
+            code="CATEGORY_INACTIVE",
+            detail=(
+                f"The expense category {category.code} has been retired and cannot take "
+                "new expenses. Existing expenses filed under it are unaffected."
+            ),
+        )
+
+    return category
 
 
 def reversal_of(db: Session, *, expense_id: UUID) -> UUID | None:
@@ -121,7 +199,7 @@ def apply_review_flags(
             .where(
                 Shift.outlet_id == shift.outlet_id,
                 Shift.business_date == shift.business_date,
-                Expense.category == expense.category,
+                Expense.category_id == expense.category_id,
                 Expense.reverses_id.is_(None),
                 ~_is_reversed(),
             )
@@ -204,7 +282,7 @@ def reverse(
 
     reversal = Expense(
         shift_id=original.shift_id,
-        category=original.category,
+        category_id=original.category_id,
         mode=original.mode,
         amount=-original.amount,
         description=original.description,
@@ -220,7 +298,7 @@ def reverse(
     if replacement_amount is not None:
         replacement = Expense(
             shift_id=original.shift_id,
-            category=original.category,
+            category_id=original.category_id,
             mode=original.mode,
             amount=replacement_amount,
             description=original.description,
@@ -240,7 +318,7 @@ def reverse(
             "expense_id": str(original.id),
             "reversal_id": str(reversal.id),
             "shift_id": str(original.shift_id),
-            "category": original.category,
+            "category_id": str(original.category_id),
             "amount": str(original.amount),
             "reason": reason,
             "replaced_with": str(replacement_amount) if replacement else None,

@@ -44,9 +44,10 @@ def _net(engine: Engine, shift_id: UUID, category: str) -> Decimal:
     with engine.connect() as connection:
         return connection.execute(
             text(
-                "SELECT coalesce(sum(amount), 0) FROM expenses "
-                "WHERE shift_id = :s AND category = CAST(:c AS expense_category)"
-            ).bindparams(s=shift_id, c=category)
+                "SELECT coalesce(sum(e.amount), 0) FROM expenses e "
+                "JOIN expense_categories ec ON ec.id = e.category_id "
+                "WHERE e.shift_id = :s AND ec.code = :c"
+            ).bindparams(s=shift_id, c=category.upper())
         ).scalar_one()
 
 
@@ -135,7 +136,7 @@ async def test_the_replacement_carries_the_originals_category_mode_and_descripti
     )
 
     replacement = response.json()["replacement"]
-    assert replacement["category"] == "electricity"
+    assert replacement["category_code"] == "ELECTRICITY"
     assert replacement["mode"] == "bank_transfer"
     assert replacement["description"] == "monthly board bill"
 
@@ -364,10 +365,12 @@ async def test_a_blank_reversal_reason_is_refused_at_the_database_level(
                 connection.execute(
                     text(
                         "INSERT INTO expenses "
-                        "(shift_id, category, mode, amount, description, reverses_id, "
-                        "reversal_reason) VALUES (:s, "
-                        "CAST('maintenance' AS expense_category), "
-                        "CAST('cash' AS expense_mode), -500.00, 'reversal', :o, :r)"
+                        "(shift_id, category_id, mode, amount, description, reverses_id, "
+                        "reversal_reason) SELECT :s, ec.id, "
+                        "CAST('cash' AS expense_mode), -500.00, 'reversal', :o, :r "
+                        "FROM expense_categories ec "
+                        "JOIN shifts sh ON sh.outlet_id = ec.outlet_id "
+                        "WHERE sh.id = :s AND ec.code = 'MAINTENANCE'"
                     ).bindparams(s=shift, o=original, r=blank)
                 )
         assert "ck_expenses_reversal_has_reason" in str(caught.value)
@@ -390,10 +393,12 @@ async def test_a_row_cannot_reverse_itself(
         with engine.begin() as connection:
             connection.execute(
                 text(
-                    "INSERT INTO expenses (id, shift_id, category, mode, amount, "
-                    "description, reverses_id, reversal_reason) VALUES (:id, :s, "
-                    "CAST('maintenance' AS expense_category), "
-                    "CAST('cash' AS expense_mode), -0.01, 'circular', :id, 'circular')"
+                    "INSERT INTO expenses (id, shift_id, category_id, mode, amount, "
+                    "description, reverses_id, reversal_reason) SELECT :id, :s, ec.id, "
+                    "CAST('cash' AS expense_mode), -0.01, 'circular', :id, 'circular' "
+                    "FROM expense_categories ec "
+                    "JOIN shifts sh ON sh.outlet_id = ec.outlet_id "
+                    "WHERE sh.id = :s AND ec.code = 'MAINTENANCE'"
                 ).bindparams(id=row_id, s=shift)
             )
     assert "ck_expenses_reversal_not_self" in str(caught.value)
