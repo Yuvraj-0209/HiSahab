@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -25,6 +25,14 @@ from app.services.expenses import live_expense_for_attachment
 from app.services.storage import StorageBackend
 
 logger = logging.getLogger(__name__)
+
+# §7.4: an unlinked upload older than this is an abandoned attempt, not evidence of
+# anything. Defined once, here, next to `orphans()` -- the function that defines what
+# "orphaned" means is the natural home for how old counts as orphaned, and
+# app/jobs/cleanup_attachments.py imports this rather than writing `timedelta(hours=24)` a
+# second time (M9 in the Phase 8 plan; matches how app/core/idempotency.py's own TTL is a
+# single imported constant, not a value repeated between the store and its cleanup job).
+ORPHAN_TTL = timedelta(hours=24)
 
 
 def create(
