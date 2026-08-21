@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
@@ -183,6 +184,33 @@ def resolve_category(
         )
 
     return category
+
+
+def totals_by_category_range(
+    db: Session, *, outlet_id: UUID, date_from: date, date_to: date
+) -> dict[str, Decimal]:
+    """The month-end summary's arithmetic (§11): per-category totals across a date range,
+    every shift at the outlet, reversals netted in -- the cross-shift, date-ranged widening
+    of `totals_by_category`, which stays shift-scoped for the day-to-day expenses page.
+
+    Summed across every row rather than filtered to the live ones, for the identical reason
+    `totals_by_category` gives: a reversal that has not yet been replaced must show as the
+    reduction it is, not vanish from the report.
+    """
+    rows = db.execute(
+        select(ExpenseCategory.code, Expense.amount)
+        .join(ExpenseCategory, ExpenseCategory.id == Expense.category_id)
+        .join(Shift, Shift.id == Expense.shift_id)
+        .where(
+            Shift.outlet_id == outlet_id,
+            Shift.business_date >= date_from,
+            Shift.business_date <= date_to,
+        )
+    ).all()
+    totals: dict[str, Decimal] = {}
+    for code, amount in rows:
+        totals[code] = totals.get(code, Decimal("0.00")) + amount
+    return totals
 
 
 def reversal_of(db: Session, *, expense_id: UUID) -> UUID | None:

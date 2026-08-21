@@ -3,7 +3,8 @@
 Mirrors `app/api/v1/collections.py` for money-in-motion: create, correct, list, reverse.
 `app/api/v1/readings.py`'s review route supplies the fifth shape, for §6.7's flag.
 
-**Six routes.** Create, correct, list, reverse, review, and a cross-shift flagged queue.
+**Seven routes.** Create, correct, list, reverse, review, a cross-shift flagged queue, and
+(Phase 8) a manager-floor month-end summary across a date range.
 
 **§6.7's two flagging rules run after every amount-changing write** -- insert, an
 amount-changing `PATCH`, and a reversal's replacement -- via
@@ -22,7 +23,7 @@ manager's acts; reversing on a *locked* shift is an admin's, mirroring `collecti
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Annotated, Any
 from uuid import UUID
@@ -184,6 +185,24 @@ class FlaggedExpenseResponse(BaseModel):
 class FlaggedExpensePage(BaseModel):
     items: list[FlaggedExpenseResponse]
     next_cursor: str | None
+
+
+class ExpenseSummaryResponse(BaseModel):
+    """§11's month-end category-wise expense summary. JSON only -- no screen exists until
+    Phase 12.
+
+    `from_`/`to` rather than `date_from`/`date_to`: `from` is a reserved word in Python, so
+    the field is named `from_` and aliased to the query parameter's own name, `from`, for
+    both request parsing and (FastAPI's `response_model_by_alias=True` default) the JSON
+    response -- the client sees `"from"` and `"to"`, matching what it sent.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_: str = Field(alias="from")
+    to: str
+    totals_by_category: dict[str, Decimal]
+    total: Decimal
 
 
 # --- helpers -----------------------------------------------------------------
@@ -837,4 +856,48 @@ def list_flagged_expenses(
             if has_more and page
             else None
         ),
+    )
+
+
+# A year is the natural unit for a report titled "month-end" -- twelve calls' worth of
+# range in one request. Unbounded would let one query scan the whole table as the business
+# ages; this makes the bound structural rather than assumed, the same posture _MAX_ROWS
+# takes above.
+_MAX_SUMMARY_RANGE_DAYS = 366
+
+
+@router.get("/expenses/summary", response_model=ExpenseSummaryResponse)
+def get_expense_summary(
+    date_from: date = Query(alias="from"),
+    date_to: date = Query(alias="to"),
+    actor: Actor = Depends(require_role(Role.manager)),
+    db: Session = Depends(get_db),
+) -> ExpenseSummaryResponse:
+    """§11's month-end category-wise expense summary. Manager floor (§8): this reports
+    across every shift at the outlet, not one attendant's own shift, the same reasoning
+    that puts `GET /expenses/flagged` at the manager floor too.
+    """
+    if date_from > date_to:
+        raise AppError(
+            status_code=422,
+            code="INVALID_DATE_RANGE",
+            detail="`from` must not be after `to`.",
+        )
+    if (date_to - date_from).days > _MAX_SUMMARY_RANGE_DAYS:
+        raise AppError(
+            status_code=422,
+            code="INVALID_DATE_RANGE",
+            detail=f"The range cannot exceed {_MAX_SUMMARY_RANGE_DAYS} days.",
+        )
+
+    totals = expense_service.totals_by_category_range(
+        db, outlet_id=actor.outlet_id, date_from=date_from, date_to=date_to
+    )
+    total = sum(totals.values(), Decimal("0.00"))
+
+    return ExpenseSummaryResponse(
+        from_=date_from.isoformat(),
+        to=date_to.isoformat(),
+        totals_by_category=totals,
+        total=total,
     )
