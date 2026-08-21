@@ -6,7 +6,8 @@
 row was written, an object landed in storage) and was never referenced by an expense or
 credit sale. A management command run manually or via cron, matching
 `app/jobs/cleanup_idempotency_keys.py`'s own posture and shape. §12 is explicit that this
-project does not build a job scheduler.
+project does not build a job scheduler, and §13's approximation 5 names this cleanup path
+specifically: "manual/cron command, not a job queue."
 
 **This hard-deletes, and that is not a breach of §3 rule 6.** That rule protects
 *financial* tables. `attachments` is not one, and `app/services/attachments.py::orphans`
