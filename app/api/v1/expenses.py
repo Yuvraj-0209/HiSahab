@@ -44,9 +44,11 @@ from app.core.expenses import ExpenseMode
 from app.core.roles import Role, satisfies
 from app.core.shifts import ShiftStatus
 from app.db.session import get_db
+from app.models.attachment import Attachment
 from app.models.expense import Expense
 from app.models.expense_category import ExpenseCategory
 from app.models.shift import Shift
+from app.services import attachments as attachment_service
 from app.services import audit, expenses as expense_service
 
 logger = logging.getLogger(__name__)
@@ -91,6 +93,10 @@ class ExpenseResponse(BaseModel):
     amount: Decimal
     description: str
     paid_to: str | None
+    # §6.11. `receipt_required` is the snapshot taken at insert -- what the rule said that
+    # day, not what `expense_categories.requires_receipt` says now (§6.11's whole point).
+    attachment_id: UUID | None
+    receipt_required: bool
     reverses_id: UUID | None
     reversal_reason: str | None
     requires_review: bool
@@ -121,6 +127,10 @@ class ExpenseCreate(BaseModel):
     amount: MoneyValue
     description: DescriptionValue
     paid_to: str | None = Field(default=None, max_length=200)
+    # §6.11, §7.2 step 6. Optional even when the rule will end up requiring one -- omitting
+    # it when required is refused with 422 EXPENSE_REQUIRES_RECEIPT, not accepted and then
+    # silently non-compliant.
+    attachment_id: UUID | None = None
 
 
 class ExpenseUpdate(BaseModel):
@@ -133,6 +143,10 @@ class ExpenseUpdate(BaseModel):
     amount: MoneyValue | None = None
     description: DescriptionValue | None = None
     paid_to: str | None = Field(default=None, max_length=200)
+    # May only be set while currently NULL (§5.3, D3) -- swapping an already-set
+    # attachment is refused with 409 ATTACHMENT_ALREADY_SET; correct via §6.9's reversal
+    # instead. An explicit null is ignored like every other field here, never "clear this".
+    attachment_id: UUID | None = None
 
 
 class ExpenseReversal(BaseModel):
@@ -194,6 +208,8 @@ def _to_response(
         amount=expense.amount,
         description=expense.description,
         paid_to=expense.paid_to,
+        attachment_id=expense.attachment_id,
+        receipt_required=expense.receipt_required,
         reverses_id=expense.reverses_id,
         reversal_reason=expense.reversal_reason,
         requires_review=expense.requires_review,
@@ -216,6 +232,10 @@ def _audit_snapshot(expense: Expense) -> dict[str, object]:
         "amount": expense.amount,
         "description": expense.description,
         "paid_to": expense.paid_to,
+        "attachment_id": (
+            str(expense.attachment_id) if expense.attachment_id is not None else None
+        ),
+        "receipt_required": expense.receipt_required,
         "reverses_id": expense.reverses_id,
         "requires_review": expense.requires_review,
     }
@@ -321,12 +341,47 @@ def create_expense(
         return _replayed(replay)
 
     try:
-        # Inside the try/except so a bad category releases the idempotency key like every
-        # other refusal here -- otherwise a typo'd id would wedge that key for 24 hours and
-        # the retry, with the *right* category, would be refused as a duplicate.
+        # Inside the try/except so a bad category or attachment releases the idempotency
+        # key like every other refusal here -- otherwise a typo'd id would wedge that key
+        # for 24 hours and the retry, with the *right* value, would be refused as a
+        # duplicate.
         category = expense_service.resolve_category(
             db, category_id=payload.category_id, outlet_id=shift.outlet_id
         )
+
+        # §7.2 step 6 / §5.3's one-attachment-one-live-row rule. Linked BEFORE the expense
+        # row is even constructed, so a refusal here (unknown id, already claimed) leaves
+        # nothing written -- attachment_service.link()'s own docstring calls this ordering
+        # out explicitly.
+        attachment: Attachment | None = None
+        if payload.attachment_id is not None:
+            attachment = db.get(Attachment, payload.attachment_id)
+            if attachment is None:
+                raise AppError(
+                    status_code=404,
+                    code="ATTACHMENT_NOT_FOUND",
+                    detail="No attachment with that id.",
+                )
+            attachment_service.link(db, attachment=attachment, outlet_id=shift.outlet_id)
+
+        # §6.11. Evaluated against the category and amount actually being written, then
+        # snapshotted onto the row below -- never recomputed later.
+        receipt_required = expense_service.evaluate_receipt_required(
+            category_requires_receipt=category.requires_receipt,
+            amount=payload.amount,
+            threshold=settings.EXPENSE_RECEIPT_THRESHOLD,
+        )
+        if receipt_required and attachment is None:
+            raise AppError(
+                status_code=422,
+                code="EXPENSE_REQUIRES_RECEIPT",
+                detail=(
+                    f"The {category.code} category requires a receipt, or this amount "
+                    "exceeds the receipt threshold. Upload a receipt first, then record "
+                    "the expense."
+                ),
+            )
+
         expense = Expense(
             shift_id=shift.id,
             category_id=category.id,
@@ -334,6 +389,8 @@ def create_expense(
             amount=payload.amount,
             description=payload.description,
             paid_to=payload.paid_to,
+            attachment_id=attachment.id if attachment is not None else None,
+            receipt_required=receipt_required,
             created_by=actor.user.id,
         )
         db.add(expense)
@@ -434,6 +491,12 @@ def update_expense(
 
     before = _audit_snapshot(expense)
     amount_changed = "amount" in changes and changes["amount"] is not None
+    # Handled separately below, not by the generic loop: setting it needs
+    # attachment_service.link() and the "only while NULL" immutability check (§5.3, D3),
+    # not a bare setattr. Popped out first so the loop below never sees it -- an explicit
+    # null here means the same "ignore it" the loop already gives every other field.
+    new_attachment_id = changes.pop("attachment_id", None)
+
     for field, value in changes.items():
         # An explicit null is ignored rather than treated as "clear this", matching
         # collections.py and readings.py.
@@ -446,7 +509,52 @@ def update_expense(
             value = value.value
         setattr(expense, field, value)
 
+    if new_attachment_id is not None:
+        if expense.attachment_id is not None:
+            raise AppError(
+                status_code=409,
+                code="ATTACHMENT_ALREADY_SET",
+                detail=(
+                    "This expense already has a receipt attached. Swapping it is not "
+                    "allowed -- correct the expense via a reversal instead (§6.9)."
+                ),
+            )
+        attachment = db.get(Attachment, new_attachment_id)
+        if attachment is None:
+            raise AppError(
+                status_code=404,
+                code="ATTACHMENT_NOT_FOUND",
+                detail="No attachment with that id.",
+            )
+        attachment_service.link(db, attachment=attachment, outlet_id=shift.outlet_id)
+        expense.attachment_id = new_attachment_id
+
     if amount_changed:
+        # §6.11: re-evaluated against the amount actually being written -- entering ₹900
+        # and editing up to ₹9,000 must be able to start demanding a receipt, or the
+        # threshold is defeated by a two-step entry. Reads the category's CURRENT
+        # requires_receipt flag rather than a stored snapshot of it, which is deliberate
+        # and not a contradiction of "never recomputed": that rule protects a row nobody
+        # is touching. A PATCH is an active edit happening right now, and re-deriving the
+        # rule from the current inputs (the live category, the new amount) is what makes
+        # this PATCH's own check meaningful rather than checking against a stale flag.
+        category = db.get(ExpenseCategory, expense.category_id)
+        new_receipt_required = expense_service.evaluate_receipt_required(
+            category_requires_receipt=category.requires_receipt,
+            amount=expense.amount,
+            threshold=settings.EXPENSE_RECEIPT_THRESHOLD,
+        )
+        if new_receipt_required and expense.attachment_id is None:
+            raise AppError(
+                status_code=422,
+                code="EXPENSE_REQUIRES_RECEIPT",
+                detail=(
+                    "This amount now requires a receipt. Upload one and attach it "
+                    "before -- or in the same request as -- raising the amount."
+                ),
+            )
+        expense.receipt_required = new_receipt_required
+
         # §6.7's rules must see the new amount, not the one at insert. Three ₹400 entries
         # followed by an edit to ₹900 would otherwise never trip the category aggregate.
         expense_service.apply_review_flags(
@@ -537,6 +645,7 @@ def reverse_expense(
             actor_id=actor.user.id,
             replacement_amount=payload.replacement_amount,
             replacement_paid_to=payload.replacement_paid_to,
+            receipt_threshold=settings.EXPENSE_RECEIPT_THRESHOLD,
         )
 
         if replacement is not None:

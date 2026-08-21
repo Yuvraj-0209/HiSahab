@@ -123,16 +123,21 @@ async def test_the_replacement_carries_the_originals_category_mode_and_descripti
     clean_expenses,
 ) -> None:
     """A correction is "the same expense, the right amount", not a new expense -- the
-    reason for the change lives on the reversal row, where §6.9 already puts it."""
+    reason for the change lives on the reversal row, where §6.9 already puts it.
+
+    Amounts kept under EXPENSE_RECEIPT_THRESHOLD deliberately: this test is about
+    inheritance of category/mode/description, not §6.11's receipt rule (covered in
+    tests/test_expense_receipts.py), and the original here carries no attachment.
+    """
     manager = make_user("manager")
     shift = make_shift(manager, business_date=DAY, sequence=1, status="closed")
     original = make_expense(
         shift, category="electricity", mode="bank_transfer",
-        amount="8000.00", description="monthly board bill",
+        amount="800.00", description="monthly board bill",
     )
 
     response = await _reverse(
-        client, shift, original, auth_headers(manager), replacement_amount="7800.00"
+        client, shift, original, auth_headers(manager), replacement_amount="780.00"
     )
 
     replacement = response.json()["replacement"]

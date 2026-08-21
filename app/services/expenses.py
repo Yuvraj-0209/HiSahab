@@ -34,6 +34,26 @@ def _is_reversed() -> object:
     return exists().where(reversal.c.reverses_id == Expense.id)
 
 
+def evaluate_receipt_required(
+    *, category_requires_receipt: bool, amount: Decimal, threshold: Decimal
+) -> bool:
+    """§6.11's rule: `category.requires_receipt OR amount > threshold`.
+
+    Computed here and only here, so `create_expense`, `update_expense` and `reverse`'s
+    replacement branch cannot drift on the comparison. Strictly `>`, matching §6.7's
+    threshold: exactly at the threshold does not require a receipt, one paisa over does.
+
+    The caller decides what "the category" and "the amount" mean at the moment of the
+    call -- at insert, the category and amount just typed in; on an amount-changing
+    `PATCH`, the current category and the new amount (see `update_expense`'s docstring for
+    why re-evaluation reads the category live there and that is not a contradiction of
+    "never recomputed" -- that rule protects a row nobody is touching). The result is
+    always snapshotted onto `expenses.receipt_required` by the caller, never left for a
+    future read to recompute.
+    """
+    return category_requires_receipt or amount > threshold
+
+
 def live_expense_for_attachment(db: Session, *, attachment_id: UUID) -> UUID | None:
     """Is a *live* expense already claiming this attachment? Powers §5.3's
     one-attachment-one-live-row rule from the attachments side, called by
@@ -272,6 +292,7 @@ def reverse(
     actor_id: UUID,
     replacement_amount: Decimal | None = None,
     replacement_paid_to: str | None = None,
+    receipt_threshold: Decimal,
 ) -> tuple[Expense, Expense | None]:
     """Cancel an expense by appending, never by editing (§6.9).
 
@@ -283,6 +304,22 @@ def reverse(
     correction is "the same expense, the right amount", not a new expense, and the reason
     for the change lives on the reversal row where §6.9 already puts it. Only the amount
     and, optionally, `paid_to` can differ.
+
+    **The reversal never needs a receipt** (§6.11) -- it is a cancellation, not a spend,
+    and there is nothing to photograph. Its `receipt_required` is left at the column's
+    `false` default; nothing sets it.
+
+    **The replacement inherits the original's `attachment_id` directly** (§5.3, D3) --
+    not by calling `attachment_service.link()` again. By the time the replacement is
+    built, the reversal above has already been flushed, so the original is no longer
+    *live*; re-running the "already linked" check would find nothing blocking it and
+    would only re-verify what D3 already guarantees by construction. `receipt_required`
+    **is** re-evaluated against the replacement's own amount -- §6.11's PATCH rule applies
+    here too, since a correction can push a small expense over the threshold. If it comes
+    out `True` and the original had no attachment to inherit, `receipt_threshold` must be
+    supplied and the correction is refused: there is no receipt to inherit and none was
+    supplied, so silently creating a non-compliant row would defeat the rule the same way
+    skipping the check on `PATCH` would.
     """
     if original.reverses_id is not None:
         raise AppError(
@@ -317,6 +354,23 @@ def reverse(
 
     replacement: Expense | None = None
     if replacement_amount is not None:
+        category = db.get(ExpenseCategory, original.category_id)
+        replacement_receipt_required = evaluate_receipt_required(
+            category_requires_receipt=category.requires_receipt,
+            amount=replacement_amount,
+            threshold=receipt_threshold,
+        )
+        if replacement_receipt_required and original.attachment_id is None:
+            raise AppError(
+                status_code=422,
+                code="EXPENSE_REQUIRES_RECEIPT",
+                detail=(
+                    "The corrected amount requires a receipt, and the original expense "
+                    "has none to inherit. Upload a receipt first, then record the "
+                    "correction."
+                ),
+            )
+
         replacement = Expense(
             shift_id=original.shift_id,
             category_id=original.category_id,
@@ -328,6 +382,8 @@ def reverse(
                 if replacement_paid_to is not None
                 else original.paid_to
             ),
+            attachment_id=original.attachment_id,
+            receipt_required=replacement_receipt_required,
             created_by=actor_id,
         )
         db.add(replacement)
