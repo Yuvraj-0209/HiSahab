@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import date, datetime, time, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
@@ -18,7 +19,7 @@ def test_schema_is_at_head(engine: Engine) -> None:
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert version == "0010"
+    assert version == "0011"
 
 
 def test_pgcrypto_extension_is_installed(engine: Engine) -> None:
@@ -1083,6 +1084,7 @@ def test_expenses_carry_every_check_constraint(engine: Engine) -> None:
         "ck_expenses_amount_sign",
         "ck_expenses_reversal_not_self",
         "ck_expenses_description_length",
+        "ck_expenses_receipt_required_has_attachment",
     }
 
 
@@ -1101,21 +1103,35 @@ def test_expenses_have_no_outlet_id(engine: Engine) -> None:
     assert "outlet_id" not in columns
 
 
-def test_expenses_have_no_attachment_column_yet(engine: Engine) -> None:
-    """§5.2 lists `attachment_id`, but `attachments` does not exist until Phase 8 and §11
-    forbids scaffolding ahead of a table that isn't built yet. It lands as a nullable-FK
-    ALTER TABLE in that phase's migration."""
+def test_expenses_has_a_nullable_attachment_id(engine: Engine) -> None:
+    """§5.2, landed in 0011: nullable, unlike `credit_sales.attachment_id` (§6.6, Phase 9),
+    because a receipt was never mandatory on an expense -- §6.11 decides per row."""
     with engine.connect() as connection:
-        columns = {
-            row[0]
-            for row in connection.execute(
-                text(
-                    "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name = 'expenses'"
-                )
+        is_nullable = connection.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'expenses' AND column_name = 'attachment_id'"
             )
-        }
-    assert "attachment_id" not in columns
+        ).scalar_one()
+    assert is_nullable == "YES"
+
+
+def test_expenses_receipt_required_is_not_null_with_a_false_default(
+    engine: Engine,
+) -> None:
+    """0011. NOT NULL because §6.11's rule is an answer, never an omission -- the same
+    posture §6.8 takes for an explicit ₹0 cash declaration. The false default exists only
+    for rows written outside the API (fixtures, migrations); the API always computes and
+    passes this explicitly, never reading it back."""
+    with engine.connect() as connection:
+        is_nullable, default = connection.execute(
+            text(
+                "SELECT is_nullable, column_default FROM information_schema.columns "
+                "WHERE table_name = 'expenses' AND column_name = 'receipt_required'"
+            )
+        ).one()
+    assert is_nullable == "NO"
+    assert default is not None and "false" in default.lower()
 
 
 def test_money_on_expenses_is_numeric_not_float(engine: Engine) -> None:
@@ -1333,3 +1349,158 @@ def test_0010_backfills_existing_expenses_onto_the_new_category_table(
                 text("DELETE FROM user_profiles WHERE id = :id").bindparams(id=user_id)
             )
         command.upgrade(alembic_config, "head")
+
+
+# --- 0011: attachments (Phase 8) ----------------------------------------------
+
+
+def test_attachments_carries_its_own_outlet_id(engine: Engine) -> None:
+    """Unlike everything Phases 5-7 built, this is NOT derivable via a parent shift
+    (§5.0) -- at upload time nothing has linked the attachment to anything yet."""
+    with engine.connect() as connection:
+        is_nullable = connection.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'attachments' AND column_name = 'outlet_id'"
+            )
+        ).scalar_one()
+    assert is_nullable == "NO"
+
+
+def test_attachments_has_no_created_by_column(engine: Engine) -> None:
+    """A deliberate exception to §5's preamble, the same documented shape as `outlets`'.
+    `uploaded_by` is the creator; carrying both would mean two columns holding one value
+    until the day they disagree."""
+    with engine.connect() as connection:
+        columns = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'attachments'"
+                )
+            )
+        }
+    assert "created_by" not in columns
+    assert "uploaded_by" in columns
+
+
+def test_attachments_storage_path_is_unique(engine: Engine) -> None:
+    with engine.connect() as connection:
+        names = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT conname FROM pg_constraint c "
+                    "JOIN pg_class t ON t.oid = c.conrelid "
+                    "WHERE t.relname = 'attachments' AND c.contype = 'u'"
+                )
+            )
+        }
+    assert names == {"uq_attachments_storage_path"}
+
+
+def test_attachments_unlinked_index_is_partial(engine: Engine) -> None:
+    """The one query §7.4's sweep runs. Mirrors ix_expenses_review (0008) -- an index over
+    every LINKED row would be dead weight, since nothing else scans by linked_at."""
+    with engine.connect() as connection:
+        definition = connection.execute(
+            text(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE tablename = 'attachments' AND indexname = 'ix_attachments_unlinked'"
+            )
+        ).scalar_one()
+    assert "WHERE" in definition
+    assert "linked_at" in definition
+
+
+@pytest.fixture
+def _attachment_uploader(engine: Engine) -> Iterator[UUID]:
+    """A throwaway user_profiles row for the three CHECK tests below -- the migration test
+    database seeds no users, so `attachments.uploaded_by` has nothing to point at."""
+    from app.core.config import get_settings
+
+    user_id = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO user_profiles (id, full_name) VALUES (:id, 'Upload Tester')"
+            ).bindparams(id=user_id)
+        )
+    yield user_id
+    with engine.begin() as connection:
+        connection.execute(
+            text("DELETE FROM user_profiles WHERE id = :id").bindparams(id=user_id)
+        )
+
+
+def test_a_zero_size_attachment_is_refused_at_the_database_level(
+    engine: Engine, _attachment_uploader: UUID
+) -> None:
+    """§6.6 belt and braces. Unreachable through the API -- upload validation refuses an
+    empty file before storage or the database are ever touched -- so this proves the last
+    line of defence works even though nothing should ever reach it."""
+    from app.core.config import get_settings
+
+    with pytest.raises(IntegrityError, match="ck_attachments_size_positive"):
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO attachments (outlet_id, bucket, storage_path, "
+                    "original_filename, mime_type, size_bytes, checksum_sha256, "
+                    "uploaded_by) VALUES (:outlet, 'receipts', 'x/y/z.jpg', 'r.jpg', "
+                    "'image/jpeg', 0, repeat('a', 64), :uploader)"
+                ).bindparams(
+                    outlet=get_settings().DEFAULT_OUTLET_ID,
+                    uploader=_attachment_uploader,
+                )
+            )
+
+
+def test_a_malformed_checksum_is_refused_at_the_database_level(
+    engine: Engine, _attachment_uploader: UUID
+) -> None:
+    from app.core.config import get_settings
+
+    with pytest.raises(IntegrityError, match="ck_attachments_checksum_format"):
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO attachments (outlet_id, bucket, storage_path, "
+                    "original_filename, mime_type, size_bytes, checksum_sha256, "
+                    "uploaded_by) VALUES (:outlet, 'receipts', 'x/y/z2.jpg', 'r.jpg', "
+                    "'image/jpeg', 100, 'not-a-real-checksum', :uploader)"
+                ).bindparams(
+                    outlet=get_settings().DEFAULT_OUTLET_ID,
+                    uploader=_attachment_uploader,
+                )
+            )
+
+
+def test_an_unsupported_mime_type_is_refused_at_the_database_level(
+    engine: Engine, _attachment_uploader: UUID
+) -> None:
+    from app.core.config import get_settings
+
+    with pytest.raises(IntegrityError, match="ck_attachments_mime_type_allowed"):
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO attachments (outlet_id, bucket, storage_path, "
+                    "original_filename, mime_type, size_bytes, checksum_sha256, "
+                    "uploaded_by) VALUES (:outlet, 'receipts', 'x/y/z3.pdf', 'r.pdf', "
+                    "'application/pdf', 100, repeat('a', 64), :uploader)"
+                ).bindparams(
+                    outlet=get_settings().DEFAULT_OUTLET_ID,
+                    uploader=_attachment_uploader,
+                )
+            )
+
+
+def test_expenses_receipt_check_is_reachable_and_mapped(engine: Engine) -> None:
+    """The one CHECK 0011 adds that a client CAN actually reach (see that migration's
+    docstring) -- so unlike the three on `attachments` above, this one must be in
+    `_CONSTRAINT_ERRORS` or a real refusal surfaces as an opaque 500."""
+    from app.core.errors import _CONSTRAINT_ERRORS
+
+    assert "ck_expenses_receipt_required_has_attachment" in _CONSTRAINT_ERRORS

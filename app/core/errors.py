@@ -60,6 +60,24 @@ _CONSTRAINT_ERRORS: dict[str, tuple[int, str, str]] = {
         "ALREADY_REVERSED",
         "This expense has already been reversed.",
     ),
+    # §6.11. The API evaluates and refuses this before ever reaching the database, but a
+    # client that bypasses the API's own check (or a future caller that forgets to) still
+    # reaches this CHECK, and it is the only genuinely-reachable one 0011 adds -- the three
+    # on `attachments` itself are unreachable because upload validation refuses every case
+    # first (see that migration's docstring).
+    "ck_expenses_receipt_required_has_attachment": (
+        422,
+        "EXPENSE_REQUIRES_RECEIPT",
+        "This expense requires a receipt attachment before it can be recorded.",
+    ),
+    # Attachment paths are {outlet_id}/{YYYY}/{MM}/{DD}/{uuid4}.{ext} -- a collision needs a
+    # uuid4 repeat, which is probabilistically unreachable rather than structurally so. A
+    # retry beats an opaque 500 on the one-in-a-very-large-number day it happens.
+    "uq_attachments_storage_path": (
+        409,
+        "ATTACHMENT_PATH_COLLISION",
+        "That storage path is already in use. Please retry the upload.",
+    ),
 }
 
 

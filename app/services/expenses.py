@@ -34,6 +34,27 @@ def _is_reversed() -> object:
     return exists().where(reversal.c.reverses_id == Expense.id)
 
 
+def live_expense_for_attachment(db: Session, *, attachment_id: UUID) -> UUID | None:
+    """Is a *live* expense already claiming this attachment? Powers §5.3's
+    one-attachment-one-live-row rule from the attachments side, called by
+    `app/services/attachments.py::link`. Mirrors `collections.live_collection_for_mode`'s
+    shape and this module's own `_is_reversed` for what "live" means here: not itself a
+    reversal, and not referenced by one.
+
+    That definition is what lets a reversal's replacement inherit the original's
+    `attachment_id` (§6.9's correction, D3 in the Phase 8 plan): once the reversal exists,
+    the original is no longer live, so this returns `None` for it and the replacement's
+    own claim is free to proceed.
+    """
+    return db.execute(
+        select(Expense.id).where(
+            Expense.attachment_id == attachment_id,
+            Expense.reverses_id.is_(None),
+            ~_is_reversed(),
+        )
+    ).scalar_one_or_none()
+
+
 def all_expenses(db: Session, *, shift_id: UUID) -> list[Expense]:
     """Every row on this shift, reversals included, oldest first.
 

@@ -56,7 +56,9 @@ from app.core.roles import Role, satisfies
 from app.core.security import decode_access_token
 from app.core.shifts import ShiftStatus
 from app.db.session import get_db
+from app.models.attachment import Attachment
 from app.models.shift import Shift
+from app.services.storage import StorageBackend, build_storage
 from app.models.user import OutletMembership, UserProfile
 
 logger = logging.getLogger(__name__)
@@ -157,6 +159,16 @@ def get_default_outlet_id(settings: Settings = Depends(get_settings)) -> UUID:
     return settings.DEFAULT_OUTLET_ID
 
 
+def get_storage(settings: Settings = Depends(get_settings)) -> StorageBackend:
+    """The Phase 8 counterpart to `get_default_outlet_id`: the one place a router asks for
+    object storage, so `app/api/v1/uploads.py` and `app/api/v1/attachments.py` never import
+    `SupabaseStorage`/`LocalStorage` directly. Tests override this dependency to inject a
+    `LocalStorage` pointed at a `tmp_path`, so the suite never reaches a real bucket -- the
+    same posture `SUPABASE_JWT_SECRET` already takes for auth.
+    """
+    return build_storage(settings)
+
+
 def require_role(
     minimum: Role,
     outlet: Callable[..., UUID] = get_default_outlet_id,
@@ -252,6 +264,28 @@ def resolve_outlet_from_shift(shift_id: UUID, db: Session = Depends(get_db)) -> 
             status_code=404,
             code="SHIFT_NOT_FOUND",
             detail="No shift with that id.",
+        )
+    return outlet_id
+
+
+def resolve_outlet_from_attachment(
+    attachment_id: UUID, db: Session = Depends(get_db)
+) -> UUID:
+    """The outlet that owns this attachment, for `require_role` to authorise against.
+
+    Mirrors `resolve_outlet_from_shift` exactly. `attachments` carries its own `outlet_id`
+    (§5.0) rather than deriving one from a parent, so this is a direct lookup rather than a
+    join -- but the 404-in-the-dependency shape is identical, and for the same reason: a
+    request against a nonexistent attachment must report missing, not forbidden.
+    """
+    outlet_id = db.execute(
+        select(Attachment.outlet_id).where(Attachment.id == attachment_id)
+    ).scalar_one_or_none()
+    if outlet_id is None:
+        raise AppError(
+            status_code=404,
+            code="ATTACHMENT_NOT_FOUND",
+            detail="No attachment with that id.",
         )
     return outlet_id
 

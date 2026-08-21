@@ -75,11 +75,26 @@ def engine() -> Iterator[Engine]:
 
 
 @pytest.fixture
-async def client() -> AsyncIterator[AsyncClient]:
-    """httpx AsyncClient over the ASGI app, per CLAUDE.md §2."""
+async def client(tmp_path) -> AsyncIterator[AsyncClient]:
+    """httpx AsyncClient over the ASGI app, per CLAUDE.md §2.
+
+    `get_storage` is overridden to a `LocalStorage` rooted in this test's own `tmp_path`,
+    so every test -- not only the ones that know about Phase 8 -- gets an isolated,
+    offline storage backend automatically. Without this, the app would fall back to
+    `build_storage`'s dev default (a fixed, machine-wide temp directory), which works but
+    is shared and unnecessary I/O for tests that never touch an attachment. `TEST_SUPABASE_
+    URL` is set above but `SUPABASE_SERVICE_KEY` deliberately is not, so `build_storage`
+    would already choose `LocalStorage` even without this override -- this makes that
+    choice explicit and per-test instead of incidental.
+    """
+    from app.api.deps import get_storage
     from app.main import create_app
+    from app.services.storage import LocalStorage
 
     app = create_app()
+    app.dependency_overrides[get_storage] = lambda: LocalStorage(
+        root=tmp_path / "storage"
+    )
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
@@ -273,6 +288,17 @@ def make_user(engine: Engine) -> Iterator[Callable[..., UUID]]:
                 text(
                     "DELETE FROM idempotency_keys WHERE user_id = ANY(:ids)"
                 ).bindparams(ids=created)
+            )
+            # Phase 8: attachments point at the user who uploaded them (uploaded_by), and
+            # expenses -- already deleted above -- were the only thing that could still
+            # reference one via attachment_id. Must run after the expenses passes above and
+            # before user_profiles below, or this hits the same class of gap the Phase 6
+            # audit found when clean_shifts never swept collections: a foreign key blowing
+            # up in a test that has nothing to do with attachments.
+            connection.execute(
+                text("DELETE FROM attachments WHERE uploaded_by = ANY(:ids)").bindparams(
+                    ids=created
+                )
             )
             connection.execute(
                 text(
@@ -1035,6 +1061,11 @@ def make_expense(engine: Engine) -> Iterator[Callable[..., UUID]]:
         reversal_reason: str | None = None,
         requires_review: bool = False,
         created_by: UUID | None = None,
+        attachment_id: UUID | None = None,
+        # §6.11's answer, snapshotted at insert on a real row. Defaulting false here keeps
+        # every existing fixture call satisfying `ck_expenses_receipt_required_has_attachment`
+        # without having to name a receipt it doesn't have.
+        receipt_required: bool = False,
     ) -> UUID:
         expense_id = uuid4()
         with engine.begin() as connection:
@@ -1057,10 +1088,12 @@ def make_expense(engine: Engine) -> Iterator[Callable[..., UUID]]:
                 text(
                     "INSERT INTO expenses (id, shift_id, category_id, mode, amount, "
                     "description, paid_to, reverses_id, reversal_reason, "
-                    "requires_review, created_by) VALUES (:id, :shift_id, "
+                    "requires_review, created_by, attachment_id, receipt_required) "
+                    "VALUES (:id, :shift_id, "
                     ":category_id, CAST(:mode AS expense_mode), "
                     "CAST(:amount AS numeric), :description, :paid_to, :reverses_id, "
-                    ":reversal_reason, :requires_review, :created_by)"
+                    ":reversal_reason, :requires_review, :created_by, :attachment_id, "
+                    ":receipt_required)"
                 ).bindparams(
                     id=expense_id,
                     shift_id=shift_id,
@@ -1073,6 +1106,8 @@ def make_expense(engine: Engine) -> Iterator[Callable[..., UUID]]:
                     reversal_reason=reversal_reason,
                     requires_review=requires_review,
                     created_by=created_by,
+                    attachment_id=attachment_id,
+                    receipt_required=receipt_required,
                 )
             )
         created.append(expense_id)

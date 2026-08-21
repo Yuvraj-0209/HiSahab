@@ -8,6 +8,7 @@ autogenerate will not see it.
 
 from __future__ import annotations
 
+from app.models.attachment import Attachment
 from app.models.audit import AuditLog
 from app.models.collection import Collection
 from app.models.expense import Expense
@@ -21,6 +22,7 @@ from app.models.shift import OutletShiftTemplate, Shift
 from app.models.user import OutletMembership, UserProfile
 
 __all__ = [
+    "Attachment",
     "AuditLog",
     "Collection",
     "Expense",

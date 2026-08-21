@@ -39,8 +39,22 @@ keys only, and callers `flush()` between dependent inserts.
 
 **No `outlet_id`** (§5.0): derivable via `shift_id -> shifts.outlet_id`.
 
-**No `attachment_id`** yet. §5.2 lists one, but `attachments` does not exist until Phase 8
-and §11 forbids scaffolding ahead of a table that isn't built.
+## Receipts are conditional, not mandatory (§6.11, Phase 8)
+
+`attachment_id` is nullable -- only `credit_sales.attachment_id` is ever `NOT NULL` (§6.6).
+`receipt_required` is evaluated once, at insert (`category.requires_receipt OR amount >
+EXPENSE_RECEIPT_THRESHOLD`), and **snapshotted**, never read back off the category. Flipping
+a category to receipt-required later must not retroactively declare every historical
+expense filed under it non-compliant -- the same reasoning §5.2 gives for storing
+`expected_closing` rather than recomputing it.
+
+`attachment_id` is immutable once set -- may be supplied at create, or by a `PATCH` while
+still `NULL`, never swapped. Enforced in `app/api/v1/expenses.py`, not here: a CHECK cannot
+see a row's previous value, only its new one.
+
+`ck_expenses_receipt_required_has_attachment` is the database's half of §6.11:
+`reverses_id IS NOT NULL OR receipt_required = false OR attachment_id IS NOT NULL`. A
+reversal is exempt -- it cancels a spend, it is not one, and there is nothing to photograph.
 """
 
 from __future__ import annotations
@@ -95,6 +109,11 @@ class Expense(Base):
             r"AND char_length(regexp_replace(description, '^\s+|\s+$', '', 'g')) >= 3",
             name="ck_expenses_description_length",
         ),
+        sa.CheckConstraint(
+            "reverses_id IS NOT NULL OR receipt_required = false "
+            "OR attachment_id IS NOT NULL",
+            name="ck_expenses_receipt_required_has_attachment",
+        ),
         sa.Index("ix_expenses_shift", "shift_id"),
         sa.Index("ix_expenses_shift_category", "shift_id", "category_id"),
         sa.Index(
@@ -120,6 +139,19 @@ class Expense(Base):
     amount: Mapped[Decimal] = mapped_column(sa.Numeric(12, 2), nullable=False)
     description: Mapped[str] = mapped_column(sa.Text(), nullable=False)
     paid_to: Mapped[str | None] = mapped_column(sa.Text(), nullable=True)
+    # §6.11. Nullable -- a receipt was never mandatory on an expense, only on a credit sale
+    # (§6.6). Immutable once set: enforced in the API, since a CHECK cannot see a row's
+    # previous value.
+    attachment_id: Mapped[UUID | None] = mapped_column(
+        sa.UUID(), sa.ForeignKey("attachments.id"), nullable=True
+    )
+    # §6.11's answer, snapshotted at insert. Never read back off expense_categories when
+    # validating or reporting on an existing row -- see the module docstring. The
+    # server_default exists only for rows written outside the API (tests, migrations); the
+    # API always computes and passes this explicitly.
+    receipt_required: Mapped[bool] = mapped_column(
+        sa.Boolean(), nullable=False, server_default=sa.text("false")
+    )
     reverses_id: Mapped[UUID | None] = mapped_column(
         sa.UUID(), sa.ForeignKey("expenses.id"), nullable=True
     )

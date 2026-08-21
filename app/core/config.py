@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # in Phase 7 -- and 1000.00 is not exactly representable in binary floating
     # point, so the boundary tests in CLAUDE.md §10 would fail unpredictably.
     EXPENSE_REVIEW_THRESHOLD: Decimal = Decimal("1000.00")
+    # §6.11 -- a DIFFERENT dial from the line above, on purpose: "a manager should look at
+    # this" and "this needs paper proof" are different questions. Never fold them into one.
+    EXPENSE_RECEIPT_THRESHOLD: Decimal = Decimal("5000.00")
     MAX_UPLOAD_BYTES: int = 5_242_880
     MAX_FLOW_RATE_LPM: int = 60
     SIGNED_URL_TTL_SECONDS: int = 300
@@ -88,11 +91,11 @@ class Settings(BaseSettings):
             )
         return value
 
-    @field_validator("EXPENSE_REVIEW_THRESHOLD", mode="after")
+    @field_validator("EXPENSE_REVIEW_THRESHOLD", "EXPENSE_RECEIPT_THRESHOLD", mode="after")
     @classmethod
     def _threshold_must_be_positive(cls, value: Decimal) -> Decimal:
         if value <= 0:
-            raise ValueError("EXPENSE_REVIEW_THRESHOLD must be greater than zero.")
+            raise ValueError("Expense thresholds must be greater than zero.")
         return value
 
     @model_validator(mode="after")

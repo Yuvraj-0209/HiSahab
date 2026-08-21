@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    attachments,
     collections,
     expense_categories,
     expenses,
@@ -21,6 +22,7 @@ from app.api.v1 import (
     readings,
     shift_templates,
     shifts,
+    uploads,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -59,3 +61,9 @@ api_router.include_router(expenses.router)
 # (/expense-categories, /expense-categories/{id}) overlap with nothing at all -- in
 # particular they do not collide with expenses.py's /expenses/flagged.
 api_router.include_router(expense_categories.router)
+
+# Phase 8 continued -- attachments. uploads.py's one route (POST /uploads/receipt) and
+# attachments.py's one route (GET /attachments/{id}/url) share nothing path-wise with any
+# router above, including expenses.py's /expenses/flagged.
+api_router.include_router(uploads.router)
+api_router.include_router(attachments.router)
