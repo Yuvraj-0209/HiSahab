@@ -303,6 +303,7 @@ Per-phase landing schedule:
 | 4 | `audit_logs` | **Yes** — no parent (moved from Phase 11, see §11) |
 | 5–7 | `nozzle_readings`, `collections`, `expenses` | No — derivable via `shift_id` |
 | 6 | `idempotency_keys` | No — infrastructure, not a business row (§5.3) |
+| 8 | `expense_categories` | **Yes** — reference data, but per-outlet (§5.1) |
 | 8 | `attachments` | **Yes** — no parent shift |
 | 9 | `credit_customers` | **Yes** |
 | 9 | `credit_sales`, `credit_repayments` | No — derivable via `shift_id` |
@@ -430,6 +431,40 @@ Dispensers are deliberately *not* a separate table in V1 (YAGNI — a label suff
 - `credit_limit` — NUMERIC(12,2), nullable (null = no limit)
 - `is_active` — boolean
 
+**`expense_categories`** — what an expense can be filed under, **admin-managed**.
+**Phase 8 amendment** — replaces the `expense_category` enum.
+- `outlet_id` — FK to outlets, NOT NULL
+- `code` — text, e.g. `TEA`, `ELECTRICITY`; **immutable once created**
+- `display_name` — text
+- `requires_receipt` — boolean, NOT NULL, default false — see §6.11
+- `is_active` — boolean
+- Unique constraint on `(outlet_id, code)`
+
+> **Why this stopped being an enum.** §5.2 originally said "keep it an enum, not free text",
+> and Phase 7 shipped `salary | maintenance | electricity | other` as a Postgres enum. But
+> §5.1 already rejects that shape one table up, for `fuel_types`: *"Admins add fuel types
+> through the API, not through a migration… adding a product you sell is data entry, and
+> requiring a schema change for it would be wrong."* Every word of that transfers. An outlet
+> buys tea, or diesel-exhaust fluid, or pays a borewell bill, and needing a migration to say
+> so is the same mistake in a different table.
+>
+> **This is not a retreat to free text**, which is what the original rule was guarding
+> against. Free text lets `Tea`, `tea` and `chai ` become three categories, and §6.7's
+> aggregate rule then never fires — ₹600 under one label plus ₹600 under another never sums
+> to ₹1,200, and the control silently becomes theatre. A controlled, admin-managed reference
+> table is the same middle ground `fuel_types` occupies: open to new rows, closed to typos.
+>
+> **`code` is immutable** for the reason `fuel_types.code` is: changing it retroactively
+> relabels every expense ever filed under it, and history stops meaning what it said.
+> Deactivate rather than delete (§3 rule 6); `display_name`, `requires_receipt` and
+> `is_active` stay editable. A deactivated category refuses **new** expenses (409
+> `CATEGORY_INACTIVE`) while historical rows keep pointing at it and keep reporting.
+>
+> **Outlet-scoped, unlike `fuel_types`.** `PETROL` means the same thing at every outlet;
+> "tea" does not. One pump's category list is not another's, and `requires_receipt` is a
+> control decision an outlet's own admin makes. Not derivable from anything, so by §5.0's
+> rule the column exists from birth.
+
 ### 5.2 Transactional tables
 
 **`shifts`** — the spine. Everything hangs off this. See §4.7 for the chain model.
@@ -545,21 +580,29 @@ unambiguous: there is always exactly one closing reading to carry forward.
 **`expenses`** (renamed from `cash_flows` — the old name was ambiguous, since
 collections and deposits are also cash flows)
 - `shift_id` — FK
-- `category` — enum: `salary` | `maintenance` | `electricity` | `other`
-  (extend as needed; keep it an enum, not free text)
+- `category_id` — FK to `expense_categories`, NOT NULL. **Phase 8 amendment** — replaces the
+  `category` enum; see §5.1 for why
 - `mode` — enum: `cash` | `card` | `upi` | `bank_transfer`. **Phase 7 amendment.**
 - `amount` — NUMERIC(12,2). **Sign rule, not a bare `CHECK > 0`** — see the note below
 - `description` — text, NOT NULL, 3–500 chars
 - `paid_to` — text nullable
-- `attachment_id` — FK nullable. **Deferred to Phase 8** — `attachments` does not exist
-  until then, and §11 forbids scaffolding ahead. The column lands with that phase's
-  migration, not Phase 7's
+- `attachment_id` — FK to `attachments`, nullable. **Lands in Phase 8.** Optional by design —
+  only `credit_sales.attachment_id` is `NOT NULL` (§6.6). When it *is* required, §6.11 decides
+- `receipt_required` — boolean, NOT NULL. **Phase 8 amendment** — §6.11's answer,
+  **snapshotted at insert**, not read back off the category. See §6.11
 - `reverses_id` — FK to `expenses.id`, nullable, unique. **Phase 7 amendment**
 - `reversal_reason` — text, nullable, required (and non-blank) when `reverses_id` is set.
   **Phase 7 amendment**
 - `requires_review` — boolean, default false
 - `reviewed_by`, `reviewed_at` — nullable
 - `review_note` — text nullable
+
+> **Why `attachment_id` is immutable once set.** It may be supplied at create, or by a
+> `PATCH` **while it is still `NULL`**. Swapping one receipt for another is refused with 409
+> `ATTACHMENT_ALREADY_SET`, and the correction path is §6.9's reversal like everything else
+> here. The alternative is worse in both directions: allowing a swap either strands the old
+> receipt as linked-forever garbage §7.4's sweep can never reclaim, or unlinks it and lets
+> the sweep delete evidence for an expense that still exists.
 
 > **Why `fuel_purchase` was removed from the category enum.** Restocking the tank is paid
 > from the bank account and settles against the IOCL ledger — it never touches the drawer,
@@ -570,6 +613,14 @@ collections and deposits are also cash flows)
 > two synonymous categories can split one real expense across both labels, silently
 > defeating §6.7's per-category daily aggregate (₹600 under `misc` plus ₹600 under `other`
 > never sums to ₹1,200).
+>
+> **That exclusion outlived the enum, and got sharper.** Phase 8 turned the category list
+> into admin-managed data (§5.1), so nobody has to edit a migration to add a category — and
+> nobody is stopped by one either. **An admin must not create a fuel-purchase, tanker,
+> IOCL, or PAD-settlement category.** The reasoning is unchanged and is now the *only* thing
+> enforcing it: that money leaves the bank, never the drawer, and §6.4 would invent a daily
+> cash shortage that never happened. Removing a label from an enum was a schema act; not
+> creating one is a discipline, so it is restated in §14.
 >
 > **Why `mode` was added.** §6.4 subtracts `cash_expenses`, which only makes sense if some
 > expenses are *not* cash — but the original column list had no way to say that. Without
@@ -623,6 +674,27 @@ never a raw URL string. Single authoritative representation of file knowledge (D
 - `uploaded_by` — FK
 - `linked_at` — TIMESTAMPTZ nullable (set when referenced by a business row;
   unlinked rows older than 24h are garbage — see §7.4)
+- **No `created_by`**, and this is a deliberate exception to §5's preamble, in the same
+  shape as `outlets`'. `uploaded_by` *is* the creator, under the name §7.2 already uses.
+  Carrying both would mean two columns holding one value until the day they disagree
+
+> **`storage_path` does not include the bucket.** §7.2 writes the example path as
+> `receipts/{outlet_id}/…`, where `receipts` is the bucket — which object storage takes as a
+> separate argument, not as a path prefix. Storing it in both places puts the object at
+> `receipts/receipts/…` the first time anything concatenates them. So `bucket` holds
+> `receipts` and `storage_path` holds `{outlet_id}/{YYYY}/{MM}/{DD}/{uuid4}.{ext}`.
+
+> **One attachment belongs to one *live* business row.** A second row claiming the same
+> attachment is refused with 409 `ATTACHMENT_ALREADY_LINKED`. Without that rule one
+> photograph can justify ten expenses, which is the abuse the receipt requirement exists to
+> catch, and no flag would ever fire.
+>
+> *Live* means what it means for `collections` in §5.2: **not itself a reversal, and not
+> referenced by one.** That precision is load-bearing rather than pedantic. Correcting a
+> receipt-required expense under §6.9 creates a reversal *plus* a replacement row, and the
+> replacement is a real expense that needs the receipt — so **the replacement inherits the
+> original's `attachment_id`**. The original is dead, exactly one live row holds the
+> attachment throughout, and nobody has to photograph the same piece of paper twice.
 
 **`idempotency_keys`** — §6.10's replay store. Infrastructure, not a business record.
 - `idempotency_key` — text, client-supplied
@@ -817,8 +889,10 @@ Tuesday's opening.
 - **Also flag** when the sum of a single category for one `business_date` exceeds
   the threshold. A single ₹1,000 rule is trivially defeated by two ₹600 entries;
   without this, the control is theatre.
-- **The aggregate rule flags every live, unreviewed row in that `(business_date, category)`
-  group, not only the row that crossed the line.** Three maintenance entries of ₹400, ₹400
+- **The aggregate rule flags every live, unreviewed row in that
+  `(business_date, category_id)` group, not only the row that crossed the line.** (Grouped
+  on `category_id` since Phase 8 made categories a table — §5.1. The rule is unchanged; only
+  what identifies a category is.) Three maintenance entries of ₹400, ₹400
   and ₹500 cross ₹1,000 together; flagging only the ₹500 row shows a manager a trivial
   amount and hides the ₹1,300 pattern the rule exists to surface. "Live" excludes a
   reversed row and the reversal that cancels it — §6.9's correction, not a fourth expense.
@@ -903,6 +977,64 @@ instead. A collection has no such natural key — two ₹5,000 cash collections 
 are both legitimate — so a timed-out retry genuinely does duplicate money there. Building
 the store in Phase 5 for a POST that cannot duplicate would be scaffolding ahead (§11).
 
+**The upload endpoint (§7.2) deliberately takes no `Idempotency-Key`.** An attachment is not
+a money record. A retried upload creates a second row the client simply does not use, and
+§7.4's sweep reclaims it within 24 hours — whereas fingerprinting a 5 MB multipart body to
+prove two uploads are "the same request" is worse than the problem. The step where a retry
+*would* duplicate money is the linking one, inside `POST /shifts/{id}/expenses`, and that
+has carried a key since Phase 7.
+
+### 6.11 When an expense needs a receipt
+
+**Phase 8.** A receipt has never been mandatory on an expense — §5.2 makes
+`expenses.attachment_id` nullable, and only `credit_sales.attachment_id` is `NOT NULL`
+(§6.6). This is the rule that decides when one *is* required:
+
+```
+receipt_required = category.requires_receipt  OR  amount > EXPENSE_RECEIPT_THRESHOLD
+```
+
+- `EXPENSE_RECEIPT_THRESHOLD` is a **config value** (default `5000.00`), never a literal —
+  same rule as §6.7's threshold.
+- It is deliberately **a different number from `EXPENSE_REVIEW_THRESHOLD`**. "A manager
+  should look at this" and "this needs paper proof" are different questions and deserve
+  independent dials; sharing one would weld them together forever.
+- The comparison is strictly `>`, matching §6.7. Exactly at the threshold does not require a
+  receipt; one paisa over does.
+- Refuse with 422 `EXPENSE_REQUIRES_RECEIPT` when the rule demands an attachment and none is
+  supplied.
+
+**Why the category flag alone is not enough.** Tea must be frictionless — demanding a
+photograph for a ₹20 chai run is friction that teaches staff to fake it, which is the failure
+mode this whole document exists to prevent. But a category marked "no receipt" then becomes
+the obvious place to file something large. The threshold closes that: a ₹50,000 anything
+needs paper, whatever it was filed under.
+
+**The answer is stored on the row, not recomputed.** `expenses.receipt_required` is evaluated
+**once, at insert**, and saved. It is never read back off `expense_categories` when validating
+or reporting on an existing expense.
+
+> This is the same reasoning §5.2 gives for storing `expected_closing`. `requires_receipt` is
+> editable — that is the point of §5.1's table. The day an admin flips `MAINTENANCE` to
+> receipt-required, a recomputed rule would retroactively declare every historical
+> maintenance expense non-compliant, and the system would start reporting a control failure
+> that never happened. Store what the rule was that day.
+
+**Re-evaluated on a `PATCH` that changes the amount**, for the same reason §6.7's aggregate
+re-runs there: entering ₹900 and editing up to ₹9,000 must be able to start demanding a
+receipt, or the threshold is defeated by a two-step entry. If the row has no attachment, the
+`PATCH` is refused.
+
+**A reversal never needs a receipt.** A reversal row (§6.9) is a cancellation, not a spend;
+there is nothing to photograph. Its *replacement* does need one — and inherits the original's
+attachment rather than demanding a second photo of the same paper (§5.3).
+
+Enforced at the database as well as in the application (§6.6, belt and braces):
+
+```sql
+CHECK (reverses_id IS NOT NULL OR receipt_required = false OR attachment_id IS NOT NULL)
+```
+
 ---
 
 ## 7. File Upload Flow
@@ -918,7 +1050,8 @@ about and test. KISS. Document this as a known trade-off, not an oversight.
 
 ### 7.2 Sequence
 
-1. Client `POST`s `multipart/form-data` to `/api/v1/uploads/receipt`.
+1. Client `POST`s `multipart/form-data` to `/api/v1/uploads/receipt`, carrying the file and
+   a **required `shift_id` form field**.
 2. Server validates **before** touching storage:
    - Size ≤ 5 MB (reject with 413, code `FILE_TOO_LARGE`)
    - MIME type by **content sniffing** (magic bytes), *not* file extension —
@@ -937,11 +1070,45 @@ about and test. KISS. Document this as a known trade-off, not an oversight.
 6. Client submits the credit sale / expense referencing that `attachment_id`.
 7. Server sets `attachments.linked_at` when the reference is created.
 
+> **Where `shift_id` comes in, and why it is not a column.** Step 4's path needs a
+> `business_date`, but at upload time no expense or credit sale exists yet to read one off.
+> The three candidates were a client-supplied date, "today", and the shift.
+>
+> **"Today" is wrong here specifically.** §4.7 says the whole day is typed in *after the
+> fact*, so an upload routinely happens on the following calendar day and the receipt would
+> file under a date the register never mentions — the same trap §6.1 exists to name. A
+> client-supplied date is a derived value the client chose, which §3 rule 7 says to recompute
+> server-side.
+>
+> So the upload takes `shift_id` and the server reads three things off that shift: its
+> already-validated, immutable `business_date`, its `outlet_id`, and §8's ownership check —
+> by reusing the shift-scoped write dependency unchanged, so an attendant can upload only
+> against their own open shift and a closed or locked shift refuses uploads for free.
+>
+> **`shift_id` is not stored on the `attachments` row.** §5.3 has no such column and does not
+> gain one. It is an input that resolves three values, not a fact about the file — and a
+> receipt is not owned by a shift, it is owned by the business row that eventually links it.
+
+> **The upload takes no `Idempotency-Key`.** See §6.10's closing note for why.
+
 ### 7.3 Reading files back
 
 The bucket is **private**. Never make it public.
 `GET /api/v1/attachments/{id}/url` checks the caller's permission and returns a
 short-lived signed URL (5 minutes). Expired links are useless if leaked.
+
+**The permission rule**, following §8's two axes — role first, then ownership, with ownership
+applied only when the caller is an `attendant`:
+
+- **Manager or admin** at the attachment's outlet → allowed, any attachment.
+- **Attendant** → allowed only if they uploaded it, **or** it is linked to a business row on
+  a shift whose `attendant_id` is theirs. Otherwise 403 `NOT_YOUR_ATTACHMENT`.
+- An id belonging to **another outlet** returns **404, not 403** — existence is not leaked
+  across tenants.
+
+An attendant needs the uploaded-it case as well as the linked-to-their-shift one, because
+between §7.2's steps 5 and 6 the attachment is linked to nothing at all, and they must still
+be able to see what they just uploaded.
 
 ### 7.4 Housekeeping
 
@@ -949,6 +1116,17 @@ A scheduled job deletes `attachments` rows (and their storage objects) where
 `linked_at IS NULL AND created_at < now() - interval '24 hours'`.
 These are abandoned uploads. V1: a management command run manually or via cron.
 Do not build a job scheduler.
+
+> **This hard-deletes, and that is not a breach of §3 rule 6.** That rule protects *financial*
+> tables. `attachments` is not one, and an unlinked row is by definition referenced by no
+> financial row — that is exactly what `linked_at IS NULL` means. **A linked attachment is
+> never deleted, at any age**, including one whose expense was later reversed: §6.9 keeps
+> both rows, so the receipt stays evidence.
+>
+> **Delete the storage object first, then the row.** If the object delete fails, the row
+> survives and the next run retries it. If the row delete fails after the object is gone, the
+> next run finds a row whose object no longer exists — so **the object delete must treat a
+> 404 as success**, or the sweep wedges permanently on one bad row.
 
 ---
 
@@ -966,14 +1144,19 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | Action | attendant | manager | admin |
 |---|:--:|:--:|:--:|
 | Create readings/collections/expenses/credit sales on an open shift | own only | any | any |
+| Upload a receipt against an open shift (§7.2) | own only | any | any |
+| Read a receipt's signed URL (§7.3) | own only | any | any |
 | Read own shift | ✅ | ✅ | ✅ |
 | Read all shifts / reports | ❌ | ✅ | ✅ |
+| Read the month-end expense summary | ❌ | ✅ | ✅ |
+| List expense categories (to fill a dropdown) | ✅ | ✅ | ✅ |
 | Close a shift | ❌ | ✅ | ✅ |
 | Record bank deposits | ❌ | ✅ | ✅ |
 | Review flagged expenses | ❌ | ✅ | ✅ |
 | Lock a shift / finalise a day | ❌ | ❌ | ✅ |
 | Enter fuel prices and margins | ❌ | ❌ | ✅ |
 | Manage fuel types (add a new product, e.g. XP-95) | ❌ | ❌ | ✅ |
+| Manage expense categories, incl. `requires_receipt` (§5.1, §6.11) | ❌ | ❌ | ✅ |
 | Manage users, nozzles, customers | ❌ | ❌ | ✅ |
 | Override credit limit / manual litres | ❌ | ❌ | ✅ |
 | Seed initial opening balance | ❌ | ❌ | ✅ |
@@ -1065,6 +1248,20 @@ test suite would give false confidence about exactly the rules that matter most.
 - Two ₹600 same-category same-day expenses → category aggregate flag fires
 - Shift lock blocked while an unreviewed flagged expense exists
 
+*Expense categories and receipts (§5.1, §6.11)*
+- A category's `code` cannot be changed after creation; `display_name`,
+  `requires_receipt` and `is_active` can
+- A deactivated category refuses a **new** expense but historical rows still read and report
+- Non-admins cannot create or edit a category; every role can list them
+- `requires_receipt = false` and under threshold, no attachment → accepted
+- `requires_receipt = true` and no attachment → 422
+- `requires_receipt = false` but amount over `EXPENSE_RECEIPT_THRESHOLD` → 422
+- Boundary: exactly at the threshold does not require a receipt; one paisa over does
+- A `PATCH` raising the amount past the threshold starts requiring one
+- **Flipping a category to `requires_receipt = true` does not invalidate historical rows** —
+  the snapshot holds
+- A reversal needs no receipt; its replacement inherits the original's attachment
+
 *Auth*
 - Attendant writing to another attendant's shift → 403
 - Attendant closing a shift → 403
@@ -1075,6 +1272,13 @@ test suite would give false confidence about exactly the rules that matter most.
 - PDF renamed to `.jpg` → rejected by content sniffing
 - HEIC → specific, actionable error message
 - Unlinked attachment older than 24h is cleaned up
+- **A linked attachment is never cleaned up, at any age**
+- The client-supplied filename appears nowhere in the storage path — test one containing
+  `../` and one containing spaces
+- The stored path's date segments are the **shift's `business_date`**, not today
+- A second business row claiming one attachment → 409
+- Attendant reading another attendant's receipt → 403; an id from another outlet → 404
+- Storage failing mid-upload → 502, and no `attachments` row is left behind
 
 *Idempotency*
 - Same `Idempotency-Key` twice → one row, identical response both times
@@ -1105,7 +1309,11 @@ ahead — no empty modules for later phases.
    flag-don't-recompute resolution
 6. **Collections**
 7. **Expenses** + flagging rules
-8. **Attachments** — upload, validation, signed download, cleanup
+8. **Expense categories & attachments** — `expense_categories` replaces the category enum
+   (§5.1); upload, validation, signed download and cleanup (§7); §6.11's conditional receipt
+   rule, which is what the first two exist to make enforceable; and a month-end
+   category-wise expense summary. Scope grew from "attachments" because §6.11 needs both
+   halves, and splitting them would mean writing `expenses.py` twice
 9. **Credit** — customers, sales (receipt-enforced), repayments, outstanding balance
 10. **Cash engine** — daily summary, expected vs actual, rolling balance
 11. ~~**Audit log**~~ — **built in Phase 4 instead.** The invitation above was taken:
@@ -1232,6 +1440,23 @@ to occur on this specific project.
   against the IOCL ledger, not the drawer, and §12 already puts tanker delivery entirely out
   of V1. Adding it back as a category, in any mode, reopens exactly the trap the line above
   already forbids for the IOCL/PAD case
+- **Create a fuel-purchase / tanker / IOCL / PAD expense *category*.** Phase 8 made
+  categories admin-managed data (§5.1), so the enum that used to make this impossible is
+  gone and only discipline is left. Same money, same wrong drawer, same phantom shortfall
+- Read `expense_categories.requires_receipt` when validating or reporting on an **existing**
+  expense — read `expenses.receipt_required`, the snapshot taken at insert. The live flag is
+  editable, and reading it back retroactively rewrites whether history complied (§6.11)
+- Make expense categories free text, or let one be renamed by changing its `code` — the
+  first defeats §6.7's aggregate, the second relabels every expense ever filed under it (§5.1)
+- Demand a receipt on a **reversal** row — a cancellation is not a spend and there is nothing
+  to photograph (§6.11)
+- Make one attachment serve two live business rows, or force a re-upload of the same paper
+  for a §6.9 replacement — the replacement inherits the original's attachment (§5.3)
+- Put the client-supplied filename, or the bucket name, in `storage_path` (§5.3, §7.2)
+- Trust a client-declared `Content-Type` or a file extension — sniff the magic bytes (§7.2)
+- Delete a **linked** attachment, at any age, including one whose expense was reversed (§7.4)
+- Take the upload's `business_date` from "today" — the day is typed in after the fact and
+  the receipt would file under a date the register never mentions (§7.2, §4.7)
 - Block a shift close because collections do not equal sales — that gap is §6.4's variance
   and §6.6's udhaar, and blocking on it teaches staff to type figures that balance (§6.8)
 - Sum the `cash` collection row together with §6.4's derived `cash_sales` — the cash row is
@@ -1239,7 +1464,8 @@ to occur on this specific project.
 - Use offset pagination
 - Set `allow_origins=["*"]`
 - Add a frontend framework, bundler, or npm dependency
-- Hardcode `1000` for the expense threshold
+- Hardcode `1000` for the expense review threshold, or `5000` for the receipt threshold —
+  both are config, and they are deliberately **separate dials** (§6.11)
 - Create scaffolding for out-of-scope features
 - Create a table listed in §5.0's schedule **without** its `outlet_id`, or with a
   unique constraint that is not outlet-scoped where §5.1–§5.3 says it should be
@@ -1299,6 +1525,18 @@ to occur on this specific project.
 - ~~§6.4 vs §5.2 contradiction, decide before Phase 7~~ **Answered in Phase 7:**
   `expenses` gained a `mode` column (§5.2), and §6.4 now states that `cash_expenses` means
   `mode = cash` rows only.
+- ~~Should every expense carry a receipt?~~ **Answered in Phase 8: no, and it never did.**
+  Only `credit_sales.attachment_id` was ever `NOT NULL`. §6.11 now decides per expense, from
+  an admin-managed per-category flag OR an amount threshold — so tea stays frictionless and
+  a ₹50,000 anything still needs paper.
+- **`EXPENSE_RECEIPT_THRESHOLD` is defaulted to ₹5,000 and that figure is a guess.** Set
+  above §6.7's ₹1,000 review line because "a manager should look" and "this needs paper" are
+  different questions, but the owner has not confirmed it. It is live on real money from the
+  moment §6.11 lands.
+- **What is the real expense category list, and which entries genuinely need a receipt?**
+  Phase 8 seeds `SALARY`, `MAINTENANCE`, `ELECTRICITY` and `OTHER`, with `OTHER` alone
+  requiring one, and everything else is now data entry (§5.1) — but seeding the real list
+  means the app matches the paper register from day one instead of after a round of typing.
 
 ---
 
@@ -1335,7 +1573,10 @@ SUPABASE_URL
 SUPABASE_SERVICE_KEY          # server-side only, never exposed to frontend
 SUPABASE_JWT_SECRET
 SUPABASE_STORAGE_BUCKET=receipts
-EXPENSE_REVIEW_THRESHOLD=1000.00
+EXPENSE_REVIEW_THRESHOLD=1000.00   # §6.7 -- flag for a manager's eyes
+EXPENSE_RECEIPT_THRESHOLD=5000.00  # §6.11 -- demand a receipt. A DIFFERENT dial from the
+                              # line above on purpose: "look at this" and "prove this"
+                              # are different questions. Never fold them into one value.
 MAX_UPLOAD_BYTES=5242880
 MAX_FLOW_RATE_LPM=60           # seeds fuel_types.max_flow_rate_per_minute for litre
                               # fuels in migration 0003 ONLY. The §6.2 guard reads the
@@ -1347,3 +1588,11 @@ TZ_DISPLAY=Asia/Kolkata
 
 No secrets in the repository. `.env` is gitignored; `.env.example` is committed with
 placeholder values.
+
+**Runtime dependencies added in Phase 8**, both forced by §7.1's proxy-upload choice:
+`python-multipart` (FastAPI cannot parse `multipart/form-data` without it) and `httpx`,
+promoted from a dev-only dependency because the Supabase Storage REST API is called
+directly. **No Supabase SDK** — three REST calls behind a small `StorageBackend` protocol is
+more boring and more testable than a client library, and it keeps the test suite offline.
+**Content sniffing is hand-rolled**, not `python-magic`: about twenty lines for three
+signatures, nothing to install, and §7.2's HEIC message falls out of it naturally.
