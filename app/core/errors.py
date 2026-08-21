@@ -41,10 +41,24 @@ _CONSTRAINT_ERRORS: dict[str, tuple[int, str, str]] = {
     # service-level ALREADY_REVERSED check passes for both, and the unique index refuses
     # the second INSERT. Without this entry that manager got an opaque 500 and no way to
     # tell whether their reversal had landed.
+    #
+    # There must be one entry here for EVERY `uq_<table>_reverses_id` in the schema. §6.9's
+    # correction shape lands on one more table per phase, and the constraint is unreachable
+    # except under a race -- so nothing fails in testing when a copy is forgotten, and the
+    # omission only surfaces in production with two people clicking at once. Phase 7 copied
+    # the constraint onto `expenses` without copying this entry; Phase 8 Step 0 found it.
+    # `tests/test_errors.py::test_every_reversal_unique_constraint_is_mapped_to_a_business_error`
+    # reads pg_constraint directly so the next table to grow a reversal is covered on the
+    # day its migration lands, rather than the day someone remembers.
     "uq_collections_reverses_id": (
         409,
         "ALREADY_REVERSED",
         "This collection has already been reversed.",
+    ),
+    "uq_expenses_reverses_id": (
+        409,
+        "ALREADY_REVERSED",
+        "This expense has already been reversed.",
     ),
 }
 
