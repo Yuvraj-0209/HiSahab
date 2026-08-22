@@ -33,14 +33,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field, condecimal, field_validator
-from sqlalchemy import select
+from sqlalchemy import literal, select, tuple_, union_all
 from sqlalchemy.orm import Session
 
+from app.api.cursor import DEFAULT_LIMIT, MAX_LIMIT, decode_cursor, encode_cursor
 from app.api.deps import Actor, require_role
 from app.core.errors import AppError
 from app.core.roles import Role
 from app.db.session import get_db
-from app.models.credit import CreditCustomer
+from app.models.credit import CreditCustomer, CreditRepayment, CreditSale
 from app.services import credit as credit_service
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,33 @@ class CreditCustomerResponse(BaseModel):
     # §6.6: computed from the rows every time, never stored. May be negative when a customer
     # has paid in advance.
     outstanding: Decimal
+
+
+class LedgerEntry(BaseModel):
+    """One line of a customer's account, from either table.
+
+    `amount` is the row as recorded -- positive for a sale, positive for a repayment,
+    negative for either one's reversal. `balance_delta` is what that row did to the
+    outstanding figure: a repayment reduces the debt, so its delta is the negation.
+
+    Both are returned because they answer different questions. `amount` is what a human
+    would find on the slip; `balance_delta` is what §6.6's sum actually added. Deriving one
+    from the other requires knowing the rule, and a reader with a printed ledger in front of
+    them should not have to.
+    """
+
+    id: UUID
+    kind: str
+    shift_id: UUID
+    amount: Decimal
+    balance_delta: Decimal
+    is_reversal: bool
+    created_at: str
+
+
+class LedgerPage(BaseModel):
+    items: list[LedgerEntry]
+    next_cursor: str | None
 
 
 class CreditCustomerCreate(BaseModel):
@@ -430,4 +458,95 @@ def update_credit_customer(
     )
     return _to_response(
         customer, outstanding=credit_service.outstanding(db, customer_id=customer.id)
+    )
+
+
+@router.get(
+    "/credit-customers/{customer_id}/ledger", response_model=LedgerPage
+)
+def get_credit_customer_ledger(
+    customer_id: UUID,
+    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    cursor: str | None = Query(default=None),
+    actor: Actor = Depends(
+        require_role(Role.manager, resolve_outlet_from_credit_customer)
+    ),
+    db: Session = Depends(get_db),
+) -> LedgerPage:
+    """Every sale and repayment against one customer, newest first. Manager floor (§8).
+
+    This is the evidence behind §6.6's outstanding figure. A balance nobody can take apart is
+    a number the owner has to trust rather than check, and §14 says a plausible-but-wrong
+    figure is this project's primary failure mode -- so the arithmetic has to be auditable
+    line by line, not merely correct.
+
+    **Cursor-paginated, unlike the customer list.** A customer list is bounded reference
+    data; a ledger grows forever, and §9 forbids offset pagination because inserts during a
+    scroll cause duplicates and skips.
+
+    **A `UNION ALL` across the two tables rather than two requests the client merges.**
+    Merging client-side cannot paginate correctly: taking the newest 50 of each table and
+    interleaving them gives the newest 50 overall only by luck, and gets steadily wronger the
+    more one-sided the account is. The keyset then runs over the combined result, which is
+    the only place the true ordering exists.
+
+    Reversals appear as their own lines rather than being netted away, per §6.9: both rows
+    remain visible, and a customer disputing a bill is entitled to see that a charge was
+    raised and cancelled rather than an account that silently never mentions it.
+    """
+    sales = select(
+        CreditSale.id.label("id"),
+        CreditSale.created_at.label("created_at"),
+        literal("sale").label("kind"),
+        CreditSale.amount.label("amount"),
+        # A sale adds to what is owed, so the row's own sign is already the balance effect.
+        CreditSale.amount.label("balance_delta"),
+        CreditSale.shift_id.label("shift_id"),
+        CreditSale.reverses_id.label("reverses_id"),
+    ).where(CreditSale.credit_customer_id == customer_id)
+
+    repayments = select(
+        CreditRepayment.id,
+        CreditRepayment.created_at,
+        literal("repayment"),
+        CreditRepayment.amount,
+        # A repayment reduces what is owed, so its effect on the balance is the negation --
+        # which also makes a *reversed* repayment (already negative) correctly add the debt
+        # back, without a second rule.
+        -CreditRepayment.amount,
+        CreditRepayment.shift_id,
+        CreditRepayment.reverses_id,
+    ).where(CreditRepayment.credit_customer_id == customer_id)
+
+    combined = union_all(sales, repayments).subquery()
+    statement = select(combined).order_by(
+        combined.c.created_at.desc(), combined.c.id.desc()
+    )
+    if cursor is not None:
+        last_created_at, last_id = decode_cursor(cursor)
+        statement = statement.where(
+            tuple_(combined.c.created_at, combined.c.id)
+            < tuple_(last_created_at, last_id)
+        )
+
+    rows = db.execute(statement.limit(limit + 1)).all()
+    has_more = len(rows) > limit
+    page = rows[:limit]
+
+    return LedgerPage(
+        items=[
+            LedgerEntry(
+                id=row.id,
+                kind=row.kind,
+                shift_id=row.shift_id,
+                amount=row.amount,
+                balance_delta=row.balance_delta,
+                is_reversal=row.reverses_id is not None,
+                created_at=row.created_at.isoformat(),
+            )
+            for row in page
+        ],
+        next_cursor=(
+            encode_cursor(page[-1].created_at, page[-1].id) if has_more and page else None
+        ),
     )

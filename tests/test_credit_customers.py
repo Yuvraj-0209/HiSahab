@@ -818,3 +818,268 @@ async def test_a_null_phone_does_not_trip_the_duplicate_check(
 
     assert response.status_code == 200
     assert response.json()["phone"] == "9000000031"
+
+
+# --- the ledger --------------------------------------------------------------
+
+
+async def test_the_ledger_interleaves_sales_and_repayments_newest_first(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_attachment: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_sale: Callable[..., UUID],
+    make_credit_repayment: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """The evidence behind §6.6's outstanding figure. A UNION ALL rather than two requests
+    the client merges, because interleaving the newest 50 of each table gives the newest 50
+    overall only by luck."""
+    attendant = make_user("attendant")
+    manager = make_user("manager")
+    shift = make_shift(attendant, business_date=DAY, sequence=1)
+    customer = make_credit_customer(name="Has History")
+    make_credit_sale(shift, customer, make_attachment(attendant), amount="2000.00")
+    make_credit_repayment(shift, customer, amount="500.00")
+
+    response = await client.get(
+        f"/api/v1/credit-customers/{customer}/ledger", headers=auth_headers(manager)
+    )
+
+    assert response.status_code == 200
+    kinds = {row["kind"] for row in response.json()["items"]}
+    assert kinds == {"sale", "repayment"}
+
+
+async def test_the_ledgers_balance_deltas_sum_to_the_outstanding_figure(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_attachment: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_sale: Callable[..., UUID],
+    make_credit_repayment: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """The check that makes the ledger worth having: line by line, it must add up to the
+    number on the customer's detail page. A balance nobody can take apart is one the owner
+    has to trust rather than verify, and §14 calls a plausible-but-wrong figure this
+    project's primary failure mode.
+
+    Deliberately includes a reversed sale AND a reversed repayment, so the two sign rules
+    are exercised together rather than one at a time.
+    """
+    attendant = make_user("attendant")
+    manager = make_user("manager")
+    shift = make_shift(attendant, business_date=DAY, sequence=1)
+    customer = make_credit_customer(name="Complicated")
+    attachment = make_attachment(attendant)
+
+    make_credit_sale(shift, customer, attachment, amount="5000.00")
+    cancelled = make_credit_sale(
+        shift, customer, make_attachment(attendant), amount="900.00"
+    )
+    make_credit_sale(
+        shift, customer, make_attachment(attendant), amount="-900.00",
+        reverses_id=cancelled, reversal_reason="wrong customer",
+    )
+    make_credit_repayment(shift, customer, amount="1200.00")
+    bounced = make_credit_repayment(shift, customer, amount="800.00")
+    make_credit_repayment(
+        shift, customer, amount="-800.00", reverses_id=bounced,
+        reversal_reason="cheque bounced",
+    )
+
+    ledger = await client.get(
+        f"/api/v1/credit-customers/{customer}/ledger", headers=auth_headers(manager)
+    )
+    detail = await client.get(
+        f"/api/v1/credit-customers/{customer}", headers=auth_headers(manager)
+    )
+
+    total = sum(
+        (Decimal(row["balance_delta"]) for row in ledger.json()["items"]),
+        Decimal("0.00"),
+    )
+    assert total == Decimal(detail.json()["outstanding"])
+    # 5000 - 900 + 900 (the cancelled sale nets out) - 1200 - 800 + 800 = 3800
+    assert total == Decimal("3800.00")
+
+
+async def test_a_repayments_balance_delta_is_the_negation_of_its_amount(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_repayment: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """`amount` is what a human finds on the slip; `balance_delta` is what §6.6's sum added.
+    Both are returned because deriving one from the other requires knowing the rule."""
+    attendant = make_user("attendant")
+    manager = make_user("manager")
+    shift = make_shift(attendant, business_date=DAY, sequence=1)
+    customer = make_credit_customer()
+    make_credit_repayment(shift, customer, amount="750.00")
+
+    response = await client.get(
+        f"/api/v1/credit-customers/{customer}/ledger", headers=auth_headers(manager)
+    )
+
+    row = response.json()["items"][0]
+    assert row["amount"] == "750.00"
+    assert row["balance_delta"] == "-750.00"
+
+
+async def test_reversals_appear_as_their_own_lines(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_attachment: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_sale: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """§6.9: both rows remain visible. A customer disputing a bill is entitled to see that a
+    charge was raised and cancelled, rather than an account that never mentions it."""
+    attendant = make_user("attendant")
+    manager = make_user("manager")
+    shift = make_shift(attendant, business_date=DAY, sequence=1)
+    customer = make_credit_customer()
+    attachment = make_attachment(attendant)
+    original = make_credit_sale(shift, customer, attachment, amount="600.00")
+    make_credit_sale(
+        shift, customer, attachment, amount="-600.00",
+        reverses_id=original, reversal_reason="cancelled",
+    )
+
+    response = await client.get(
+        f"/api/v1/credit-customers/{customer}/ledger", headers=auth_headers(manager)
+    )
+
+    items = response.json()["items"]
+    assert len(items) == 2
+    assert sum(1 for row in items if row["is_reversal"]) == 1
+
+
+async def test_the_ledger_is_cursor_paginated(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_attachment: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_sale: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """§9 forbids offset pagination -- inserts during a scroll cause duplicates and skips.
+    A ledger grows forever, unlike the customer list, so it gets a real cursor."""
+    attendant = make_user("attendant")
+    manager = make_user("manager")
+    shift = make_shift(attendant, business_date=DAY, sequence=1)
+    customer = make_credit_customer()
+    for _ in range(5):
+        make_credit_sale(
+            shift, customer, make_attachment(attendant), amount="100.00"
+        )
+
+    first = await client.get(
+        f"/api/v1/credit-customers/{customer}/ledger?limit=2",
+        headers=auth_headers(manager),
+    )
+    body = first.json()
+    assert len(body["items"]) == 2
+    assert body["next_cursor"] is not None
+
+    second = await client.get(
+        f"/api/v1/credit-customers/{customer}/ledger?limit=2&cursor={body['next_cursor']}",
+        headers=auth_headers(manager),
+    )
+
+    first_ids = {row["id"] for row in body["items"]}
+    second_ids = {row["id"] for row in second.json()["items"]}
+    assert first_ids.isdisjoint(second_ids)
+
+
+async def test_the_last_page_has_no_cursor(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_attachment: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_sale: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    attendant = make_user("attendant")
+    manager = make_user("manager")
+    shift = make_shift(attendant, business_date=DAY, sequence=1)
+    customer = make_credit_customer()
+    make_credit_sale(shift, customer, make_attachment(attendant), amount="100.00")
+
+    response = await client.get(
+        f"/api/v1/credit-customers/{customer}/ledger", headers=auth_headers(manager)
+    )
+
+    assert response.json()["next_cursor"] is None
+
+
+async def test_a_bad_cursor_is_a_400(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """Never a silent restart from the top -- that would look like working pagination while
+    quietly re-showing rows the reader already passed."""
+    manager = make_user("manager")
+    customer = make_credit_customer()
+
+    response = await client.get(
+        f"/api/v1/credit-customers/{customer}/ledger?cursor=not-a-cursor",
+        headers=auth_headers(manager),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "INVALID_CURSOR"
+
+
+async def test_an_attendant_cannot_read_a_ledger(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    attendant = make_user("attendant")
+    customer = make_credit_customer()
+
+    response = await client.get(
+        f"/api/v1/credit-customers/{customer}/ledger", headers=auth_headers(attendant)
+    )
+
+    assert response.status_code == 403
+
+
+async def test_one_customers_ledger_shows_only_their_own_rows(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_attachment: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_sale: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    attendant = make_user("attendant")
+    manager = make_user("manager")
+    shift = make_shift(attendant, business_date=DAY, sequence=1)
+    mine = make_credit_customer(name="Mine")
+    theirs = make_credit_customer(name="Theirs")
+    make_credit_sale(shift, mine, make_attachment(attendant), amount="100.00")
+    make_credit_sale(shift, theirs, make_attachment(attendant), amount="200.00")
+
+    response = await client.get(
+        f"/api/v1/credit-customers/{mine}/ledger", headers=auth_headers(manager)
+    )
+
+    items = response.json()["items"]
+    assert len(items) == 1
+    assert items[0]["amount"] == "100.00"
