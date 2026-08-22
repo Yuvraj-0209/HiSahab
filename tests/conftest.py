@@ -305,6 +305,48 @@ def make_user(engine: Engine) -> Iterator[Callable[..., UUID]]:
                     connection.execute(
                         text(f"DELETE FROM {table} WHERE {clause}").bindparams(ids=created)
                     )
+            # Phase 10: four more shift-scoped money tables, same two-pass shape. Two
+            # things about this block are load-bearing and neither is obvious:
+            #
+            #  - `bank_deposits.attachment_id` means deposits MUST be swept before the
+            #    `attachments` delete below, exactly like credit_sales above. Nullable
+            #    rather than NOT NULL, so a survivor blocks the attachment delete instead of
+            #    erroring here -- a quieter version of the same failure.
+            #  - the two shortfall tables carry `salesman_id` straight to `user_profiles`,
+            #    a level no previous phase had. Every earlier child table reached a user
+            #    only through `created_by` or through a shift, so "delete the shift first"
+            #    was always enough. It is not enough here: a shortfall booked against a
+            #    salesman on somebody else's shift still pins that salesman's row.
+            for table in (
+                "non_fuel_sales",
+                "bank_deposits",
+                "salesman_shortfalls",
+                "salesman_shortfall_settlements",
+            ):
+                salesman = (
+                    " OR salesman_id = ANY(:ids)"
+                    if table.startswith("salesman_")
+                    else ""
+                )
+                for clause in (
+                    f"reverses_id IS NOT NULL AND (created_by = ANY(:ids){salesman} "
+                    "OR shift_id IN (SELECT id FROM shifts WHERE attendant_id = ANY(:ids) "
+                    "OR created_by = ANY(:ids)))",
+                    f"created_by = ANY(:ids){salesman} OR shift_id IN "
+                    "(SELECT id FROM shifts WHERE attendant_id = ANY(:ids) "
+                    "OR created_by = ANY(:ids))",
+                ):
+                    connection.execute(
+                        text(f"DELETE FROM {table} WHERE {clause}").bindparams(ids=created)
+                    )
+            # Phase 10: daily_cash_summaries has no shift to hang off -- it aggregates all
+            # of them (§5.0) -- so it is swept on its two user columns alone.
+            connection.execute(
+                text(
+                    "DELETE FROM daily_cash_summaries WHERE created_by = ANY(:ids) "
+                    "OR finalised_by = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
             # Phase 8: attachments point at the user who uploaded them (uploaded_by), and
             # expenses -- already deleted above -- were the only thing that could still
             # reference one via attachment_id. Must run after the expenses passes above and
@@ -681,12 +723,19 @@ def make_shift(engine: Engine) -> Iterator[Callable[..., UUID]]:
                     "(SELECT id FROM expenses WHERE shift_id = ANY(:ids))"
                 ).bindparams(ids=created)
             )
-            # Phase 9: and so do credit sales and repayments.
-            for _credit_table in ("credit_sales", "credit_repayments"):
+            # Phase 9: and so do credit sales and repayments. Phase 10 adds four more.
+            for _child_table in (
+                "credit_sales",
+                "credit_repayments",
+                "non_fuel_sales",
+                "bank_deposits",
+                "salesman_shortfalls",
+                "salesman_shortfall_settlements",
+            ):
                 connection.execute(
                     text(
                         "DELETE FROM audit_logs WHERE record_id IN "
-                        f"(SELECT id FROM {_credit_table} WHERE shift_id = ANY(:ids))"
+                        f"(SELECT id FROM {_child_table} WHERE shift_id = ANY(:ids))"
                     ).bindparams(ids=created)
                 )
             connection.execute(
@@ -718,16 +767,24 @@ def make_shift(engine: Engine) -> Iterator[Callable[..., UUID]]:
             )
             # Phase 9: credit sales and repayments, the same two-pass shape again. Left
             # before `expenses` only for readability -- they are siblings, not parents.
-            for _credit_table in ("credit_sales", "credit_repayments"):
+            # Phase 10 adds four more of the same shape.
+            for _child_table in (
+                "credit_sales",
+                "credit_repayments",
+                "non_fuel_sales",
+                "bank_deposits",
+                "salesman_shortfalls",
+                "salesman_shortfall_settlements",
+            ):
                 connection.execute(
                     text(
-                        f"DELETE FROM {_credit_table} WHERE shift_id = ANY(:ids) "
+                        f"DELETE FROM {_child_table} WHERE shift_id = ANY(:ids) "
                         "AND reverses_id IS NOT NULL"
                     ).bindparams(ids=created)
                 )
                 connection.execute(
                     text(
-                        f"DELETE FROM {_credit_table} WHERE shift_id = ANY(:ids)"
+                        f"DELETE FROM {_child_table} WHERE shift_id = ANY(:ids)"
                     ).bindparams(ids=created)
                 )
             # Phase 7: expenses, same two-pass shape as collections -- a reversal points
@@ -775,22 +832,40 @@ def clean_shifts(engine: Engine) -> Iterator[None]:
             text(
                 "DELETE FROM audit_logs WHERE table_name IN "
                 "('shifts', 'nozzle_readings', 'collections', 'expenses', "
-                "'credit_sales', 'credit_repayments')"
+                "'credit_sales', 'credit_repayments', 'non_fuel_sales', "
+                "'bank_deposits', 'salesman_shortfalls', "
+                "'salesman_shortfall_settlements', 'daily_cash_summaries')"
             )
         )
         connection.execute(
             text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
         )
-        # Readings, then reversals (collections, expenses and the two credit tables),
-        # before shifts -- all of them hold the foreign key that DELETE FROM shifts needs
-        # clear. The credit tables go before `attachments` is ever touched, since
-        # credit_sales.attachment_id is NOT NULL.
+        # Readings, then reversals (collections, expenses, the two credit tables and
+        # Phase 10's four), before shifts -- all of them hold the foreign key that
+        # DELETE FROM shifts needs clear. They all go before `attachments` is ever touched,
+        # since credit_sales.attachment_id is NOT NULL and bank_deposits.attachment_id
+        # would otherwise pin a receipt nothing can then delete.
         connection.execute(text("DELETE FROM nozzle_readings"))
-        for _table in ("collections", "expenses", "credit_sales", "credit_repayments"):
+        for _table in (
+            "collections",
+            "expenses",
+            "credit_sales",
+            "credit_repayments",
+            "non_fuel_sales",
+            "bank_deposits",
+            "salesman_shortfalls",
+            "salesman_shortfall_settlements",
+        ):
             connection.execute(
                 text(f"DELETE FROM {_table} WHERE reverses_id IS NOT NULL")
             )
             connection.execute(text(f"DELETE FROM {_table}"))
+        # Phase 10: a summary has no shift FK, so DELETE FROM shifts would not fail on a
+        # leaked one -- it would survive instead, and collide on
+        # uq_daily_cash_summaries_outlet_date the next time any test reconciles the same
+        # business date. That is the `clean_expense_categories` failure mode in a table
+        # whose natural key is a *date*, which tests reuse far more readily than a code.
+        connection.execute(text("DELETE FROM daily_cash_summaries"))
         connection.execute(text("DELETE FROM idempotency_keys"))
         connection.execute(text("DELETE FROM shifts"))
 
@@ -1573,3 +1648,268 @@ def clean_credit(engine: Engine) -> Iterator[None]:
             connection.execute(text(f"DELETE FROM {table}"))
         connection.execute(text("DELETE FROM credit_customers"))
         connection.execute(text("DELETE FROM idempotency_keys"))
+
+
+# --- Phase 10: the cash engine ------------------------------------------------------
+#
+# Same commit-and-clean contract as every fixture above: committed through `engine.begin()`,
+# never held in an open transaction, because the ASGI app takes its own connection from
+# SessionLocal and cannot see uncommitted work.
+#
+# Money arrives as a **string** and is cast in SQL. §3 rule 1 is explicit that "no float"
+# applies "including in a quick test fixture" -- a float here would round-trip through binary
+# floating point before it ever reached NUMERIC, and these are the fixtures feeding the
+# arithmetic §6.4 is judged on.
+
+
+def _simple_shift_child_fixture(
+    table: str, columns: dict[str, str], *, money: tuple[str, ...] = ("amount",)
+) -> Callable[[Engine], Iterator[Callable[..., UUID]]]:
+    """Build a `make_X` fixture for a shift-scoped money table carrying §6.9's shape.
+
+    Phase 10 adds four tables that differ only in their extra columns, and hand-copying the
+    insert-plus-two-pass-teardown four times is how `clean_shifts` ended up never sweeping
+    `collections` (the Phase 7 audit finding). Written once instead.
+
+    Teardown is two passes -- reversals first, since a reversal points back at the row it
+    cancels -- preceded by the audit sweep with the append-only trigger disabled. That is the
+    documented escape hatch, and the trigger doing its job in production is the point.
+    """
+
+    def _fixture(engine: Engine) -> Iterator[Callable[..., UUID]]:
+        created: list[UUID] = []
+        names = ["id", "shift_id", *columns, "reverses_id", "reversal_reason", "created_by"]
+        placeholders = ", ".join(
+            f"CAST(:{n} AS numeric)" if n in money else f":{n}" for n in names
+        )
+        statement = text(
+            f"INSERT INTO {table} ({', '.join(names)}) VALUES ({placeholders})"
+        )
+
+        def _make(shift_id: UUID, **kwargs: object) -> UUID:
+            row_id = uuid4()
+            values: dict[str, object] = {"id": row_id, "shift_id": shift_id}
+            values.update({name: default for name, default in columns.items()})
+            values.update({"reverses_id": None, "reversal_reason": None, "created_by": None})
+            unknown = set(kwargs) - set(values)
+            assert not unknown, f"{table} fixture got unknown kwargs: {sorted(unknown)}"
+            values.update(kwargs)
+            with engine.begin() as connection:
+                connection.execute(statement.bindparams(**values))
+            created.append(row_id)
+            return row_id
+
+        yield _make
+
+        if created:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only"
+                    )
+                )
+                connection.execute(
+                    text(
+                        "DELETE FROM audit_logs WHERE table_name = :t "
+                        "AND record_id = ANY(:ids)"
+                    ).bindparams(t=table, ids=created)
+                )
+                connection.execute(
+                    text(
+                        "ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only"
+                    )
+                )
+                connection.execute(
+                    text(
+                        f"DELETE FROM {table} WHERE id = ANY(:ids) "
+                        "AND reverses_id IS NOT NULL"
+                    ).bindparams(ids=created)
+                )
+                connection.execute(
+                    text(f"DELETE FROM {table} WHERE id = ANY(:ids)").bindparams(
+                        ids=created
+                    )
+                )
+
+    return _fixture
+
+
+make_non_fuel_sale = pytest.fixture(
+    _simple_shift_child_fixture(
+        "non_fuel_sales", {"amount": "500.00", "description": "Engine oil"}
+    )
+)
+
+make_bank_deposit = pytest.fixture(
+    _simple_shift_child_fixture(
+        "bank_deposits",
+        {
+            "business_date": None,
+            "amount": "100000.00",
+            "bank_reference": None,
+            "attachment_id": None,
+        },
+    )
+)
+
+make_shortfall = pytest.fixture(
+    _simple_shift_child_fixture(
+        "salesman_shortfalls",
+        {
+            "salesman_id": None,
+            "amount": "500.00",
+            "computed_gap": "500.00",
+            "reason": "Counted short at handover",
+        },
+        money=("amount", "computed_gap"),
+    )
+)
+
+make_shortfall_settlement = pytest.fixture(
+    _simple_shift_child_fixture(
+        "salesman_shortfall_settlements", {"salesman_id": None, "amount": "500.00"}
+    )
+)
+
+
+@pytest.fixture
+def make_daily_summary(engine: Engine) -> Iterator[Callable[..., UUID]]:
+    """Create a `daily_cash_summaries` row directly, bypassing the API.
+
+    Not built from `_simple_shift_child_fixture`: this table has no `shift_id` and no
+    reversal columns -- §6.9 corrects a *transaction*, and a summary is a derived record that
+    an admin unfinalises and recomputes instead (§5.2).
+
+    Every component defaults to ₹0.00 so a test can set only the two or three terms it is
+    actually about, rather than restating eleven figures it does not care about.
+    """
+    from app.core.config import get_settings
+
+    created: list[UUID] = []
+    _components = (
+        "metered_fuel_sales",
+        "non_fuel_sales_total",
+        "card_total",
+        "upi_total",
+        "wallet_total",
+        "credit_sales_total",
+        "cash_credit_repayments",
+        "cash_shortfall_settlements",
+        "cash_expenses",
+        "bank_deposits_total",
+        "shortfalls_booked",
+    )
+
+    def _make(
+        *,
+        business_date: date,
+        outlet_id: UUID | None = None,
+        opening_balance: str = "0.00",
+        opening_balance_source: str = "seeded",
+        expected_closing: str = "0.00",
+        actual_counted: str | None = None,
+        is_finalised: bool = False,
+        finalised_by: UUID | None = None,
+        finalised_at: datetime | None = None,
+        notes: str | None = None,
+        created_by: UUID | None = None,
+        **components: str,
+    ) -> UUID:
+        unknown = set(components) - set(_components)
+        assert not unknown, f"unknown component columns: {sorted(unknown)}"
+        values: dict[str, object] = {name: "0.00" for name in _components}
+        values.update(components)
+        summary_id = uuid4()
+        component_sql = ", ".join(f"CAST(:{name} AS numeric)" for name in _components)
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO daily_cash_summaries (id, outlet_id, business_date, "
+                    "opening_balance, opening_balance_source, expected_closing, "
+                    f"actual_counted, {', '.join(_components)}, is_finalised, "
+                    "finalised_by, finalised_at, notes, created_by) VALUES "
+                    "(:id, :outlet_id, :business_date, CAST(:opening_balance AS numeric), "
+                    "CAST(:opening_balance_source AS opening_balance_source), "
+                    "CAST(:expected_closing AS numeric), "
+                    f"CAST(:actual_counted AS numeric), {component_sql}, :is_finalised, "
+                    ":finalised_by, :finalised_at, :notes, :created_by)"
+                ).bindparams(
+                    id=summary_id,
+                    outlet_id=outlet_id or get_settings().DEFAULT_OUTLET_ID,
+                    business_date=business_date,
+                    opening_balance=opening_balance,
+                    opening_balance_source=opening_balance_source,
+                    expected_closing=expected_closing,
+                    actual_counted=actual_counted,
+                    is_finalised=is_finalised,
+                    finalised_by=finalised_by,
+                    finalised_at=finalised_at,
+                    notes=notes,
+                    created_by=created_by,
+                    **values,
+                )
+            )
+        created.append(summary_id)
+        return summary_id
+
+    yield _make
+
+    if created:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE table_name = 'daily_cash_summaries' "
+                    "AND record_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM daily_cash_summaries WHERE id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+
+
+@pytest.fixture
+def clean_cash(engine: Engine) -> Iterator[None]:
+    """Remove every cash-engine row created during a test, for tests that go through the API
+    and have no id to hand back.
+
+    The counterpart to `clean_shifts`, and it exists for the same reason: a leaked
+    `daily_cash_summaries` row does not fail `DELETE FROM shifts` -- it has no shift FK -- it
+    survives and collides on `uq_daily_cash_summaries_outlet_date` the next time any test
+    reconciles that business date. Tests reuse dates far more readily than they reuse a
+    category code, so this is the `clean_expense_categories` failure mode with a wider blast
+    radius.
+    """
+    yield
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+        )
+        connection.execute(
+            text(
+                "DELETE FROM audit_logs WHERE table_name IN "
+                "('non_fuel_sales', 'bank_deposits', 'salesman_shortfalls', "
+                "'salesman_shortfall_settlements', 'daily_cash_summaries')"
+            )
+        )
+        connection.execute(
+            text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+        )
+        for _table in (
+            "non_fuel_sales",
+            "bank_deposits",
+            "salesman_shortfalls",
+            "salesman_shortfall_settlements",
+        ):
+            connection.execute(
+                text(f"DELETE FROM {_table} WHERE reverses_id IS NOT NULL")
+            )
+            connection.execute(text(f"DELETE FROM {_table}"))
+        connection.execute(text("DELETE FROM daily_cash_summaries"))

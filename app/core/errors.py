@@ -70,6 +70,28 @@ _CONSTRAINT_ERRORS: dict[str, tuple[int, str, str]] = {
         "ALREADY_REVERSED",
         "This repayment has already been reversed.",
     ),
+    # Phase 10. Four more tables carrying §6.9's shape, mapped on the day 0013 landed rather
+    # than a phase later -- which is what the structural test below exists to force.
+    "uq_non_fuel_sales_reverses_id": (
+        409,
+        "ALREADY_REVERSED",
+        "This non-fuel sale has already been reversed.",
+    ),
+    "uq_bank_deposits_reverses_id": (
+        409,
+        "ALREADY_REVERSED",
+        "This deposit has already been reversed.",
+    ),
+    "uq_salesman_shortfalls_reverses_id": (
+        409,
+        "ALREADY_REVERSED",
+        "This shortfall has already been reversed.",
+    ),
+    "uq_salesman_shortfall_settlements_reverses_id": (
+        409,
+        "ALREADY_REVERSED",
+        "This settlement has already been reversed.",
+    ),
     # §6.11. The API evaluates and refuses this before ever reaching the database, but a
     # client that bypasses the API's own check (or a future caller that forgets to) still
     # reaches this CHECK, and it is the only genuinely-reachable one 0011 adds -- the three
@@ -157,6 +179,16 @@ _CONSTRAINT_ERRORS: dict[str, tuple[int, str, str]] = {
         409,
         "CREDIT_CUSTOMER_PHONE_EXISTS",
         "A credit customer with that phone number already exists at this outlet.",
+    ),
+    # Phase 10. `daily_cash_summaries` is one row per outlet per business date, and the API
+    # checks for an existing row before inserting -- the same check-then-insert window as
+    # every entry above. Two managers reconciling the same day at the same moment is not a
+    # far-fetched race here: §4.7 says the whole day is typed in after the fact, so both of
+    # them are looking at yesterday.
+    "uq_daily_cash_summaries_outlet_date": (
+        409,
+        "SUMMARY_ALREADY_EXISTS",
+        "A cash summary already exists for that business date at this outlet.",
     ),
 }
 

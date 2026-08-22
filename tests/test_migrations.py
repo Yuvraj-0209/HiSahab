@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -19,7 +20,7 @@ def test_schema_is_at_head(engine: Engine) -> None:
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert version == "0012"
+    assert version == "0013"
 
 
 def test_pgcrypto_extension_is_installed(engine: Engine) -> None:
@@ -1698,3 +1699,296 @@ def test_a_live_credit_sale_cannot_carry_a_negative_quantity(engine: Engine) -> 
     assert "reverses_id IS NULL" in definition
     assert "quantity > (0" in definition
     assert "quantity < (0" in definition
+
+
+# --- Phase 10: the cash engine tables (0013) ---------------------------------------
+
+
+def test_daily_cash_summaries_carries_its_own_outlet_id(engine: Engine) -> None:
+    """§5.0: a summary has no parent shift -- it aggregates every shift on the date -- so
+    there is no correct backfill and the column exists from birth."""
+    with engine.connect() as connection:
+        is_nullable = connection.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'daily_cash_summaries' AND column_name = 'outlet_id'"
+            )
+        ).scalar_one()
+
+    assert is_nullable == "NO"
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        "non_fuel_sales",
+        "bank_deposits",
+        "salesman_shortfalls",
+        "salesman_shortfall_settlements",
+    ],
+)
+def test_the_shift_scoped_cash_tables_have_no_outlet_id(
+    engine: Engine, table: str
+) -> None:
+    """§5.0's other half: all four hang off a shift, so the outlet is one join away and the
+    column must NOT exist -- exactly like `collections`, `expenses` and the credit tables."""
+    with engine.connect() as connection:
+        found = connection.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = :t AND column_name = 'outlet_id'"
+            ).bindparams(t=table)
+        ).scalar_one_or_none()
+
+    assert found is None
+
+
+@pytest.mark.parametrize(
+    "table", ["salesman_shortfalls", "salesman_shortfall_settlements"]
+)
+def test_a_shortfall_points_at_a_user_profile_never_a_credit_customer(
+    engine: Engine, table: str
+) -> None:
+    """§13.14 and §14, asserted against the schema rather than inferred from behaviour.
+
+    A shortfall filed against a credit customer would mix staff debt into a real customer's
+    outstanding balance, after which "what does this customer owe me" -- the figure §14 says
+    the owner checks first -- stops having an answer. Making that structurally impossible is
+    worth a test that no value test replaces.
+    """
+    with engine.connect() as connection:
+        target = connection.execute(
+            text(
+                "SELECT ccu.table_name FROM information_schema.table_constraints tc "
+                "JOIN information_schema.key_column_usage kcu "
+                "  ON kcu.constraint_name = tc.constraint_name "
+                "JOIN information_schema.constraint_column_usage ccu "
+                "  ON ccu.constraint_name = tc.constraint_name "
+                "WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = :t "
+                "  AND kcu.column_name = 'salesman_id'"
+            ).bindparams(t=table)
+        ).scalar_one()
+
+    assert target == "user_profiles"
+
+
+def test_no_cash_engine_table_references_credit_customers(engine: Engine) -> None:
+    """The same guardrail stated negatively, across all five tables at once, so that a
+    future column cannot reintroduce the link under a different name."""
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT tc.table_name, kcu.column_name "
+                "FROM information_schema.table_constraints tc "
+                "JOIN information_schema.key_column_usage kcu "
+                "  ON kcu.constraint_name = tc.constraint_name "
+                "JOIN information_schema.constraint_column_usage ccu "
+                "  ON ccu.constraint_name = tc.constraint_name "
+                "WHERE tc.constraint_type = 'FOREIGN KEY' "
+                "  AND ccu.table_name = 'credit_customers' "
+                "  AND tc.table_name IN ('non_fuel_sales', 'bank_deposits', "
+                "      'salesman_shortfalls', 'salesman_shortfall_settlements', "
+                "      'daily_cash_summaries')"
+            )
+        ).all()
+
+    assert rows == []
+
+
+def test_the_variance_column_is_generated_by_the_database(engine: Engine) -> None:
+    """§5.2 says generated, and it matters that it is not merely computed in Python: an
+    application-computed variance can be written to disagree with its own inputs."""
+    with engine.connect() as connection:
+        is_generated, expression = connection.execute(
+            text(
+                "SELECT is_generated, generation_expression "
+                "FROM information_schema.columns "
+                "WHERE table_name = 'daily_cash_summaries' AND column_name = 'variance'"
+            )
+        ).one()
+
+    assert is_generated == "ALWAYS"
+    assert "actual_counted" in expression
+    assert "expected_closing" in expression
+
+
+def test_variance_is_null_when_nothing_was_counted(
+    engine: Engine, make_user, make_daily_summary
+) -> None:
+    """§6.5's locker model means most days have no count at all. NULL must propagate, so an
+    uncounted day reads as "no variance known" rather than as a variance of zero -- which
+    would look like a perfectly reconciled day nobody ever checked."""
+    admin = make_user("admin")
+    summary_id = make_daily_summary(
+        business_date=date(2027, 3, 1), created_by=admin, actual_counted=None
+    )
+
+    with engine.connect() as connection:
+        variance = connection.execute(
+            text(
+                "SELECT variance FROM daily_cash_summaries WHERE id = :id"
+            ).bindparams(id=summary_id)
+        ).scalar_one()
+
+    assert variance is None
+
+
+def test_variance_is_computed_when_a_count_lands(
+    engine: Engine, make_user, make_daily_summary
+) -> None:
+    admin = make_user("admin")
+    summary_id = make_daily_summary(
+        business_date=date(2027, 3, 2),
+        created_by=admin,
+        expected_closing="56000.00",
+        actual_counted="55700.00",
+    )
+
+    with engine.connect() as connection:
+        variance = connection.execute(
+            text(
+                "SELECT variance FROM daily_cash_summaries WHERE id = :id"
+            ).bindparams(id=summary_id)
+        ).scalar_one()
+
+    assert variance == Decimal("-300.00")
+
+
+def test_the_opening_balance_source_enum_has_exactly_three_labels(
+    engine: Engine,
+) -> None:
+    """§6.5's three branches. A fourth would mean the rule grew a case nobody wrote down."""
+    with engine.connect() as connection:
+        labels = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+                    "WHERE t.typname = 'opening_balance_source'"
+                )
+            )
+        }
+
+    assert labels == {"seeded", "counted", "carried"}
+
+
+def test_every_cash_engine_money_column_is_numeric_not_float(engine: Engine) -> None:
+    """§3 rule 1, asserted across all five tables at once rather than column by column.
+
+    A `double precision` here would not crash anything -- it would quietly make
+    `expected_closing` disagree with its own components by fractions of a paisa that
+    compound, which is the failure mode §3 rule 1 exists to prevent.
+    """
+    with engine.connect() as connection:
+        wrong = connection.execute(
+            text(
+                "SELECT table_name, column_name, data_type "
+                "FROM information_schema.columns "
+                "WHERE table_name IN ('non_fuel_sales', 'bank_deposits', "
+                "    'salesman_shortfalls', 'salesman_shortfall_settlements', "
+                "    'daily_cash_summaries') "
+                "  AND data_type NOT IN ('numeric', 'uuid', 'text', 'boolean', "
+                "    'date', 'timestamp with time zone', 'USER-DEFINED')"
+            )
+        ).all()
+
+    assert wrong == []
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        "non_fuel_sales",
+        "bank_deposits",
+        "salesman_shortfalls",
+        "salesman_shortfall_settlements",
+    ],
+)
+def test_every_new_cash_table_carries_the_full_reversal_quartet(
+    engine: Engine, table: str
+) -> None:
+    """§6.9's shape, all four parts. Phase 9 shipped a quantity CHECK that was written four
+    lines below an already sign-aware rule and still ignored reversals, so "it looks like
+    the others" is not evidence -- the names are checked directly."""
+    with engine.connect() as connection:
+        names = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT c.conname FROM pg_constraint c "
+                    "JOIN pg_class t ON t.oid = c.conrelid "
+                    "WHERE t.relname = :t"
+                ).bindparams(t=table)
+            )
+        }
+
+    assert f"uq_{table}_reverses_id" in names
+    assert f"ck_{table}_reversal_has_reason" in names
+    assert f"ck_{table}_amount_sign" in names
+    assert f"ck_{table}_reversal_not_self" in names
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        "non_fuel_sales",
+        "bank_deposits",
+        "salesman_shortfalls",
+        "salesman_shortfall_settlements",
+    ],
+)
+def test_the_cash_engine_sign_rule_is_strict(engine: Engine, table: str) -> None:
+    """Strict `> 0`, matching `expenses` and `credit_sales` rather than `collections`' `>=`.
+
+    §6.8 makes a ₹0 *cash collection* a genuine declaration -- zero as an answer, not as an
+    omission. None of these four tables has that property: a ₹0 deposit, non-fuel sale,
+    shortfall or settlement records nothing at all.
+    """
+    with engine.connect() as connection:
+        definition = connection.execute(
+            text(
+                "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+                "JOIN pg_class t ON t.oid = c.conrelid "
+                "WHERE t.relname = :t AND c.conname = :n"
+            ).bindparams(t=table, n=f"ck_{table}_amount_sign")
+        ).scalar_one()
+
+    assert ">= (0)" not in definition
+    assert "<= (0)" not in definition
+    assert "> (0)" in definition
+    assert "< (0)" in definition
+
+
+def test_a_finalised_summary_must_name_who_finalised_it(
+    engine: Engine, make_user, make_daily_summary
+) -> None:
+    """A day cannot read as finalised with nobody accountable for having finalised it."""
+    admin = make_user("admin")
+    summary_id = make_daily_summary(business_date=date(2027, 3, 3), created_by=admin)
+
+    with engine.begin() as connection, pytest.raises(IntegrityError) as exc:
+        connection.execute(
+            text(
+                "UPDATE daily_cash_summaries SET is_finalised = true WHERE id = :id"
+            ).bindparams(id=summary_id)
+        )
+
+    assert "ck_daily_cash_summaries_finalised_has_actor" in str(exc.value)
+
+
+def test_a_review_flag_must_carry_a_note(
+    engine: Engine, make_user, make_daily_summary
+) -> None:
+    """§13.16's flag mirrors `nozzle_readings`': a flag with no note is one nobody can act
+    on, because the question it was raising was never written down."""
+    admin = make_user("admin")
+    summary_id = make_daily_summary(business_date=date(2027, 3, 4), created_by=admin)
+
+    with engine.begin() as connection, pytest.raises(IntegrityError) as exc:
+        connection.execute(
+            text(
+                "UPDATE daily_cash_summaries SET requires_review = true WHERE id = :id"
+            ).bindparams(id=summary_id)
+        )
+
+    assert "ck_daily_cash_summaries_review_has_note" in str(exc.value)
