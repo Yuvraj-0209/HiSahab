@@ -28,6 +28,7 @@ from app.api.v1 import (
     readings,
     shift_templates,
     shifts,
+    shortfalls,
     uploads,
 )
 
@@ -97,3 +98,7 @@ api_router.include_router(bank_deposits.router)
 # Reads §6.4's per-shift figures and writes nothing. Its single path,
 # /shifts/{shift_id}/cash-position, is one segment deeper than anything in shifts.py.
 api_router.include_router(cash_position.router)
+# Shortfalls: shift-scoped write routes plus two top-level reports. Intra-module
+# ordering matters -- /salesman-shortfalls/outstanding is declared before
+# /salesman-shortfalls/{salesman_id}/ledger, the same hazard credit_customers.py has.
+api_router.include_router(shortfalls.router)
