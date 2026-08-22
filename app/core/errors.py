@@ -60,6 +60,16 @@ _CONSTRAINT_ERRORS: dict[str, tuple[int, str, str]] = {
         "ALREADY_REVERSED",
         "This expense has already been reversed.",
     ),
+    "uq_credit_sales_reverses_id": (
+        409,
+        "ALREADY_REVERSED",
+        "This credit sale has already been reversed.",
+    ),
+    "uq_credit_repayments_reverses_id": (
+        409,
+        "ALREADY_REVERSED",
+        "This repayment has already been reversed.",
+    ),
     # §6.11. The API evaluates and refuses this before ever reaching the database, but a
     # client that bypasses the API's own check (or a future caller that forgets to) still
     # reaches this CHECK, and it is the only genuinely-reachable one 0011 adds -- the three
@@ -140,6 +150,13 @@ _CONSTRAINT_ERRORS: dict[str, tuple[int, str, str]] = {
         409,
         "SHIFT_TEMPLATE_SEQUENCE_EXISTS",
         "A shift template with that sequence already exists at this outlet.",
+    ),
+    # Phase 9. The first instance to be mapped on the day its migration landed rather than a
+    # phase later -- which is the whole point of the widened structural test above.
+    "uq_credit_customers_outlet_phone": (
+        409,
+        "CREDIT_CUSTOMER_PHONE_EXISTS",
+        "A credit customer with that phone number already exists at this outlet.",
     ),
 }
 

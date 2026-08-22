@@ -19,7 +19,7 @@ def test_schema_is_at_head(engine: Engine) -> None:
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert version == "0011"
+    assert version == "0012"
 
 
 def test_pgcrypto_extension_is_installed(engine: Engine) -> None:
@@ -1504,3 +1504,170 @@ def test_expenses_receipt_check_is_reachable_and_mapped(engine: Engine) -> None:
     from app.core.errors import _CONSTRAINT_ERRORS
 
     assert "ck_expenses_receipt_required_has_attachment" in _CONSTRAINT_ERRORS
+
+
+# --- 0012: credit (Phase 9) ---------------------------------------------------
+
+
+def test_credit_customers_carries_its_own_outlet_id(engine: Engine) -> None:
+    """§5.0: a customer has no parent row to derive an outlet from, so the column exists
+    from birth. Contrast the two tests below."""
+    with engine.connect() as connection:
+        column = connection.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'credit_customers' AND column_name = 'outlet_id'"
+            )
+        ).scalar_one()
+
+    assert column == "NO"
+
+
+@pytest.mark.parametrize("table", ["credit_sales", "credit_repayments"])
+def test_the_transactional_credit_tables_have_no_outlet_id(
+    engine: Engine, table: str
+) -> None:
+    """§5.0's other half: derivable via `shift_id -> shifts.outlet_id`, exactly like
+    `collections` and `expenses`, so the column must NOT exist."""
+    with engine.connect() as connection:
+        found = connection.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = :t AND column_name = 'outlet_id'"
+            ).bindparams(t=table)
+        ).scalar_one_or_none()
+
+    assert found is None
+
+
+def test_credit_sales_attachment_id_is_not_nullable(engine: Engine) -> None:
+    """§6.6's receipt control, asserted against the schema itself rather than inferred from
+    a 4xx. This is the one column in the codebase that is unconditionally NOT NULL for a
+    receipt -- `expenses.attachment_id` is nullable and conditional (§6.11)."""
+    with engine.connect() as connection:
+        is_nullable = connection.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'credit_sales' AND column_name = 'attachment_id'"
+            )
+        ).scalar_one()
+
+    assert is_nullable == "NO"
+
+
+def test_credit_sales_has_no_reversal_exemption_on_its_receipt(engine: Engine) -> None:
+    """The counterpart to the test above, and the thing §14 forbids by name.
+
+    `expenses` has `ck_expenses_receipt_required_has_attachment`, which begins
+    `reverses_id IS NOT NULL OR ...` so a reversal needs no receipt. Copying that shape here
+    would mean weakening `attachment_id` to nullable, taking the receipt control off genuine
+    customer sales. Phase 9 uses inheritance instead -- the reversal carries the original's
+    attachment -- so no such CHECK should exist.
+    """
+    with engine.connect() as connection:
+        checks = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT c.conname FROM pg_constraint c "
+                    "JOIN pg_class t ON t.oid = c.conrelid "
+                    "WHERE t.relname = 'credit_sales' AND c.contype = 'c' "
+                    "AND pg_get_constraintdef(c.oid) ILIKE '%attachment_id%'"
+                )
+            )
+        }
+
+    assert checks == set(), (
+        "credit_sales.attachment_id is enforced by NOT NULL alone; a CHECK mentioning it "
+        "suggests the reversal exemption §5.2 and §14 say not to add"
+    )
+
+
+def test_is_settled_does_not_exist_anywhere(engine: Engine) -> None:
+    """Removed in Phase 9 (§5.2): it contradicted §6.6's compute-do-not-store rule, and had
+    no honest value once one repayment covers part of three bills."""
+    with engine.connect() as connection:
+        found = connection.execute(
+            text(
+                "SELECT table_name FROM information_schema.columns "
+                "WHERE column_name = 'is_settled'"
+            )
+        ).scalar_one_or_none()
+
+    assert found is None
+
+
+def test_credit_repayment_mode_is_its_own_enum_type(engine: Engine) -> None:
+    """Not `collection_mode` (has `wallet`, lacks `bank_transfer`) and not `expense_mode`
+    (labels match today by coincidence, not contract). §5.2."""
+    with engine.connect() as connection:
+        labels = [
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+                    "WHERE t.typname = 'credit_repayment_mode' ORDER BY e.enumsortorder"
+                )
+            )
+        ]
+
+    assert labels == ["cash", "card", "upi", "bank_transfer"]
+
+
+@pytest.mark.parametrize(
+    "table", ["credit_customers", "credit_sales", "credit_repayments"]
+)
+def test_every_credit_money_column_is_numeric_not_float(
+    engine: Engine, table: str
+) -> None:
+    """§3 rule 1, asserted at the schema. A `double precision` here would be the exact
+    silently-wrong-money failure this project exists to prevent."""
+    with engine.connect() as connection:
+        types = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT data_type FROM information_schema.columns "
+                    "WHERE table_name = :t AND column_name IN "
+                    "('amount', 'credit_limit', 'quantity')"
+                ).bindparams(t=table)
+            )
+        }
+
+    assert types <= {"numeric"}, f"{table} has a non-numeric money/quantity column: {types}"
+
+
+def test_a_quantity_without_a_fuel_type_is_refused(engine: Engine) -> None:
+    """§4.5: a quantity's unit lives on the fuel type, so a quantity with no fuel type
+    cannot be interpreted -- 12 of what?"""
+    with engine.connect() as connection:
+        definition = connection.execute(
+            text(
+                "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+                "JOIN pg_class t ON t.oid = c.conrelid "
+                "WHERE t.relname = 'credit_sales' "
+                "AND c.conname = 'ck_credit_sales_quantity_needs_fuel_type'"
+            )
+        ).scalar_one()
+
+    assert "fuel_type_id IS NOT NULL" in definition
+
+
+@pytest.mark.parametrize("table", ["credit_sales", "credit_repayments"])
+def test_the_credit_sign_rule_is_strict_like_expenses_not_collections(
+    engine: Engine, table: str
+) -> None:
+    """A ₹0 cash collection is a genuine declaration under §6.8; a ₹0 udhaar records
+    nothing. So `> 0` / `< 0`, never `>=` / `<=`."""
+    with engine.connect() as connection:
+        definition = connection.execute(
+            text(
+                "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+                "JOIN pg_class t ON t.oid = c.conrelid "
+                "WHERE t.relname = :t AND c.conname = :n"
+            ).bindparams(t=table, n=f"ck_{table}_amount_sign")
+        ).scalar_one()
+
+    assert ">= (0)" not in definition
+    assert "<= (0)" not in definition
+    assert "> (0" in definition and "< (0" in definition

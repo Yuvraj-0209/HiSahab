@@ -11,6 +11,7 @@ from __future__ import annotations
 from app.models.attachment import Attachment
 from app.models.audit import AuditLog
 from app.models.collection import Collection
+from app.models.credit import CreditCustomer, CreditRepayment, CreditSale
 from app.models.expense import Expense
 from app.models.expense_category import ExpenseCategory
 from app.models.fuel import FuelMargin, FuelPrice, FuelType
@@ -25,6 +26,9 @@ __all__ = [
     "Attachment",
     "AuditLog",
     "Collection",
+    "CreditCustomer",
+    "CreditRepayment",
+    "CreditSale",
     "Expense",
     "ExpenseCategory",
     "FuelMargin",
