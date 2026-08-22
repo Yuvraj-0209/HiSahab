@@ -289,6 +289,22 @@ def make_user(engine: Engine) -> Iterator[Callable[..., UUID]]:
                     "DELETE FROM idempotency_keys WHERE user_id = ANY(:ids)"
                 ).bindparams(ids=created)
             )
+            # Phase 9: credit sales and repayments hang off a shift like expenses do, and
+            # BOTH must go before `attachments` below -- credit_sales.attachment_id is NOT
+            # NULL, so a surviving sale pins its receipt and the attachment delete fails.
+            # Two passes each, reversals first, same shape as collections and expenses.
+            for table in ("credit_sales", "credit_repayments"):
+                for clause in (
+                    "reverses_id IS NOT NULL AND (created_by = ANY(:ids) OR shift_id IN "
+                    "(SELECT id FROM shifts WHERE attendant_id = ANY(:ids) "
+                    "OR created_by = ANY(:ids)))",
+                    "created_by = ANY(:ids) OR shift_id IN "
+                    "(SELECT id FROM shifts WHERE attendant_id = ANY(:ids) "
+                    "OR created_by = ANY(:ids))",
+                ):
+                    connection.execute(
+                        text(f"DELETE FROM {table} WHERE {clause}").bindparams(ids=created)
+                    )
             # Phase 8: attachments point at the user who uploaded them (uploaded_by), and
             # expenses -- already deleted above -- were the only thing that could still
             # reference one via attachment_id. Must run after the expenses passes above and
@@ -310,6 +326,13 @@ def make_user(engine: Engine) -> Iterator[Callable[..., UUID]]:
             connection.execute(
                 text(
                     "DELETE FROM outlet_shift_templates WHERE created_by = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            # Phase 9: credit_customers.created_by points at a user, and the sales and
+            # repayments that pointed at the customer went two blocks up.
+            connection.execute(
+                text(
+                    "DELETE FROM credit_customers WHERE created_by = ANY(:ids)"
                 ).bindparams(ids=created)
             )
             # Memberships next: they hold the foreign key.
@@ -658,6 +681,14 @@ def make_shift(engine: Engine) -> Iterator[Callable[..., UUID]]:
                     "(SELECT id FROM expenses WHERE shift_id = ANY(:ids))"
                 ).bindparams(ids=created)
             )
+            # Phase 9: and so do credit sales and repayments.
+            for _credit_table in ("credit_sales", "credit_repayments"):
+                connection.execute(
+                    text(
+                        "DELETE FROM audit_logs WHERE record_id IN "
+                        f"(SELECT id FROM {_credit_table} WHERE shift_id = ANY(:ids))"
+                    ).bindparams(ids=created)
+                )
             connection.execute(
                 text(
                     "DELETE FROM audit_logs WHERE table_name = 'shifts' "
@@ -685,6 +716,20 @@ def make_shift(engine: Engine) -> Iterator[Callable[..., UUID]]:
                     ids=created
                 )
             )
+            # Phase 9: credit sales and repayments, the same two-pass shape again. Left
+            # before `expenses` only for readability -- they are siblings, not parents.
+            for _credit_table in ("credit_sales", "credit_repayments"):
+                connection.execute(
+                    text(
+                        f"DELETE FROM {_credit_table} WHERE shift_id = ANY(:ids) "
+                        "AND reverses_id IS NOT NULL"
+                    ).bindparams(ids=created)
+                )
+                connection.execute(
+                    text(
+                        f"DELETE FROM {_credit_table} WHERE shift_id = ANY(:ids)"
+                    ).bindparams(ids=created)
+                )
             # Phase 7: expenses, same two-pass shape as collections -- a reversal points
             # back at the row it cancels, so it must go first.
             connection.execute(
@@ -729,19 +774,23 @@ def clean_shifts(engine: Engine) -> Iterator[None]:
         connection.execute(
             text(
                 "DELETE FROM audit_logs WHERE table_name IN "
-                "('shifts', 'nozzle_readings', 'collections', 'expenses')"
+                "('shifts', 'nozzle_readings', 'collections', 'expenses', "
+                "'credit_sales', 'credit_repayments')"
             )
         )
         connection.execute(
             text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
         )
-        # Readings, then reversals (collections and expenses), before shifts -- all of
-        # them hold the foreign key that DELETE FROM shifts needs clear.
+        # Readings, then reversals (collections, expenses and the two credit tables),
+        # before shifts -- all of them hold the foreign key that DELETE FROM shifts needs
+        # clear. The credit tables go before `attachments` is ever touched, since
+        # credit_sales.attachment_id is NOT NULL.
         connection.execute(text("DELETE FROM nozzle_readings"))
-        connection.execute(text("DELETE FROM collections WHERE reverses_id IS NOT NULL"))
-        connection.execute(text("DELETE FROM collections"))
-        connection.execute(text("DELETE FROM expenses WHERE reverses_id IS NOT NULL"))
-        connection.execute(text("DELETE FROM expenses"))
+        for _table in ("collections", "expenses", "credit_sales", "credit_repayments"):
+            connection.execute(
+                text(f"DELETE FROM {_table} WHERE reverses_id IS NOT NULL")
+            )
+            connection.execute(text(f"DELETE FROM {_table}"))
         connection.execute(text("DELETE FROM idempotency_keys"))
         connection.execute(text("DELETE FROM shifts"))
 
@@ -1193,3 +1242,334 @@ def auth_headers(make_token: Callable[..., str]) -> Callable[[UUID], dict[str, s
         return {"Authorization": f"Bearer {make_token(user_id)}"}
 
     return _headers
+
+
+# --- Phase 9: credit ---------------------------------------------------------
+
+
+@pytest.fixture
+def make_attachment(engine: Engine) -> Iterator[Callable[..., UUID]]:
+    """Create an `attachments` row directly, bypassing the upload endpoint.
+
+    Phase 8 never needed this -- its tests uploaded through `POST /uploads/receipt`, which
+    is what they were testing. Phase 9 needs a receipt on almost every credit sale
+    (`attachment_id` is NOT NULL) while testing something else entirely, and driving a
+    multipart upload to get one would make every credit test depend on the upload path
+    working.
+
+    `linked_at` defaults to NULL, matching a fresh upload. Tests exercising §6.8's
+    `CREDIT_SALE_MISSING_RECEIPT` rely on that; anything going through the API gets it
+    stamped by `attachment_service.link()`.
+    """
+    from app.core.config import get_settings
+
+    created: list[UUID] = []
+
+    def _make(
+        uploaded_by: UUID,
+        *,
+        outlet_id: UUID | None = None,
+        linked_at: datetime | None = None,
+        mime_type: str = "image/jpeg",
+    ) -> UUID:
+        attachment_id = uuid4()
+        outlet = outlet_id or get_settings().DEFAULT_OUTLET_ID
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO attachments (id, outlet_id, bucket, storage_path, "
+                    "original_filename, mime_type, size_bytes, checksum_sha256, "
+                    "uploaded_by, linked_at) VALUES (:id, :outlet, 'receipts', :path, "
+                    "'slip.jpg', :mime, 1024, :checksum, :uploader, :linked)"
+                ).bindparams(
+                    id=attachment_id,
+                    outlet=outlet,
+                    path=f"{outlet}/2026/08/22/{attachment_id}.jpg",
+                    mime=mime_type,
+                    checksum="a" * 64,
+                    uploader=uploaded_by,
+                    linked=linked_at,
+                )
+            )
+        created.append(attachment_id)
+        return attachment_id
+
+    yield _make
+
+    if created:
+        with engine.begin() as connection:
+            # Credit sales pin their attachment with a NOT NULL FK, so they go first --
+            # reversals before originals, as everywhere else.
+            for clause in ("reverses_id IS NOT NULL", "TRUE"):
+                connection.execute(
+                    text(
+                        f"DELETE FROM credit_sales WHERE {clause} "
+                        "AND attachment_id = ANY(:ids)"
+                    ).bindparams(ids=created)
+                )
+            connection.execute(
+                text(
+                    "DELETE FROM credit_repayments WHERE attachment_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("DELETE FROM expenses WHERE attachment_id = ANY(:ids)").bindparams(
+                    ids=created
+                )
+            )
+            connection.execute(
+                text("DELETE FROM attachments WHERE id = ANY(:ids)").bindparams(
+                    ids=created
+                )
+            )
+
+
+@pytest.fixture
+def make_credit_customer(engine: Engine) -> Iterator[Callable[..., UUID]]:
+    """Create a `credit_customers` row directly, bypassing the API.
+
+    `phone` defaults to a fresh random value rather than a fixed string, because
+    `uq_credit_customers_outlet_phone` would otherwise make the *second* customer in any
+    test fail on a constraint rather than on its own assertion -- the failure mode
+    `clean_expense_categories` documents for category codes, in a table where duplicates are
+    much more likely (every test wants two customers).
+
+    Money arrives as a string and is cast in SQL, never as a Python float. §3 rule 1 is
+    explicit that this applies "including in a quick test fixture".
+    """
+    from app.core.config import get_settings
+
+    created: list[UUID] = []
+
+    def _make(
+        *,
+        name: str = "Test Customer",
+        phone: str | None = None,
+        vehicle_numbers: list[str] | None = None,
+        credit_limit: str | None = None,
+        is_active: bool = True,
+        outlet_id: UUID | None = None,
+        created_by: UUID | None = None,
+    ) -> UUID:
+        customer_id = uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO credit_customers (id, outlet_id, name, phone, "
+                    "vehicle_numbers, credit_limit, is_active, created_by) VALUES "
+                    "(:id, :outlet, :name, :phone, :vehicles, "
+                    "CAST(:credit_limit AS numeric), :is_active, :created_by)"
+                ).bindparams(
+                    id=customer_id,
+                    outlet=outlet_id or get_settings().DEFAULT_OUTLET_ID,
+                    name=name,
+                    phone=phone or f"9{uuid4().int % 10**9:09d}",
+                    vehicles=vehicle_numbers,
+                    credit_limit=credit_limit,
+                    is_active=is_active,
+                    created_by=created_by,
+                )
+            )
+        created.append(customer_id)
+        return customer_id
+
+    yield _make
+
+    if created:
+        with engine.begin() as connection:
+            # Children first -- nothing here has ON DELETE CASCADE, deliberately.
+            for table in ("credit_sales", "credit_repayments"):
+                for clause in ("reverses_id IS NOT NULL", "TRUE"):
+                    connection.execute(
+                        text(
+                            f"DELETE FROM {table} WHERE {clause} "
+                            "AND credit_customer_id = ANY(:ids)"
+                        ).bindparams(ids=created)
+                    )
+            connection.execute(
+                text("DELETE FROM credit_customers WHERE id = ANY(:ids)").bindparams(
+                    ids=created
+                )
+            )
+
+
+@pytest.fixture
+def make_credit_sale(engine: Engine) -> Iterator[Callable[..., UUID]]:
+    """Create a `credit_sales` row directly, bypassing the API.
+
+    For tests that need a balance already on the books -- most often so an outstanding
+    figure or a credit limit has something to be measured against.
+    """
+    created: list[UUID] = []
+
+    def _make(
+        shift_id: UUID,
+        credit_customer_id: UUID,
+        attachment_id: UUID,
+        *,
+        amount: str = "1000.00",
+        fuel_type_id: UUID | None = None,
+        quantity: str | None = None,
+        vehicle_number: str | None = None,
+        limit_override_reason: str | None = None,
+        reverses_id: UUID | None = None,
+        reversal_reason: str | None = None,
+        created_by: UUID | None = None,
+    ) -> UUID:
+        sale_id = uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO credit_sales (id, shift_id, credit_customer_id, "
+                    "fuel_type_id, quantity, amount, vehicle_number, attachment_id, "
+                    "limit_override_reason, reverses_id, reversal_reason, created_by) "
+                    "VALUES (:id, :shift_id, :customer_id, :fuel_type_id, "
+                    "CAST(:quantity AS numeric), CAST(:amount AS numeric), :vehicle, "
+                    ":attachment_id, :override, :reverses_id, :reversal_reason, "
+                    ":created_by)"
+                ).bindparams(
+                    id=sale_id,
+                    shift_id=shift_id,
+                    customer_id=credit_customer_id,
+                    fuel_type_id=fuel_type_id,
+                    quantity=quantity,
+                    amount=amount,
+                    vehicle=vehicle_number,
+                    attachment_id=attachment_id,
+                    override=limit_override_reason,
+                    reverses_id=reverses_id,
+                    reversal_reason=reversal_reason,
+                    created_by=created_by,
+                )
+            )
+        created.append(sale_id)
+        return sale_id
+
+    yield _make
+
+    if created:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE table_name = 'credit_sales' "
+                    "AND record_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+            )
+            # Reversals point at the rows they cancel, so children first.
+            connection.execute(
+                text("DELETE FROM credit_sales WHERE reverses_id = ANY(:ids)").bindparams(
+                    ids=created
+                )
+            )
+            connection.execute(
+                text("DELETE FROM credit_sales WHERE id = ANY(:ids)").bindparams(
+                    ids=created
+                )
+            )
+
+
+@pytest.fixture
+def make_credit_repayment(engine: Engine) -> Iterator[Callable[..., UUID]]:
+    """Create a `credit_repayments` row directly, bypassing the API. Mirrors
+    `make_credit_sale`."""
+    created: list[UUID] = []
+
+    def _make(
+        shift_id: UUID,
+        credit_customer_id: UUID,
+        *,
+        amount: str = "500.00",
+        mode: str = "cash",
+        attachment_id: UUID | None = None,
+        reverses_id: UUID | None = None,
+        reversal_reason: str | None = None,
+        created_by: UUID | None = None,
+    ) -> UUID:
+        repayment_id = uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO credit_repayments (id, credit_customer_id, shift_id, "
+                    "amount, mode, attachment_id, reverses_id, reversal_reason, "
+                    "created_by) VALUES (:id, :customer_id, :shift_id, "
+                    "CAST(:amount AS numeric), CAST(:mode AS credit_repayment_mode), "
+                    ":attachment_id, :reverses_id, :reversal_reason, :created_by)"
+                ).bindparams(
+                    id=repayment_id,
+                    customer_id=credit_customer_id,
+                    shift_id=shift_id,
+                    amount=amount,
+                    mode=mode,
+                    attachment_id=attachment_id,
+                    reverses_id=reverses_id,
+                    reversal_reason=reversal_reason,
+                    created_by=created_by,
+                )
+            )
+        created.append(repayment_id)
+        return repayment_id
+
+    yield _make
+
+    if created:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE table_name = 'credit_repayments' "
+                    "AND record_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM credit_repayments WHERE reverses_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("DELETE FROM credit_repayments WHERE id = ANY(:ids)").bindparams(
+                    ids=created
+                )
+            )
+
+
+@pytest.fixture
+def clean_credit(engine: Engine) -> Iterator[None]:
+    """Remove every credit row created during a test, for tests that go through the API.
+
+    The counterpart to `clean_expenses`. A customer created over HTTP has no id to hand
+    back, and `uq_credit_customers_outlet_phone` means a leaked one fails the *next* test
+    that uses the same phone number -- on a constraint rather than on its own assertion,
+    pointing at the wrong test entirely.
+    """
+    yield
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+        )
+        connection.execute(
+            text(
+                "DELETE FROM audit_logs WHERE table_name IN "
+                "('credit_sales', 'credit_repayments', 'credit_customers')"
+            )
+        )
+        connection.execute(
+            text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+        )
+        for table in ("credit_sales", "credit_repayments"):
+            connection.execute(
+                text(f"DELETE FROM {table} WHERE reverses_id IS NOT NULL")
+            )
+            connection.execute(text(f"DELETE FROM {table}"))
+        connection.execute(text("DELETE FROM credit_customers"))
+        connection.execute(text("DELETE FROM idempotency_keys"))

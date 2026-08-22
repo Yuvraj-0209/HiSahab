@@ -19,8 +19,10 @@ from app.core.errors import AppError
 from app.core.roles import Role
 from app.core.uploads import ValidatedUpload
 from app.models.attachment import Attachment
+from app.models.credit import CreditSale
 from app.models.expense import Expense
 from app.models.shift import Shift
+from app.services.credit import live_credit_sale_for_attachment
 from app.services.expenses import live_expense_for_attachment
 from app.services.storage import StorageBackend
 
@@ -125,10 +127,10 @@ def link(db: Session, *, attachment: Attachment, outlet_id: UUID) -> None:
     piece of evidence -- and `linked_at` records when the attachment stopped being an
     abandoned upload, permanently, for §7.4's sweep to read.
 
-    **Checks only `expenses` for now.** `credit_sales` does not exist until Phase 9; when
-    it lands, its own `attachment_id` column joins this same "is this attachment already
-    claimed by a live row" question, and this function grows an additional check -- it is
-    not rebuilt from scratch.
+    **Checks `expenses` and, since Phase 9, `credit_sales`** -- the two tables that can claim
+    an attachment. Each contributes one `live_*_for_attachment` query and this function asks
+    both; the rule itself did not change when the second table landed, exactly as the Phase 8
+    version of this docstring predicted.
     """
     if attachment.outlet_id != outlet_id:
         # Existence is not leaked across tenants -- the same posture §7.3 takes for reads,
@@ -139,13 +141,15 @@ def link(db: Session, *, attachment: Attachment, outlet_id: UUID) -> None:
             detail="No attachment with that id at this outlet.",
         )
 
-    if live_expense_for_attachment(db, attachment_id=attachment.id) is not None:
+    claimed_by_expense = live_expense_for_attachment(db, attachment_id=attachment.id)
+    claimed_by_sale = live_credit_sale_for_attachment(db, attachment_id=attachment.id)
+    if claimed_by_expense is not None or claimed_by_sale is not None:
         raise AppError(
             status_code=409,
             code="ATTACHMENT_ALREADY_LINKED",
             detail=(
-                "This attachment is already linked to another expense. One receipt "
-                "photograph may only justify one expense."
+                "This attachment is already linked to another expense or credit sale. One "
+                "receipt photograph may only justify one of them."
             ),
         )
 
@@ -164,6 +168,12 @@ def may_read(
     shift they are the attendant of. The upload case matters on its own: between §7.2's
     steps 5 and 6 the attachment is linked to nothing at all, and the person who just
     uploaded it must still be able to see what they uploaded.
+
+    **Both claiming tables are checked, since Phase 9.** Before `credit_sales` existed this
+    asked only about expenses, which would have left an attendant unable to open the receipt
+    for an udhaar slip on their own shift unless they happened to have uploaded it personally
+    -- a manager entering the day on their behalf would have locked them out of their own
+    paperwork.
     """
     if role is not Role.attendant:
         return True
@@ -171,12 +181,20 @@ def may_read(
     if attachment.uploaded_by == user_id:
         return True
 
-    linked_to_own_shift = db.execute(
+    linked_to_own_expense = db.execute(
         select(Expense.id)
         .join(Shift, Shift.id == Expense.shift_id)
         .where(Expense.attachment_id == attachment.id, Shift.attendant_id == user_id)
     ).first()
-    return linked_to_own_shift is not None
+    if linked_to_own_expense is not None:
+        return True
+
+    linked_to_own_credit_sale = db.execute(
+        select(CreditSale.id)
+        .join(Shift, Shift.id == CreditSale.shift_id)
+        .where(CreditSale.attachment_id == attachment.id, Shift.attendant_id == user_id)
+    ).first()
+    return linked_to_own_credit_sale is not None
 
 
 def orphans(db: Session, *, cutoff: datetime) -> Sequence[Attachment]:
