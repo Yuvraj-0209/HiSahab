@@ -38,9 +38,10 @@ from uuid import UUID
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
+from app.core.cash import OpeningBalanceSource
 from app.core.collections import CollectionMode
 from app.core.errors import AppError
-from app.models.cash import BankDeposit, NonFuelSale
+from app.models.cash import BankDeposit, DailyCashSummary, NonFuelSale
 from app.models.shift import Shift
 from app.models.shortfall import SalesmanShortfall, SalesmanShortfallSettlement
 from app.services import (
@@ -490,3 +491,182 @@ def shift_cash_position(db: Session, *, shift: Shift) -> CashPosition:
         shortfalls_booked=shortfalls_booked_total(db, shift_id=shift.id),
         incomplete=incomplete,
     )
+
+
+# --- §6.4's daily equation and §6.5's rolling balance --------------------------
+
+
+@dataclass(frozen=True)
+class DayTotals:
+    """Every term of §6.4, summed across every shift on one business date.
+
+    Built by summing `shift_cash_position` per shift rather than by writing a second set of
+    aggregate queries. Two implementations of one equation is the shape that drifts, and here
+    a drift would mean the per-shift screen and the daily summary disagreeing about the same
+    day -- with no way for a reader to tell which was right.
+    """
+
+    metered_fuel_sales: Decimal
+    non_fuel_sales_total: Decimal
+    card_total: Decimal
+    upi_total: Decimal
+    wallet_total: Decimal
+    credit_sales_total: Decimal
+    cash_credit_repayments: Decimal
+    cash_shortfall_settlements: Decimal
+    cash_expenses: Decimal
+    bank_deposits_total: Decimal
+    shortfalls_booked: Decimal
+    incomplete: bool
+
+    @property
+    def cash_sales(self) -> Decimal:
+        """§6.4: `total_sales − card − upi − wallet − credit_sales_amount`.
+
+        `total_sales` is `metered_fuel_sales + non_fuel_sales_total` -- non-fuel income is on
+        the **sales** side, never the cash side. §6.4's worked example: a card-paid bottle of
+        oil is already inside `card_total`, so putting it on the cash side would understate
+        derived cash by exactly its amount.
+        """
+        return (
+            self.metered_fuel_sales
+            + self.non_fuel_sales_total
+            - self.card_total
+            - self.upi_total
+            - self.wallet_total
+            - self.credit_sales_total
+        )
+
+
+def shifts_on(db: Session, *, outlet_id: UUID, business_date: date) -> list[Shift]:
+    """Every shift at this outlet on this business date, in sequence order.
+
+    §4.7: the number of shifts in a day is data, not schema. One here, three at a 24-hour
+    outlet, and `business_date` is an explicit column precisely so this question has an
+    answer that `date(created_at)` could never give (§6.1).
+    """
+    return list(
+        db.execute(
+            select(Shift)
+            .where(Shift.outlet_id == outlet_id, Shift.business_date == business_date)
+            .order_by(Shift.sequence)
+        )
+        .scalars()
+        .all()
+    )
+
+
+def day_totals(db: Session, *, outlet_id: UUID, business_date: date) -> DayTotals:
+    """Sum §6.4's terms across every shift on one business date."""
+    totals = {
+        field: Decimal("0.00")
+        for field in (
+            "metered_fuel_sales",
+            "non_fuel_sales_total",
+            "card_total",
+            "upi_total",
+            "wallet_total",
+            "credit_sales_total",
+            "cash_credit_repayments",
+            "cash_shortfall_settlements",
+            "cash_expenses",
+            "bank_deposits_total",
+            "shortfalls_booked",
+        )
+    }
+    incomplete = False
+
+    for shift in shifts_on(db, outlet_id=outlet_id, business_date=business_date):
+        position = shift_cash_position(db, shift=shift)
+        totals["metered_fuel_sales"] += position.metered_fuel_sales
+        totals["non_fuel_sales_total"] += position.non_fuel_sales
+        totals["card_total"] += position.card_total
+        totals["upi_total"] += position.upi_total
+        totals["wallet_total"] += position.wallet_total
+        totals["credit_sales_total"] += position.credit_sales_total
+        totals["cash_credit_repayments"] += position.cash_credit_repayments
+        totals["cash_shortfall_settlements"] += position.cash_shortfall_settlements
+        totals["cash_expenses"] += position.cash_expenses
+        totals["shortfalls_booked"] += position.shortfalls_booked
+        totals["bank_deposits_total"] += bank_deposits_total(db, shift_id=shift.id)
+        incomplete = incomplete or position.incomplete
+
+    return DayTotals(**totals, incomplete=incomplete)
+
+
+def expected_closing(*, opening_balance: Decimal, totals: DayTotals) -> Decimal:
+    """§6.4's equation, as one expression.
+
+        expected_closing = opening_balance
+                         + cash_sales
+                         + cash_credit_repayments
+                         + cash_shortfall_settlements
+                         - cash_expenses
+                         - bank_deposits
+                         - shortfalls_booked
+
+    **`− shortfalls_booked` is the term that stops money being counted twice.** A ₹500
+    shortfall booked against Ramesh is money he owes *instead of* holding: the locker gained
+    ₹49,500, not ₹50,000. Without the subtraction the ₹500 is both his debt and cash that is
+    not there, and every locker count from then on is wrong by it with nothing to explain why
+    (§6.4's worked example).
+
+    `derived − shortfall` is algebraically identical to using the declared figure, which is
+    the reassurance that this is arithmetic rather than a fudge. It is written as a
+    subtraction deliberately: §14 forbids summing the `cash` collection row into a derived
+    figure, and this form means the equation **never reads that row at all**.
+
+    Pure: no `Session`, no clock. The terms are gathered by `day_totals`; this is only the
+    arithmetic, so a test can reach it with a tuple of numbers.
+    """
+    return (
+        opening_balance
+        + totals.cash_sales
+        + totals.cash_credit_repayments
+        + totals.cash_shortfall_settlements
+        - totals.cash_expenses
+        - totals.bank_deposits_total
+        - totals.shortfalls_booked
+    )
+
+
+def previous_summary(
+    db: Session, *, outlet_id: UUID, business_date: date
+) -> DailyCashSummary | None:
+    """The most recent summary before this date, or `None` if this day is the anchor.
+
+    **The most recent one, not literally `business_date - 1`.** This outlet is shut on some
+    days and a 24-hour one is not, so "yesterday" is not a reliable way to find the previous
+    trading day -- and a gap in the calendar must not break the chain. Same reasoning §4.7
+    gives for looking up "the most recent closing reading *for that nozzle*" rather than "the
+    previous shift's".
+    """
+    return db.execute(
+        select(DailyCashSummary)
+        .where(
+            DailyCashSummary.outlet_id == outlet_id,
+            DailyCashSummary.business_date < business_date,
+        )
+        .order_by(DailyCashSummary.business_date.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def opening_balance_from(
+    previous: DailyCashSummary,
+) -> tuple[Decimal, OpeningBalanceSource]:
+    """§6.5's chain: what day N opens at, given day N−1.
+
+        actual_counted   if the locker was physically counted
+        expected_closing if it was not
+
+    **The count wins wherever there is one.** §6.5's headline rule survives this outlet's
+    locker model intact: the physical cash carries forward, not the theoretical figure, so a
+    ₹200 shortage stays visible in that day's variance and is absent from this day's opening.
+    Carrying the arithmetic forward is the fallback for the days nobody counted, never the
+    default -- and `OpeningBalanceSource` records which branch ran, so the distinction is a
+    fact on the row rather than something a reader has to reconstruct.
+    """
+    if previous.actual_counted is not None:
+        return previous.actual_counted, OpeningBalanceSource.counted
+    return previous.expected_closing, OpeningBalanceSource.carried

@@ -16,6 +16,7 @@ from app.api.v1 import (
     credit_customers,
     credit_repayments,
     credit_sales,
+    daily_summaries,
     expense_categories,
     expenses,
     fuel_margins,
@@ -102,3 +103,7 @@ api_router.include_router(cash_position.router)
 # ordering matters -- /salesman-shortfalls/outstanding is declared before
 # /salesman-shortfalls/{salesman_id}/ledger, the same hazard credit_customers.py has.
 api_router.include_router(shortfalls.router)
+# The daily summary. /daily-summaries/{business_date} takes a DATE, not a UUID, so the
+# static-before-parameterised hazard does not apply -- 'outstanding' would never parse
+# as a date either way. Its two action routes are one segment deeper than the resource.
+api_router.include_router(daily_summaries.router)
