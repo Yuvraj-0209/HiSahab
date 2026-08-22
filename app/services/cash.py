@@ -670,3 +670,51 @@ def opening_balance_from(
     if previous.actual_counted is not None:
         return previous.actual_counted, OpeningBalanceSource.counted
     return previous.expected_closing, OpeningBalanceSource.carried
+
+
+def flag_summary_for_review(
+    db: Session, *, outlet_id: UUID, business_date: date, note: str
+) -> DailyCashSummary | None:
+    """Mark the day's summary as needing review, without touching a single figure (§13.16).
+
+    What this does **not** do is the point, and it is §13.10's argument one table further on:
+    it does not recompute `expected_closing` or any component. §5.2 stores those figures
+    precisely so that a later correction cannot silently rewrite what the manager was told on
+    the day, and a recomputing cascade would be that rewrite -- with the added problem that
+    §6.5 chains days, so the rewritten figure would propagate into every opening balance after
+    it and none of them would look wrong.
+
+    So the stale figures stay, visibly stale, with a note naming the shift that moved beneath
+    them. A human reconciles numbers they can both see. Nothing is invented, and the
+    disagreement surfaces as a question rather than as a quietly different total.
+
+    **The note is appended, never replaced.** A day whose shifts are reopened twice is exactly
+    the case somebody will need to reconstruct, and overwriting would keep the most recent
+    question while deleting the first. Same choice `readings.py`'s review route makes.
+
+    Returns `None` when there is no summary for that date, which is the ordinary case: most
+    reopens happen long before anybody reconciles the day.
+    """
+    summary = db.execute(
+        select(DailyCashSummary).where(
+            DailyCashSummary.outlet_id == outlet_id,
+            DailyCashSummary.business_date == business_date,
+        )
+    ).scalar_one_or_none()
+    if summary is None:
+        return None
+
+    summary.requires_review = True
+    summary.review_note = (
+        f"{summary.review_note}\n{note}" if summary.review_note else note
+    )
+    logger.warning(
+        "daily cash summary flagged for review",
+        extra={
+            "summary_id": str(summary.id),
+            "business_date": business_date.isoformat(),
+            "is_finalised": summary.is_finalised,
+            "note": note,
+        },
+    )
+    return summary

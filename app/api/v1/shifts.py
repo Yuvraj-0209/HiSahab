@@ -53,6 +53,7 @@ from app.models.shift import OutletShiftTemplate, Shift
 from app.models.user import OutletMembership
 from app.services import (
     audit,
+    cash as cash_service,
     collections as collection_service,
     credit as credit_service,
     expenses as expense_service,
@@ -731,6 +732,22 @@ def reopen_shift(
     changed, `app/api/v1/readings.py` leaves the following shift's opening exactly as it is
     and flags it for review with a note naming this shift. A human reconciles two numbers
     they can both see. Nothing is invented and nothing is overwritten.
+
+    **Phase 10 applies the same rule one table up (§13.16).** A shift reopened beneath a
+    day that has already been reconciled makes that day's stored figures potentially stale,
+    so the summary is flagged and **nothing is recomputed** -- for §5.2's reason (the stored
+    figure is the record of what the manager was told) and one §6.5 adds: days are chained,
+    so a rewritten `expected_closing` would propagate into every opening balance after it
+    and none of them would look wrong.
+
+    **In practice this only ever fires on a summary that is not yet finalised**, and that is
+    two independent rules meeting rather than either one's intent: finalising requires every
+    shift on the date to be `locked`, and §6.8 makes `locked` terminal. So a shift beneath a
+    frozen day cannot reach this route at all -- it is refused with `SHIFT_LOCKED` before any
+    of the above runs. `flag_summary_for_review` is written without that assumption anyway,
+    since it is the rule that would need to hold if either half ever changed, and
+    `tests/test_shift_reopen_flags_summary.py` pins the interaction so a change has to be
+    deliberate.
     """
     shift = access.shift
     _guard_transition(shift, ShiftStatus.open)
@@ -739,6 +756,31 @@ def reopen_shift(
     shift.status = ShiftStatus.open.value
     shift.closed_by = None
     shift.closed_at = None
+
+    # §13.16. Flags, never recomputes -- see the docstring and `cash.flag_summary_for_review`.
+    summary = cash_service.flag_summary_for_review(
+        db,
+        outlet_id=shift.outlet_id,
+        business_date=shift.business_date,
+        note=(
+            f"Shift #{shift.sequence} was reopened after this day was reconciled. "
+            "The figures below are as they stood; re-check them against the shift."
+        ),
+    )
+    if summary is not None:
+        audit.record(
+            db,
+            outlet_id=shift.outlet_id,
+            table_name="daily_cash_summaries",
+            record_id=summary.id,
+            action=AuditAction.update,
+            changed_by=access.actor.user.id,
+            new_values={
+                "requires_review": True,
+                "reopened_shift_id": str(shift.id),
+                "expected_closing": summary.expected_closing,
+            },
+        )
 
     audit.record(
         db,
