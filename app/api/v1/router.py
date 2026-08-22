@@ -11,6 +11,7 @@ from fastapi import APIRouter
 from app.api.v1 import (
     attachments,
     collections,
+    credit_customers,
     expense_categories,
     expenses,
     fuel_margins,
@@ -67,3 +68,11 @@ api_router.include_router(expense_categories.router)
 # router above, including expenses.py's /expenses/flagged.
 api_router.include_router(uploads.router)
 api_router.include_router(attachments.router)
+
+# Phase 9 -- credit customers, outlet-scoped reference data like expense_categories.
+#
+# **Intra-module ordering matters here**, and credit_customers.py carries the note at the
+# point it matters: /credit-customers/outstanding is declared before
+# /credit-customers/{customer_id}, or FastAPI parses "outstanding" as a customer id and the
+# report 422s on the UUID. Same hazard fuel_prices.py's "/current" has.
+api_router.include_router(credit_customers.router)
