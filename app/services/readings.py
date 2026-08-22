@@ -181,6 +181,15 @@ class SalesLine:
     `quantity` is `None` when the nozzle has no closing reading yet -- deliberately not
     zero. "Not entered" and "sold nothing" are different facts, and collapsing them would
     report a full day of trading as having sold nothing at all.
+
+    `margin_per_unit` and `profit` are `None` for **two** distinct reasons, and a caller that
+    displays them must not treat either as zero (§13.7):
+
+    * the nozzle has no quantity yet, so nothing can be valued at all; or
+    * `shift_sales` was called with `price_only=True`, because §6.4 wanted the value and
+      deliberately did not ask what it earned.
+
+    Both mean "not known", never "nothing". `value` is `None` only for the first reason.
     """
 
     nozzle: Nozzle
@@ -250,11 +259,34 @@ def quantity_if_known(reading: NozzleReading, nozzle: Nozzle) -> Decimal | None:
     return compute_quantity(reading, nozzle)
 
 
-def shift_sales(db: Session, *, shift: Shift) -> list[SalesLine]:
+def shift_sales(
+    db: Session, *, shift: Shift, price_only: bool = False
+) -> list[SalesLine]:
     """Value every nozzle on a shift (§6.3).
 
         sale_value    = quantity_sold x rate_at(fuel_type, shift.started_at)
         dealer_profit = quantity_sold x margin_at(fuel_type, shift.started_at)
+
+    **`price_only=True` asks the first question without the second** (§6.3, Phase 10). §6.4's
+    cash equation needs to know what the fuel was *worth*, not what it *earned* -- and it must
+    not inherit a refusal that has nothing to do with cash. `margin_at` raises 409
+    NO_MARGIN_FOR_DATE when no margin exists, and §14 records that petrol and diesel dealer
+    commissions have never been entered at this outlet, so a cash engine calling the default
+    form would refuse to reconcile every petrol day it has ever traded.
+
+    That is the same argument `collections.shift_moved_any_quantity` makes about §6.8's close
+    preconditions: a reference-data gap must not make an unrelated operation impossible,
+    because "your shift will not close" is a very confusing way to be told about a missing
+    margin.
+
+    When `price_only`, no margin is looked up at all and `margin_per_unit` / `profit` come
+    back as **None -- never zero**. §13.7: an unlabelled zero profit is a plausible-looking
+    figure and completely wrong, which is the failure mode this whole document exists to
+    prevent. A caller that wants profit must ask for it and handle the refusal.
+
+    **The price half is never relaxed.** A missing rate still raises, in both modes. A shift
+    valued at zero reconciles to a cash surplus nobody can explain and nothing downstream
+    would question it (§5.1).
 
     **The §13.1 approximation lives here.** Both figures value the *whole* shift at the rate
     effective at `started_at`, rather than apportioning across a revision that landed
@@ -314,11 +346,18 @@ def shift_sales(db: Session, *, shift: Shift) -> list[SalesLine]:
             fuel_type_id=fuel_type.id,
             at=shift.started_at,
         )
-        margin = pricing.margin_at(
-            db,
-            outlet_id=shift.outlet_id,
-            fuel_type_id=fuel_type.id,
-            at=shift.started_at,
+        # Not looked up at all when the caller only wants value -- not looked up and
+        # discarded. `margin_at` *raises*, so a lookup here would refuse the whole shift
+        # before anything could choose to ignore the result.
+        margin = (
+            None
+            if price_only
+            else pricing.margin_at(
+                db,
+                outlet_id=shift.outlet_id,
+                fuel_type_id=fuel_type.id,
+                at=shift.started_at,
+            )
         )
         _warn_on_mid_shift_revision(db, shift=shift, fuel_type=fuel_type)
 
@@ -331,7 +370,8 @@ def shift_sales(db: Session, *, shift: Shift) -> list[SalesLine]:
                 rate_per_unit=rate,
                 margin_per_unit=margin,
                 value=sales.sale_value(quantity, rate),
-                profit=sales.dealer_profit(quantity, margin),
+                # None, never Decimal("0.00") -- see the docstring and §13.7.
+                profit=None if margin is None else sales.dealer_profit(quantity, margin),
             )
         )
 

@@ -507,3 +507,99 @@ async def test_the_testing_quantity_reaches_the_money(
     assert body["lines"][0]["quantity_sold"] == "495.000"
     assert body["lines"][0]["sale_value"] == "51727.50"
     assert Decimal(body["total_sale_value"]) == Decimal("52250.00") - Decimal("522.50")
+
+
+# --- §6.3's valuation/profit split (Phase 10) --------------------------------------
+#
+# The test above pins the *report's* behaviour: a shift with no margin refuses, because a
+# profit figure of zero is plausible and completely wrong (§13.7).
+#
+# §6.4's cash equation asks a different question. It needs to know what the fuel was worth,
+# not what it earned, and it must not inherit a refusal that has nothing to do with cash --
+# §14's standing open question says petrol and diesel commissions are still unentered here,
+# so a cash engine that looked one up would refuse to reconcile every petrol day this outlet
+# has ever traded. §6.8 already made this argument for close preconditions.
+
+
+def _sales(shift_id, *, price_only: bool):
+    from app.db.session import SessionLocal
+    from app.models.shift import Shift
+    from app.services import readings as reading_service
+
+    with SessionLocal() as session:
+        shift = session.get(Shift, shift_id)
+        return reading_service.shift_sales(session, shift=shift, price_only=price_only)
+
+
+async def test_a_shift_with_no_margin_can_still_be_valued_for_cash(
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_nozzle: Callable[..., UUID],
+    make_reading: Callable[..., UUID],
+    make_fuel_type: Callable[..., UUID],
+    make_fuel_price: Callable[..., UUID],
+) -> None:
+    """The blocker test. Without `price_only` this raises NO_MARGIN_FOR_DATE and Phase 10
+    cannot reconcile a single day at the outlet it was written for."""
+    manager = make_user("manager")
+    priced_only = make_fuel_type(code="XP95C", unit_of_measure="litre")
+    make_fuel_price(priced_only, "100.00", BEFORE, entered_by=manager)
+    nozzle = make_nozzle(priced_only)
+    shift = make_shift(manager, business_date=date(2026, 3, 11), sequence=1)
+    make_reading(shift, nozzle, opening_reading="1000.00", closing_reading="1500.00")
+
+    lines = _sales(shift, price_only=True)
+
+    assert len(lines) == 1
+    assert lines[0].quantity == Decimal("500.000")
+    assert lines[0].value == Decimal("50000.00")
+
+
+async def test_price_only_leaves_profit_unknown_never_zero(
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_nozzle: Callable[..., UUID],
+    make_reading: Callable[..., UUID],
+    make_fuel_type: Callable[..., UUID],
+    make_fuel_price: Callable[..., UUID],
+    make_fuel_margin: Callable[..., UUID],
+) -> None:
+    """`None`, not `0` -- and asserted on a fuel that *does* have a margin, so this proves
+    the value was withheld rather than merely absent. §13.7: an unlabelled zero profit is
+    exactly the plausible-but-wrong number this document exists to prevent."""
+    manager = make_user("manager")
+    fuel = make_fuel_type(code="XP95D", unit_of_measure="litre")
+    make_fuel_price(fuel, "100.00", BEFORE, entered_by=manager)
+    make_fuel_margin(fuel, "2.28", BEFORE, entered_by=manager)
+    nozzle = make_nozzle(fuel)
+    shift = make_shift(manager, business_date=date(2026, 3, 12), sequence=1)
+    make_reading(shift, nozzle, opening_reading="1000.00", closing_reading="1500.00")
+
+    line = _sales(shift, price_only=True)[0]
+
+    assert line.value == Decimal("50000.00")
+    assert line.margin_per_unit is None
+    assert line.profit is None
+
+
+async def test_a_missing_price_still_refuses_even_for_cash(
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_nozzle: Callable[..., UUID],
+    make_reading: Callable[..., UUID],
+    make_fuel_type: Callable[..., UUID],
+) -> None:
+    """The half that must NOT be relaxed. A day valued at zero reconciles to a cash surplus
+    nobody can explain, and nothing downstream would ever question it (§5.1)."""
+    from app.core.errors import AppError
+
+    manager = make_user("manager")
+    unpriced = make_fuel_type(code="XP95E", unit_of_measure="litre")
+    nozzle = make_nozzle(unpriced)
+    shift = make_shift(manager, business_date=date(2026, 3, 13), sequence=1)
+    make_reading(shift, nozzle, opening_reading="1000.00", closing_reading="1500.00")
+
+    with pytest.raises(AppError) as exc:
+        _sales(shift, price_only=True)
+
+    assert exc.value.code == "NO_PRICE_FOR_DATE"
