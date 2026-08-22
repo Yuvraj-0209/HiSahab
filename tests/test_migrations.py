@@ -20,7 +20,7 @@ def test_schema_is_at_head(engine: Engine) -> None:
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert version == "0013"
+    assert version == "0014"
 
 
 def test_pgcrypto_extension_is_installed(engine: Engine) -> None:
@@ -1992,3 +1992,58 @@ def test_a_review_flag_must_carry_a_note(
         )
 
     assert "ck_daily_cash_summaries_review_has_note" in str(exc.value)
+
+
+# --- Phase 11: the audit log's read path (0014) --------------------------------
+
+
+def test_the_audit_read_path_has_an_index(engine: Engine) -> None:
+    """`GET /audit-logs` is outlet-scoped and sorted `(changed_at, id)` DESC (§5.3, §9).
+
+    Neither index from 0004 serves that query: `ix_audit_logs_record` is keyed on
+    `(table_name, record_id)` and cannot filter by outlet, and `ix_audit_logs_changed_at`
+    cannot either. Without 0014 the default read is a sequential scan plus a sort over the
+    fastest-growing table in the schema -- §13.17 records that nothing ever removes a row.
+
+    The two older indexes are asserted alongside it, so dropping one to "tidy up" fails here
+    rather than in production six months later.
+    """
+    with engine.connect() as connection:
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                text("SELECT indexname FROM pg_indexes WHERE tablename = 'audit_logs'")
+            )
+        }
+
+    assert "ix_audit_logs_outlet_changed_at" in indexes
+    assert "ix_audit_logs_record" in indexes
+    assert "ix_audit_logs_changed_at" in indexes
+
+
+def test_the_audit_read_index_is_ascending_and_not_an_expression(
+    engine: Engine,
+) -> None:
+    """Ascending on purpose, and this pins the reasoning in 0014's docstring.
+
+    A btree scans backwards as cheaply as forwards, so a uniformly-DESC sort needs no DESC
+    index -- that only matters for a *mixed* ordering. Expressing DESC would require
+    `sa.text("changed_at DESC")` in the model's `__table_args__`, turning a plain column index
+    into an expression index that autogenerate cannot reliably compare, so `alembic check`
+    would report drift that is not real on every future phase.
+
+    `id` is the third column because the keyset predicate is a row comparison
+    `(changed_at, id) < (:last, :last_id)`; including the tiebreaker keeps the seek in the
+    index instead of filtering after it.
+    """
+    with engine.connect() as connection:
+        definition = connection.execute(
+            text(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE tablename = 'audit_logs' "
+                "AND indexname = 'ix_audit_logs_outlet_changed_at'"
+            )
+        ).scalar_one()
+
+    assert "(outlet_id, changed_at, id)" in definition
+    assert "DESC" not in definition

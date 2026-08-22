@@ -36,6 +36,11 @@ class AuditLog(Base):
     __table_args__ = (
         sa.Index("ix_audit_logs_record", "table_name", "record_id"),
         sa.Index("ix_audit_logs_changed_at", "changed_at"),
+        # Phase 11 (0014): GET /audit-logs is outlet-scoped and sorted (changed_at, id) DESC.
+        # Ascending on purpose -- a btree scans backwards just as cheaply, and DESC would need
+        # sa.text() here, turning this into an expression index that autogenerate cannot
+        # compare, so `alembic check` would report drift forever. See 0014's docstring.
+        sa.Index("ix_audit_logs_outlet_changed_at", "outlet_id", "changed_at", "id"),
     )
 
     id: Mapped[UUID] = mapped_column(
