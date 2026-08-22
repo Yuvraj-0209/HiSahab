@@ -19,9 +19,11 @@ from app.core.errors import AppError
 from app.core.roles import Role
 from app.core.uploads import ValidatedUpload
 from app.models.attachment import Attachment
+from app.models.cash import BankDeposit
 from app.models.credit import CreditSale
 from app.models.expense import Expense
 from app.models.shift import Shift
+from app.services.cash import live_deposit_for_attachment
 from app.services.credit import live_credit_sale_for_attachment
 from app.services.expenses import live_expense_for_attachment
 from app.services.storage import StorageBackend
@@ -127,10 +129,10 @@ def link(db: Session, *, attachment: Attachment, outlet_id: UUID) -> None:
     piece of evidence -- and `linked_at` records when the attachment stopped being an
     abandoned upload, permanently, for §7.4's sweep to read.
 
-    **Checks `expenses` and, since Phase 9, `credit_sales`** -- the two tables that can claim
-    an attachment. Each contributes one `live_*_for_attachment` query and this function asks
-    both; the rule itself did not change when the second table landed, exactly as the Phase 8
-    version of this docstring predicted.
+    **Checks `expenses`, `credit_sales` (Phase 9) and `bank_deposits` (Phase 10)** -- the
+    three tables that can claim an attachment. Each contributes one `live_*_for_attachment`
+    query and this function asks all of them; the rule itself has not changed as tables
+    landed, exactly as the Phase 8 version of this docstring predicted.
     """
     if attachment.outlet_id != outlet_id:
         # Existence is not leaked across tenants -- the same posture §7.3 takes for reads,
@@ -143,13 +145,18 @@ def link(db: Session, *, attachment: Attachment, outlet_id: UUID) -> None:
 
     claimed_by_expense = live_expense_for_attachment(db, attachment_id=attachment.id)
     claimed_by_sale = live_credit_sale_for_attachment(db, attachment_id=attachment.id)
-    if claimed_by_expense is not None or claimed_by_sale is not None:
+    claimed_by_deposit = live_deposit_for_attachment(db, attachment_id=attachment.id)
+    if (
+        claimed_by_expense is not None
+        or claimed_by_sale is not None
+        or claimed_by_deposit is not None
+    ):
         raise AppError(
             status_code=409,
             code="ATTACHMENT_ALREADY_LINKED",
             detail=(
-                "This attachment is already linked to another expense or credit sale. One "
-                "receipt photograph may only justify one of them."
+                "This attachment is already linked to another expense, credit sale or "
+                "bank deposit. One photograph may only justify one of them."
             ),
         )
 
@@ -169,7 +176,7 @@ def may_read(
     steps 5 and 6 the attachment is linked to nothing at all, and the person who just
     uploaded it must still be able to see what they uploaded.
 
-    **Both claiming tables are checked, since Phase 9.** Before `credit_sales` existed this
+    **All three claiming tables are checked.** Before `credit_sales` existed this
     asked only about expenses, which would have left an attendant unable to open the receipt
     for an udhaar slip on their own shift unless they happened to have uploaded it personally
     -- a manager entering the day on their behalf would have locked them out of their own
@@ -194,7 +201,20 @@ def may_read(
         .join(Shift, Shift.id == CreditSale.shift_id)
         .where(CreditSale.attachment_id == attachment.id, Shift.attendant_id == user_id)
     ).first()
-    return linked_to_own_credit_sale is not None
+    if linked_to_own_credit_sale is not None:
+        return True
+
+    # Phase 10. A deposit slip is not an attendant's own paperwork the way a receipt is --
+    # §8 makes recording a deposit a manager's act -- but the attendant of the shift the
+    # deposit was made on can still legitimately need to see the slip when the day is
+    # queried. Withholding it would be the one gap in "you can see the evidence attached to
+    # your own shift".
+    linked_to_own_deposit = db.execute(
+        select(BankDeposit.id)
+        .join(Shift, Shift.id == BankDeposit.shift_id)
+        .where(BankDeposit.attachment_id == attachment.id, Shift.attendant_id == user_id)
+    ).first()
+    return linked_to_own_deposit is not None
 
 
 def orphans(db: Session, *, cutoff: datetime) -> Sequence[Attachment]:

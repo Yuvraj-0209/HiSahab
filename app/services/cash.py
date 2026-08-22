@@ -33,11 +33,11 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.models.cash import NonFuelSale
+from app.models.cash import BankDeposit, NonFuelSale
 
 logger = logging.getLogger(__name__)
 
@@ -210,4 +210,105 @@ def reverse_non_fuel_sale(
         ),
         already_reversed_code="NON_FUEL_SALE_ALREADY_REVERSED",
         already_reversed_detail="This non-fuel sale has already been reversed.",
+    )
+
+
+# --- bank deposits (§6.4) -----------------------------------------------------
+
+
+def _deposit_is_reversed() -> object:
+    """SQL predicate: some other deposit points its `reverses_id` at this one.
+
+    Computed rather than stored, for the reason `collections._is_reversed` gives: a
+    `reversed_at` column would be an UPDATE on a financial row in a closed shift -- the thing
+    §6.9 forbids -- and a second copy of a fact the FK already records.
+    """
+    reversal = BankDeposit.__table__.alias("deposit_reversal")
+    return exists().where(reversal.c.reverses_id == BankDeposit.id)
+
+
+def live_deposit_for_attachment(db: Session, *, attachment_id: UUID) -> UUID | None:
+    """Is a *live* bank deposit already claiming this attachment? §5.3's
+    one-attachment-one-live-row rule, from the deposit side.
+
+    The third caller of that rule, after `expenses.live_expense_for_attachment` and
+    `credit.live_credit_sale_for_attachment`, and it copies their shape exactly -- including
+    what "live" means: **not itself a reversal, and not referenced by one.**
+
+    A deposit slip is worth the same protection an expense receipt gets. One photograph of a
+    ₹1,00,000 pay-in slip must not be able to justify two deposits, or §6.4 would subtract
+    the money from the locker twice and the day would read ₹1,00,000 short with nothing
+    pointing at why.
+    """
+    return db.execute(
+        select(BankDeposit.id).where(
+            BankDeposit.attachment_id == attachment_id,
+            BankDeposit.reverses_id.is_(None),
+            ~_deposit_is_reversed(),
+        )
+    ).scalar_one_or_none()
+
+
+def all_bank_deposits(db: Session, *, shift_id: UUID) -> list[BankDeposit]:
+    """Every row, reversals included, oldest first (§6.9: both rows stay visible)."""
+    return list(
+        db.execute(
+            select(BankDeposit)
+            .where(BankDeposit.shift_id == shift_id)
+            .order_by(BankDeposit.created_at, BankDeposit.id)
+        )
+        .scalars()
+        .all()
+    )
+
+
+def bank_deposits_total(db: Session, *, shift_id: UUID) -> Decimal:
+    """§6.4's `bank_deposits` term for one shift -- money that left the locker for the bank.
+
+    **Subtracted** from expected cash, which is the one thing to get right here: a deposit is
+    not income, it is the locker emptying. Summed over every row, reversals included, so a
+    cancelled deposit puts the money back rather than vanishing.
+    """
+    return db.execute(
+        select(func.coalesce(func.sum(BankDeposit.amount), Decimal("0.00"))).where(
+            BankDeposit.shift_id == shift_id
+        )
+    ).scalar_one()
+
+
+def reverse_bank_deposit(
+    db: Session,
+    *,
+    original: BankDeposit,
+    reason: str,
+    actor_id: UUID,
+    replacement_amount: Decimal | None = None,
+    replacement_reference: str | None = None,
+) -> tuple[BankDeposit, BankDeposit | None]:
+    """§6.9 on `bank_deposits`. See `append_reversal` for the shape.
+
+    **`attachment_id` is carried onto the reversal and the replacement**, the inheritance
+    §5.3 describes: the same deposit slip, the same piece of paper. `link()` is not called
+    again for either, because by then the original is no longer live and re-checking would
+    only re-verify what inheritance already guarantees. Exactly one live row holds the
+    attachment throughout.
+
+    `business_date` is carried too. It belongs to the shift, and a reversal happens on the
+    same shift as the row it cancels -- so recomputing it would be a chance to get it wrong
+    with no chance to get it more right.
+    """
+    return append_reversal(
+        db,
+        original,
+        reason=reason,
+        actor_id=actor_id,
+        carry=("shift_id", "business_date", "bank_reference", "attachment_id"),
+        replacement_amount=replacement_amount,
+        replacement_values=(
+            {}
+            if replacement_reference is None
+            else {"bank_reference": replacement_reference}
+        ),
+        already_reversed_code="DEPOSIT_ALREADY_REVERSED",
+        already_reversed_detail="This deposit has already been reversed.",
     )

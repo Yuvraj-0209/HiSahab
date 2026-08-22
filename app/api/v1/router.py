@@ -10,6 +10,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     attachments,
+    bank_deposits,
     collections,
     credit_customers,
     credit_repayments,
@@ -91,3 +92,4 @@ api_router.include_router(credit_repayments.router)
 # each other. Its paths are /shifts/{shift_id}/non-fuel-sales..., which overlap with
 # nothing above.
 api_router.include_router(non_fuel_sales.router)
+api_router.include_router(bank_deposits.router)
