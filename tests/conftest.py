@@ -1711,7 +1711,8 @@ def _simple_shift_child_fixture(
                 connection.execute(
                     text(
                         "DELETE FROM audit_logs WHERE table_name = :t "
-                        "AND record_id = ANY(:ids)"
+                        "AND (record_id = ANY(:ids) OR record_id IN "
+                        f"(SELECT id FROM {table} WHERE reverses_id = ANY(:ids)))"
                     ).bindparams(t=table, ids=created)
                 )
                 connection.execute(
@@ -1719,10 +1720,14 @@ def _simple_shift_child_fixture(
                         "ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only"
                     )
                 )
+                # Children first, and "child" means *a row pointing at one of ours* -- not
+                # "one of ours that happens to be a reversal". A test that reverses through
+                # the API creates a row this fixture never saw, and it holds the foreign key
+                # that the delete below needs clear. `make_collection` has said this since
+                # Phase 6; getting it backwards here cost four teardown errors.
                 connection.execute(
                     text(
-                        f"DELETE FROM {table} WHERE id = ANY(:ids) "
-                        "AND reverses_id IS NOT NULL"
+                        f"DELETE FROM {table} WHERE reverses_id = ANY(:ids)"
                     ).bindparams(ids=created)
                 )
                 connection.execute(

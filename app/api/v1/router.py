@@ -21,6 +21,7 @@ from app.api.v1 import (
     fuel_types,
     health,
     me,
+    non_fuel_sales,
     nozzles,
     readings,
     shift_templates,
@@ -84,3 +85,9 @@ api_router.include_router(credit_customers.router)
 # in shifts.py, so there is no ordering hazard against it or against credit_customers.py.
 api_router.include_router(credit_sales.router)
 api_router.include_router(credit_repayments.router)
+
+# Phase 10 -- the cash engine. Non-fuel sales hang off a shift, same depth and shape as
+# collections and expenses, so there is no ordering hazard against shifts.py or against
+# each other. Its paths are /shifts/{shift_id}/non-fuel-sales..., which overlap with
+# nothing above.
+api_router.include_router(non_fuel_sales.router)
