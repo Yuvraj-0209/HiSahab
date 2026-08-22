@@ -8,12 +8,12 @@ audit-logged, per §5.2.
 reopen. Ownership is enforced separately from role by `require_shift_access` in
 app/api/deps.py -- an attendant may act only on a shift whose `attendant_id` is their own.
 
-**What is deliberately not here.** Of §6.8's three close preconditions,
-`MISSING_NOZZLE_READINGS` landed with Phase 5 and `MISSING_COLLECTIONS` with Phase 6;
-both are enforced in `close_shift` below. `CREDIT_SALE_MISSING_RECEIPT` still reads a
-table that does not exist yet (`credit_sales`, Phase 9). §11 forbids scaffolding ahead, so
-there is no empty registry waiting for it -- only a named comment at the exact line it
-belongs on.
+**All three of §6.8's close preconditions now exist**, each having landed with the phase
+that owns its table: `MISSING_NOZZLE_READINGS` with Phase 5, `MISSING_COLLECTIONS` with
+Phase 6, and `CREDIT_SALE_MISSING_RECEIPT` with Phase 9. None was ever stubbed ahead of its
+table -- §11 forbids scaffolding, and an empty check that always passes is indistinguishable
+from one that was forgotten. The last of them cannot fire through this application at all;
+`close_shift` explains at the point of the check why it is still there.
 
 §6.7's lock precondition, `UNREVIEWED_EXPENSES_EXIST`, landed with Phase 7 and is enforced
 in `lock_shift` below.
@@ -54,6 +54,7 @@ from app.models.user import OutletMembership
 from app.services import (
     audit,
     collections as collection_service,
+    credit as credit_service,
     expenses as expense_service,
     readings as reading_service,
     shifts as shift_service,
@@ -560,9 +561,10 @@ def close_shift(
     # §6.8's close preconditions. Each lands with the phase that owns its table:
     #   MISSING_NOZZLE_READINGS      -- Phase 5, below
     #   MISSING_COLLECTIONS          -- Phase 6, below
-    #   CREDIT_SALE_MISSING_RECEIPT  -- Phase 9, needs `credit_sales`
-    # The one that remains is not stubbed, per §11's rule against scaffolding ahead: an
-    # empty check that always passes is indistinguishable from a check that was forgotten.
+    #   CREDIT_SALE_MISSING_RECEIPT  -- Phase 9, below
+    # All three now exist. None of them was ever stubbed ahead of its table, per §11's rule
+    # against scaffolding: an empty check that always passes is indistinguishable from a
+    # check that was forgotten.
     # ---------------------------------------------------------------------
     missing = reading_service.missing_closing_readings(db, shift=shift)
     if missing:
@@ -603,6 +605,34 @@ def close_shift(
                 "Fuel went through the meters on this shift but no cash figure has been "
                 "recorded. Enter the cash taken -- and enter 0 if no cash was taken, so "
                 "that a cashless day is on the record as an answer rather than a blank."
+            ),
+        )
+
+    # §6.8, Phase 9 -- the last of the three, and the only one that cannot fire through this
+    # application. `credit_sales.attachment_id` is NOT NULL (§6.6) and every write path calls
+    # `attachment_service.link()`, which stamps `linked_at`, so a row created through the API
+    # satisfies this by construction.
+    #
+    # Kept anyway, and the reasoning is worth stating because it looks like dead code and is
+    # not. A row written *outside* the API -- a fixture, a data migration, the bulk import of
+    # the paper register this outlet will eventually want -- can carry an attachment that was
+    # never linked, and §6.8 names this precondition explicitly. It is the same argument
+    # `_CONSTRAINT_ERRORS` makes for constraints the API refuses first: belt and braces, at
+    # the cost of one indexed query per close.
+    #
+    # Contrast the two `INSUFFICIENT_ROLE` branches Phase 8 deleted as genuinely dead: those
+    # could not be reached by *any* caller through any path, because `attendant` is already
+    # the role floor. This one has a caller; it just is not an HTTP request.
+    unreceipted = credit_service.sales_missing_receipt(db, shift=shift)
+    if unreceipted:
+        raise AppError(
+            status_code=409,
+            code="CREDIT_SALE_MISSING_RECEIPT",
+            detail=(
+                f"{len(unreceipted)} credit sale(s) on this shift point at a receipt that "
+                "was never linked. Udhaar without a confirmed receipt is a debt with "
+                "nothing behind it -- the slip has to be on the record before the day can "
+                "be closed."
             ),
         )
 

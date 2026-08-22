@@ -303,22 +303,27 @@ def test_the_close_precondition_never_prices_the_shift() -> None:
     assert "shift_sales" not in shifts_called
 
 
-def test_the_credit_sale_precondition_is_still_only_a_comment() -> None:
-    """§11: do not scaffold ahead. `credit_sales` does not exist until Phase 9, and an
-    empty check that always passes is indistinguishable from a check that was forgotten.
+def test_every_close_precondition_has_now_landed() -> None:
+    """§6.8's three preconditions, each of which arrived with the phase owning its table.
 
-    `UNREVIEWED_EXPENSES_EXIST` landed with Phase 7 -- see
-    tests/test_shift_lock_expenses.py for its behaviour -- so it has moved out of this
-    test and into the "no longer a comment" assertion below, alongside
-    `MISSING_COLLECTIONS`."""
+    This test used to assert the opposite for `CREDIT_SALE_MISSING_RECEIPT` -- that it was
+    *still only a comment* -- which was §11's no-scaffolding-ahead rule enforced
+    mechanically while `credit_sales` did not exist. Phase 9 built the table, so the guard
+    has done its job and is inverted rather than deleted: the same line now proves the
+    check was not forgotten on the way past, which is the failure the original was really
+    protecting against.
+
+    See tests/test_shift_close_credit.py for the behaviour, and note that the check cannot
+    fire through the API at all -- `close_shift` explains why it is still there.
+    """
     tree = ast.parse(Path("app/api/v1/shifts.py").read_text())
     literals = {
         node.value
         for node in ast.walk(tree)
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
-    assert "CREDIT_SALE_MISSING_RECEIPT" not in literals
-    # ...but MISSING_COLLECTIONS and UNREVIEWED_EXPENSES_EXIST are no longer comments.
-    # Each landed with its phase.
+    assert "MISSING_NOZZLE_READINGS" in literals
     assert "MISSING_COLLECTIONS" in literals
+    assert "CREDIT_SALE_MISSING_RECEIPT" in literals
+    # §6.7's lock precondition, which landed with Phase 7.
     assert "UNREVIEWED_EXPENSES_EXIST" in literals
