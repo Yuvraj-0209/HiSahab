@@ -168,3 +168,69 @@ def test_every_reversal_unique_constraint_is_mapped_to_a_business_error(engine) 
         "every uq_<table>_reverses_id must map to a business error in _CONSTRAINT_ERRORS, "
         "or a concurrent double reversal returns an opaque 500"
     )
+
+
+# --- check-then-insert races (Phase 9 Step 0) --------------------------------
+
+# The two unique constraints that must NOT be in `_CONSTRAINT_ERRORS`, each for its own
+# reason. Written as an explicit set rather than a pattern so that adding a new exclusion
+# is a deliberate act someone has to justify here, in writing.
+_NOT_REACHED_BY_THE_ERROR_HANDLER = {
+    # `app/core/idempotency.py::begin` catches IntegrityError itself and translates it into
+    # REQUEST_IN_PROGRESS / a replay. This race is not a bug being tolerated -- it is the
+    # entire mechanism §6.10 relies on, and it never reaches `integrity_error_handler`.
+    "uq_idempotency_keys_key_endpoint_user",
+    # Only reachable from `app/jobs/provision_user.py`, a CLI command run by one operator.
+    # A traceback in that operator's terminal is a fine outcome; there is no HTTP caller to
+    # hand a 500 to, and mapping it would be an entry no request can ever produce (§14's
+    # rule against dead code).
+    "uq_outlet_memberships_user_outlet",
+}
+
+
+def test_every_unique_constraint_the_api_pre_checks_is_mapped_to_a_business_error(
+    engine,
+) -> None:
+    """P8-1, and the reason it is worth generalising past reversals.
+
+    The test above catches the next `uq_<table>_reverses_id`. But a reversal race is only
+    one instance of a much broader shape this codebase uses everywhere: **check whether a
+    row exists, then insert**. `create_expense_category` does it (`CATEGORY_CODE_EXISTS`),
+    and so do fuel types, nozzles, prices, margins, readings, shifts and shift templates.
+    Every one of them has the same window -- two callers pass the `SELECT` together, the
+    unique index refuses the second `INSERT` -- and every one of them returned an opaque
+    500 to the loser.
+
+    Phase 8 fixed the reversal instance and generalised the *test* to reversals only, which
+    is why `uq_expense_categories_outlet_code`, added by Phase 8 itself, shipped unmapped in
+    the very phase that was paying attention to this class of bug. The lesson was drawn one
+    size too small.
+
+    So this asserts over **every** `uq_*` constraint in the schema, minus a short, justified
+    exclusion list. Phase 9's own `uq_credit_customers_outlet_phone` is the next instance,
+    and it now cannot ship unmapped.
+    """
+    from sqlalchemy import text
+
+    from app.core.errors import _CONSTRAINT_ERRORS
+
+    with engine.connect() as connection:
+        names = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT c.conname FROM pg_constraint c "
+                    "JOIN pg_class t ON t.oid = c.conrelid "
+                    "JOIN pg_namespace n ON n.oid = t.relnamespace "
+                    "WHERE c.contype = 'u' AND n.nspname = 'public' "
+                    "AND c.conname LIKE 'uq\\_%'"
+                )
+            )
+        }
+
+    assert len(names) > 5, "expected the app's unique constraints, not an empty schema"
+    unmapped = names - set(_CONSTRAINT_ERRORS) - _NOT_REACHED_BY_THE_ERROR_HANDLER
+    assert unmapped == set(), (
+        "these unique constraints have a check-then-insert path in the API but no entry in "
+        f"_CONSTRAINT_ERRORS, so the loser of the race gets an opaque 500: {sorted(unmapped)}"
+    )

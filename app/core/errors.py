@@ -78,6 +78,69 @@ _CONSTRAINT_ERRORS: dict[str, tuple[int, str, str]] = {
         "ATTACHMENT_PATH_COLLISION",
         "That storage path is already in use. Please retry the upload.",
     ),
+    # --- check-then-insert races (Phase 9 Step 0) ----------------------------
+    #
+    # A reversal race is one instance of a shape this codebase uses everywhere: SELECT to
+    # see whether a row exists, then INSERT. Two callers pass the SELECT together, the
+    # unique index refuses the second INSERT, and before these entries the loser got an
+    # opaque 500 -- with no way to tell whether their write had landed, which is the
+    # dangerous half.
+    #
+    # Phase 8 fixed the reversal instance and generalised its test to `uq_%_reverses_id`
+    # only, one size too small: `uq_expense_categories_outlet_code` was added by Phase 8
+    # itself and shipped unmapped in the very phase paying attention to this bug. Phase 9
+    # Step 0 widened `tests/test_errors.py::test_every_unique_constraint_the_api_pre_checks_
+    # is_mapped_to_a_business_error` to every `uq_*` in the schema, with two justified
+    # exclusions named there.
+    #
+    # Each entry reuses the code and the meaning its endpoint's own pre-check already
+    # raises, so a client cannot tell -- and does not need to care -- whether it lost the
+    # SELECT or lost the race. The detail text is necessarily more general than the
+    # endpoint's, which can name the conflicting row; here we only have a constraint name.
+    "uq_expense_categories_outlet_code": (
+        409,
+        "CATEGORY_CODE_EXISTS",
+        "An expense category with that code already exists at this outlet.",
+    ),
+    "uq_fuel_types_code": (
+        409,
+        "FUEL_TYPE_CODE_EXISTS",
+        "A fuel type with that code already exists.",
+    ),
+    "uq_nozzles_outlet_label": (
+        409,
+        "NOZZLE_LABEL_EXISTS",
+        "A nozzle with that label already exists at this outlet.",
+    ),
+    "uq_fuel_prices_outlet_fuel_effective": (
+        409,
+        "PRICE_ALREADY_EFFECTIVE_AT",
+        "A price for that fuel is already effective from that moment.",
+    ),
+    "uq_fuel_margins_outlet_fuel_effective": (
+        409,
+        "MARGIN_ALREADY_EFFECTIVE_AT",
+        "A margin for that fuel is already effective from that moment.",
+    ),
+    "uq_nozzle_readings_shift_nozzle": (
+        409,
+        "READING_ALREADY_EXISTS",
+        "This nozzle already has a reading on this shift. Update it instead.",
+    ),
+    # (outlet_id, business_date, sequence). `sequence` is server-assigned from
+    # `next_sequence`, so two simultaneous opens compute the same number and collide. From
+    # the loser's point of view the outcome is the one §5.2 already names: somebody else's
+    # shift is now the open one.
+    "uq_shifts_outlet_date_sequence": (
+        409,
+        "SHIFT_ALREADY_OPEN",
+        "Another shift was opened at the same moment. Reload before opening one.",
+    ),
+    "uq_outlet_shift_templates_outlet_sequence": (
+        409,
+        "SHIFT_TEMPLATE_SEQUENCE_EXISTS",
+        "A shift template with that sequence already exists at this outlet.",
+    ),
 }
 
 
