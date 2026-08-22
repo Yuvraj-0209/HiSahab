@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -36,8 +38,17 @@ from uuid import UUID
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
+from app.core.collections import CollectionMode
 from app.core.errors import AppError
 from app.models.cash import BankDeposit, NonFuelSale
+from app.models.shift import Shift
+from app.models.shortfall import SalesmanShortfall, SalesmanShortfallSettlement
+from app.services import (
+    collections as collection_service,
+    credit as credit_service,
+    expenses as expense_service,
+    readings as reading_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -311,4 +322,171 @@ def reverse_bank_deposit(
         ),
         already_reversed_code="DEPOSIT_ALREADY_REVERSED",
         already_reversed_detail="This deposit has already been reversed.",
+    )
+
+
+# --- shortfall settlements: §6.4's term (the ledger lives in shortfalls.py) ----
+
+
+def cash_settlements_total(db: Session, *, shift_id: UUID) -> Decimal:
+    """§6.4's `cash_shortfall_settlements` term for one shift.
+
+    A salesman handing back what he owed. Every settlement is cash (§5.2 -- the owner's
+    answer), so there is no mode to filter on and every row reaches the drawer.
+
+    The **term** lives here, with §6.4's other terms; the **ledger** -- outstanding per
+    salesman, the booking rules, the reversal path -- lives in `app/services/shortfalls.py`.
+    That split is the same one `credit.py` and this module already have: `cash_repayments_
+    total` sits beside the repayment rows, and the cash equation reads it from there.
+    """
+    return db.execute(
+        select(
+            func.coalesce(func.sum(SalesmanShortfallSettlement.amount), Decimal("0.00"))
+        ).where(SalesmanShortfallSettlement.shift_id == shift_id)
+    ).scalar_one()
+
+
+def shortfalls_booked_total(db: Session, *, shift_id: UUID) -> Decimal:
+    """§6.4's `shortfalls_booked` term for one shift -- **subtracted** from expected cash.
+
+    What a salesman owes *instead of* holding. Without this term the same ₹500 is an asset
+    twice: his debt, and cash the locker does not contain. See §6.4's worked example.
+
+    Note this is the *booked* figure, not the computed gap. A gap nobody booked subtracts
+    nothing and resurfaces at the next physical count as a variance with no name on it --
+    which is the correct outcome of a manager choosing not to book, not a hole.
+    """
+    return db.execute(
+        select(func.coalesce(func.sum(SalesmanShortfall.amount), Decimal("0.00"))).where(
+            SalesmanShortfall.shift_id == shift_id
+        )
+    ).scalar_one()
+
+
+# --- §6.4's per-shift cash position --------------------------------------------
+
+
+@dataclass(frozen=True)
+class CashPosition:
+    """What one shift says about the cash a salesman should be holding (§6.4, §5.2).
+
+    Two figures, and the whole design rests on keeping them apart:
+
+    * **`accountable_cash`** -- derived from the meters and the other payment channels. What
+      the system says he should have handed over.
+    * **`declared_cash`** -- the `cash` collection row: what he says he counted into the
+      locker. `None` when nobody has declared, which is a different answer from ₹0.00 and
+      must never be coalesced with it (§6.8).
+
+    `gap = accountable_cash - declared_cash`. **Positive is short, negative is a surplus.**
+
+    §14 forbids summing the declared row into the derived figure, and nothing here does: the
+    two are computed independently and only subtracted. That is the same shape §4.7 gives the
+    meter chain -- the system predicts, a human confirms, both values are stored, and a
+    disagreement leaves a trace instead of being absorbed into somebody's debt.
+
+    **Nothing here is written anywhere.** A gap becomes a debt only when a manager books it
+    (§5.2, §13.14). `gap` is `None` when nothing was declared, because there is no
+    disagreement to measure yet -- not zero, which would read as "he counted exactly right".
+    """
+
+    shift_id: UUID
+    business_date: date
+    salesman_id: UUID
+    metered_fuel_sales: Decimal
+    non_fuel_sales: Decimal
+    card_total: Decimal
+    upi_total: Decimal
+    wallet_total: Decimal
+    credit_sales_total: Decimal
+    cash_credit_repayments: Decimal
+    cash_shortfall_settlements: Decimal
+    cash_expenses: Decimal
+    accountable_cash: Decimal
+    declared_cash: Decimal | None
+    gap: Decimal | None
+    shortfalls_booked: Decimal
+    # True when at least one in-scope nozzle has no quantity yet, so a reader can tell an
+    # in-progress shift from one that genuinely sold nothing. Mirrors `ShiftSales.incomplete`.
+    incomplete: bool
+
+
+def shift_cash_position(db: Session, *, shift: Shift) -> CashPosition:
+    """Assemble §6.4's per-shift figures for one shift.
+
+        accountable_cash = metered_fuel_sales + non_fuel_sales
+                         - card - upi - wallet
+                         - credit_sales
+                         + cash_credit_repayments
+                         + cash_shortfall_settlements
+                         - cash_expenses
+
+    **Cash repayments and settlements are added; cash expenses are subtracted**, because all
+    three physically pass through the salesman's hands during the shift and are therefore
+    already inside the figure he declares. Leave any of them out and the comparison below
+    manufactures a gap that nobody caused.
+
+    **Priced with `price_only=True`** (§6.3). The cash question needs the rate, not the
+    margin, and petrol and diesel margins have never been entered at this outlet (§14) -- so
+    asking for profit here would refuse to reconcile every petrol day over a reference-data
+    gap that has nothing to do with cash.
+
+    A nozzle with no quantity yet contributes nothing and sets `incomplete`. It is **not**
+    treated as zero: "not entered" and "sold nothing" are different facts, and a mid-entry
+    shift must not report a gap the size of its own unentered readings.
+    """
+    lines = reading_service.shift_sales(db, shift=shift, price_only=True)
+    metered = sum(
+        (line.value for line in lines if line.value is not None), Decimal("0.00")
+    )
+    incomplete = any(line.quantity is None for line in lines)
+
+    by_mode = collection_service.totals_by_mode(db, shift_id=shift.id)
+    card = by_mode.get(CollectionMode.card.value, Decimal("0.00"))
+    upi = by_mode.get(CollectionMode.upi.value, Decimal("0.00"))
+    wallet = by_mode.get(CollectionMode.wallet.value, Decimal("0.00"))
+
+    non_fuel = non_fuel_sales_total(db, shift_id=shift.id)
+    credit_sales = credit_service.credit_sales_total(db, shift_id=shift.id)
+    repayments = credit_service.cash_repayments_total(db, shift_id=shift.id)
+    settlements = cash_settlements_total(db, shift_id=shift.id)
+    expenses_paid = expense_service.cash_expenses_total(db, shift_id=shift.id)
+
+    accountable = (
+        metered
+        + non_fuel
+        - card
+        - upi
+        - wallet
+        - credit_sales
+        + repayments
+        + settlements
+        - expenses_paid
+    )
+
+    declared = collection_service.declared_cash(db, shift_id=shift.id)
+    # None, not zero. Nobody has declared, so there is no disagreement to measure -- and a
+    # zero here would read as "he counted exactly right", which is the opposite of the truth.
+    gap = None if declared is None else accountable - declared
+
+    return CashPosition(
+        shift_id=shift.id,
+        business_date=shift.business_date,
+        # §5.2: the one person accountable for this shift's cash. Read from the shift, never
+        # supplied, which is also where a booked shortfall gets its name from.
+        salesman_id=shift.attendant_id,
+        metered_fuel_sales=metered,
+        non_fuel_sales=non_fuel,
+        card_total=card,
+        upi_total=upi,
+        wallet_total=wallet,
+        credit_sales_total=credit_sales,
+        cash_credit_repayments=repayments,
+        cash_shortfall_settlements=settlements,
+        cash_expenses=expenses_paid,
+        accountable_cash=accountable,
+        declared_cash=declared,
+        gap=gap,
+        shortfalls_booked=shortfalls_booked_total(db, shift_id=shift.id),
+        incomplete=incomplete,
     )

@@ -13,10 +13,11 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
+from app.core.expenses import ExpenseMode
 from app.models.expense import Expense
 from app.models.expense_category import ExpenseCategory
 from app.models.shift import Shift
@@ -115,6 +116,30 @@ def totals_by_category(db: Session, *, shift_id: UUID) -> dict[str, Decimal]:
     for code, amount in rows:
         totals[code] = totals.get(code, Decimal("0.00")) + amount
     return totals
+
+
+def cash_expenses_total(db: Session, *, shift_id: UUID) -> Decimal:
+    """§6.4's `cash_expenses` term for one shift -- **`mode = cash` rows, and only those.**
+
+    This is the line Phase 7 added the `mode` column for. Before it, every expense was
+    implicitly cash because there was nowhere to record otherwise, and a ₹40,000 electricity
+    bill paid online read as a ₹40,000 hole in the drawer -- which §14 records this outlet
+    would then book as udhaar against the salesman's own name. A `card` / `upi` /
+    `bank_transfer` expense stays on the record for reporting and contributes nothing here.
+
+    Summed over every row, reversals included, so a cancelled expense returns the money to
+    the drawer rather than vanishing from the figure.
+
+    Lives here rather than in `services/cash.py` for the reason `cash_repayments_total` lives
+    in `services/credit.py`: a term of §6.4 belongs beside the rows it sums and next to the
+    enum that decides which of them count.
+    """
+    return db.execute(
+        select(func.coalesce(func.sum(Expense.amount), Decimal("0.00"))).where(
+            Expense.shift_id == shift_id,
+            Expense.mode == ExpenseMode.cash.value,
+        )
+    ).scalar_one()
 
 
 def category_codes(db: Session, expenses: Sequence[Expense]) -> dict[UUID, str]:

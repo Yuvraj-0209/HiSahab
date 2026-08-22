@@ -11,6 +11,7 @@ from fastapi import APIRouter
 from app.api.v1 import (
     attachments,
     bank_deposits,
+    cash_position,
     collections,
     credit_customers,
     credit_repayments,
@@ -93,3 +94,6 @@ api_router.include_router(credit_repayments.router)
 # nothing above.
 api_router.include_router(non_fuel_sales.router)
 api_router.include_router(bank_deposits.router)
+# Reads §6.4's per-shift figures and writes nothing. Its single path,
+# /shifts/{shift_id}/cash-position, is one segment deeper than anything in shifts.py.
+api_router.include_router(cash_position.router)
