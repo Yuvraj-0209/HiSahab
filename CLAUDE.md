@@ -920,6 +920,24 @@ never a raw URL string. Single authoritative representation of file knowledge (D
 > They tell you who last touched a row, not what it was before or how many times it
 > changed. For a cash system, `audit_logs` is required in addition to those columns.
 
+> **`outlet_id` on a row describing *global* reference data means the outlet whose admin made
+> the change.** Phase 11 amendment. `fuel_types` is the one audited table with no `outlet_id`
+> of its own (§5.1 — a litre is a litre at every outlet), while this column is `NOT NULL`. The
+> audit row therefore carries `actor.outlet_id`: *who did this, acting where*, not *which
+> outlet owns the row*. In V1 there is one outlet and the distinction is invisible. The day
+> there are two, an admin at outlet B adding XP-95 writes a row stamped B for a fuel that
+> belongs to everyone — and a reader filtering by outlet A would conclude, from an entirely
+> correct query, that it never happened.
+>
+> Making the column nullable was rejected: it would weaken §5.0's tenancy guarantee on the one
+> table that has no other tenancy signal, to accommodate a single case.
+
+> **`record_id` is deliberately not a foreign key** (it points at rows in many tables, and it
+> has to survive its target being restructured). The consequence is a read-side one, and it is
+> a decision rather than an oversight: a query for an id that never existed returns an **empty
+> page, not a 404**. Nothing can tell the difference between "no such row" and "that row was
+> never changed", and inventing a 404 would claim knowledge the table does not have.
+
 ### 5.4 Relationship summary in plain English
 
 - A **shift** has many nozzle readings, collections, credit sales, expenses, deposits,
@@ -1491,6 +1509,7 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | Create or update a daily cash summary, incl. `actual_counted` | ❌ | ✅ | ✅ |
 | Lock a shift / finalise a day | ❌ | ❌ | ✅ |
 | Unfinalise a day (mandatory reason, audit-logged) | ❌ | ❌ | ✅ |
+| **Read the audit log (§5.3)** | ❌ | ❌ | ✅ |
 | Enter fuel prices and margins | ❌ | ❌ | ✅ |
 | Manage fuel types (add a new product, e.g. XP-95) | ❌ | ❌ | ✅ |
 | Manage expense categories, incl. `requires_receipt` (§5.1, §6.11) | ❌ | ❌ | ✅ |
@@ -1511,6 +1530,18 @@ comparison (`app/core/roles.py::satisfies`), never exact matching.
 **Enforced server-side on every endpoint.** Hiding a button is UX, not a control.
 Write a permission test for the attendant-touching-another-shift case specifically.
 
+> **Why reading the audit log is admin-only, not manager.** Phase 11 amendment. Every other
+> read at the manager floor is a *report* — shifts, the cash position, the month-end expense
+> summary. §5.3 frames `audit_logs` as the **control record** instead, and it is partly the
+> record of what managers did.
+>
+> It is also a leak boundary, which is the half that is not a matter of taste. `old_values` /
+> `new_values` on a `credit_customers` row contain `phone` and `credit_limit` — precisely the
+> two fields the table above forbids an attendant from seeing, and which §9 restricts to
+> manager-and-above only for the customer's *own* detail route. A manager floor here would
+> expose one table's restricted columns through a different endpoint, so admin-only is what
+> keeps §8 and §9 consistent rather than merely cautious.
+
 ---
 
 ## 9. API Conventions
@@ -1525,6 +1556,13 @@ Write a permission test for the attendant-touching-another-shift case specifical
   cause duplicates and skips with `OFFSET`.
 - CORS: explicit origin allowlist from config. **Never `allow_origins=["*"]`.**
 - Every request gets a `request_id`, logged and returned in error responses.
+
+> **The audit log's sort key is `(changed_at DESC, id DESC)`** — Phase 11 amendment — and it
+> reuses `encode_cursor` / `decode_cursor` **unchanged**. `app/api/cursor.py` already states
+> that the pair "serves any `(TIMESTAMPTZ, UUID)` sort key, not only `effective_from`", and
+> Phase 7 reused it for `created_at`. A third encoder would be exactly the drift that module
+> exists to prevent: a cursor issued by one copy and parsed by a divergent one is a genuinely
+> nasty bug to find.
 
 ---
 
@@ -1682,6 +1720,27 @@ test suite would give false confidence about exactly the rules that matter most.
 *Immutability*
 - Any write to a `locked` shift → 409
 
+*Audit trail (§5.3, Phase 11)*
+- Every admin write to reference data records exactly one `audit_logs` row — asserted per
+  endpoint, never as one loop over a list (a loop that silently skips is the failure mode)
+- A create records `action = insert` with `old_values` NULL; a `PATCH` records
+  `action = update` with **both** sides populated and genuinely different
+- **A refused write records nothing** — a 409 duplicate, a 422 immutable field and a 403
+  non-admin each leave `count(*) == 0`. This is what proves the audit row and the change share
+  one transaction
+- No reference-data write records `status_change` — that label means a *shift* lifecycle move
+- `changed_by` is the **acting** admin, not the row's `created_by`; test the case where they
+  differ
+- Money inside `old_values` / `new_values` round-trips as a **string**, never a float, and a
+  null `credit_limit` stays null rather than becoming `0`
+- The read endpoint is **admin-only** and **outlet-scoped**; a row from another outlet is
+  absent, asserted by inserting one rather than by inferring from an empty page
+- An unknown `record_id` returns an empty page, not a 404; an invalid `action` returns 422,
+  not an empty page
+- Paging with a row inserted mid-walk neither repeats nor skips — the failure `OFFSET` causes
+- **A structural test fails when any new `@router.post` / `@router.patch` lacks an
+  `audit.record` call**, parsed with `ast`, with a short explicit exemption list
+
 ---
 
 ## 11. Build Order
@@ -1712,11 +1771,36 @@ ahead — no empty modules for later phases.
    halves, and splitting them would mean writing `expenses.py` twice
 9. **Credit** — customers, sales (receipt-enforced), repayments, outstanding balance
 10. **Cash engine** — daily summary, expected vs actual, rolling balance
-11. ~~**Audit log**~~ — **built in Phase 4 instead.** The invitation above was taken:
-    §5.2 requires backwards status transitions to be audit-logged and §6.8 lets an admin
-    reopen a shift, so Phase 4 is the first phase that cannot be correct without it.
-    What remains for this slot is retrofitting audit writes onto the Phase 3 admin
-    endpoints (fuel types, nozzles, prices, margins), which is genuinely optional
+11. **Audit retrofit & the audit trail endpoint** — the *table* was built in Phase 4, not
+    here. The invitation above was taken: §5.2 requires backwards status transitions to be
+    audit-logged and §6.8 lets an admin reopen a shift, so Phase 4 is the first phase that
+    cannot be correct without it. **This slot is what was left behind**, and it is two things:
+
+    **(a) Retrofit audit writes onto every admin-managed reference-data endpoint.** This
+    line used to name four — fuel types, nozzles, prices, margins — and call it "genuinely
+    optional". **Both halves of that were wrong**, and the sentence is older than the gap it
+    describes: it was written in Phase 1, before `outlet_shift_templates` (4),
+    `expense_categories` (8) and `credit_customers` (9) existed. All seven have the same
+    defect — **zero** `audit.record` calls across twelve write endpoints — and three of them
+    gate money rules directly. `expense_categories.requires_receipt` is the knob §6.11 exists
+    to give the admin; `credit_customers.credit_limit` decides what §6.6 refuses, so raising
+    it is how an over-limit sale becomes a legal one; `outlet_shift_templates.starts_at_local`
+    supplies the instant §6.3 prices a whole shift from. It is not optional, because §5.3 says
+    a cash system requires an audit trail and `created_by` is not one.
+
+    The append-only tables are the sharpest case: `fuel_prices` and `fuel_margins` exist in
+    that shape *because* §4.1 says a mutable price column "silently corrupts every historical
+    report" — yet a **backdated** `effective_from`, which the router permits and merely warns
+    about, can revalue a closed shift with nothing recording who entered it.
+
+    **(b) `GET /audit-logs`, admin-only (§8, §9).** Nothing could read the table back. Every
+    phase since 4 has written to a trail whose only reader was a raw SQL prompt, and a trail
+    nobody can read is not one.
+
+    What makes this durable is neither of the above but a **structural test**: an `ast` walk
+    asserting every `@router.post` / `@router.patch` in `app/api/v1/` calls `audit.record`.
+    The gap survived seven phases because nothing failed when it was missing — the same reason
+    §6.9 gives for `_CONSTRAINT_ERRORS` being forgotten twice, and the same fix.
 12. **Frontend** — minimal HTML/CSS/JS forms and tables
 13. **Reporting** — daily summary, 7-day rolling view, variance alerts
 
@@ -1837,6 +1921,19 @@ future reader must be able to tell the difference.
     rewrite §5.2 stores `expected_closing` to prevent, and §6.5 chains days, so the rewrite
     would not stay local. §5.2, §6.5, §13.10
 
+17. **The audit log has no retention policy, no archival and no partitioning.** Phase 11. It
+    is append-only by design (§5.3) and is the fastest-growing table in the schema — every
+    financial write and, from Phase 11, every reference-data write adds a row that is never
+    removed. `0014`'s index keeps *reads* fast at any size; **nothing keeps the table small.**
+
+    Recorded here as a decision rather than discovered later as a disk alert. A policy needs a
+    real row count behind it to be anything but a guess, and there is none yet — so the honest
+    move is to name the gap and revisit it with a week of production data. Note that any future
+    policy has to answer a question this project has already answered elsewhere: §7.4 permits
+    hard-deleting *unlinked attachments* only because they are not a financial record, and
+    §3 rule 6's no-hard-deletes rule would apply in full to anything that could be reconstructed
+    from an audit row. §5.3, §7.4
+
 ---
 
 ## 14. Guardrails for Claude Code
@@ -1941,6 +2038,24 @@ to occur on this specific project.
   unique constraint that is not outlet-scoped where §5.1–§5.3 says it should be
 - Remove an `outlet_id` column because §12 says multi-outlet is out of scope — the
   *features* are out of scope, the schema is not. See §5.0
+- **Add an admin write endpoint without an `audit.record` call in the same transaction.**
+  §5.3 requires the trail and `created_by` is not one — it says who last touched a row, never
+  what it was before. This is pinned structurally by an `ast` test over every
+  `@router.post` / `@router.patch` in `app/api/v1/`, so a new router **fails the suite** rather
+  than the review. That is deliberate: the gap survived seven phases precisely because nothing
+  failed when it was missing. If an endpoint genuinely should not be audited, add it to that
+  test's exemption list **with a reason**, the way `uploads.py` is (an attachment is not a
+  business row, and §7.4 sweeps unlinked ones) — never by deleting the assertion (§5.3, §11)
+- **Call `audit.record` after `db.commit()`, or commit it separately.** `services/audit.py`
+  is explicit that the caller commits, so the audit row and the change it describes land in one
+  transaction or neither. A separately committed audit row can describe a change that was then
+  rolled back, which is worse than no log at all: it is a log that lies (§5.3)
+- **Use `AuditAction.status_change` for a reference-data deactivation.** That label means a
+  *shift* lifecycle move — §5.2 singles out backwards transitions as the thing that must be
+  traceable. Because §3 rule 6 forbids hard deletes, `is_active` is how **every** reference
+  table retires a row, so admitting those would make the label mean "a shift moved, or anything
+  at all was deactivated" and nobody could query for lifecycle events again. A deactivation is
+  an ordinary `update`, already fully legible in `old_values` / `new_values` (§5.3)
 - "Improve" the schema mid-implementation without flagging it first
 
 **Do:**
