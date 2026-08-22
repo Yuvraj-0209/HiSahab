@@ -204,13 +204,14 @@ def list_credit_repayments(
 
     return CreditRepaymentPage(
         items=[_to_response(row, is_reversed=row.id in reversed_ids) for row in rows],
-        total=sum((row.amount for row in rows), Decimal("0.00")),
-        # §6.4's term. Computed here rather than left to Phase 10 so that "which modes touch
-        # the drawer" is answered once, next to the enum that defines them.
-        cash_total=sum(
-            (row.amount for row in rows if row.mode == CreditRepaymentMode.cash),
-            Decimal("0.00"),
-        ),
+        # Both totals aggregate in SQL over the whole shift, never over `rows` -- which has
+        # just been truncated to `_MAX_ROWS`. Phase 9 summed the truncated list here, so a
+        # shift with more than 100 repayments under-reported both figures, and `cash_total`
+        # is a term of §6.4. Fixed in Phase 10 Step 0; the sibling routers were always right.
+        total=credit_service.repayments_total(db, shift_id=shift.id),
+        # §6.4's `cash_credit_repayments` term, filtered to the one mode that reaches the
+        # drawer. Answered in the service, next to the rows it sums.
+        cash_total=credit_service.cash_repayments_total(db, shift_id=shift.id),
         truncated=truncated,
     )
 

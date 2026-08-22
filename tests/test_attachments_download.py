@@ -323,3 +323,70 @@ async def test_the_private_bucket_is_never_reachable_without_a_signature(
     url = response.json()["url"]
     assert url.startswith("file://")
     assert Path(url.removeprefix("file://")).is_file()
+
+
+# --- the linked-to-my-shift branch, uploaded by somebody else ----------------------
+#
+# P10 Step 0. `test_an_attendant_can_read_a_receipt_linked_to_their_own_shift` above
+# uploads *as the attendant*, so `may_read` returns True at the `uploaded_by` branch and
+# never reaches either join. It proves the uploader rule, not the linked-to-my-shift rule.
+#
+# The two tests below are the case §7.3's docstring actually describes -- "a manager
+# entering the day on their behalf would have locked them out of their own paperwork" --
+# and they are what makes both joins in `may_read` reachable. The credit-sale one was
+# marked done on the Phase 9 checklist and never written; nothing in the suite hit the
+# signed-url route with a credit sale at all.
+
+
+async def test_an_attendant_reads_an_expense_receipt_a_manager_uploaded_for_them(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_expense: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """The day is typed in after the fact (§4.7), often by somebody senior.
+
+    The attendant did not upload this file, so only the expense join can let them in.
+    """
+    attendant = make_user("attendant")
+    manager = make_user("manager")
+    shift = make_shift(attendant, business_date=date(2026, 7, 21), sequence=1)
+    attachment_id = await _upload(client, auth_headers(manager), shift_id=shift)
+    make_expense(shift, attachment_id=UUID(attachment_id))
+
+    response = await client.get(
+        f"/api/v1/attachments/{attachment_id}/url", headers=auth_headers(attendant)
+    )
+
+    assert response.status_code == 200
+    assert response.json()["url"]
+
+
+async def test_an_attendant_reads_a_credit_sale_receipt_a_manager_uploaded_for_them(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_sale: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """§7.3, and the whole reason Phase 9 widened `may_read` past expenses.
+
+    Without the credit-sale join an attendant cannot open the udhaar slip for a sale on
+    their own shift unless they personally uploaded it -- and `credit_sales.attachment_id`
+    is NOT NULL, so every udhaar sale has one.
+    """
+    attendant = make_user("attendant")
+    manager = make_user("manager")
+    shift = make_shift(attendant, business_date=date(2026, 7, 22), sequence=1)
+    attachment_id = await _upload(client, auth_headers(manager), shift_id=shift)
+    customer = make_credit_customer()
+    make_credit_sale(shift, customer, UUID(attachment_id))
+
+    response = await client.get(
+        f"/api/v1/attachments/{attachment_id}/url", headers=auth_headers(attendant)
+    )
+
+    assert response.status_code == 200
+    assert response.json()["url"]

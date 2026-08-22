@@ -776,3 +776,74 @@ async def test_reversing_a_payment_is_idempotent(
             ).bindparams(id=repayment)
         ).scalar_one()
     assert count == 1
+
+
+# --- the page totals must sum the table, not the page ------------------------------
+#
+# P10 Step 0. Phase 9 computed both `total` and `cash_total` inline with a Python `sum`
+# over `rows` -- *after* `rows` had been truncated to `_MAX_ROWS`. Every sibling router
+# already avoids this by calling a service that aggregates in SQL over the whole shift
+# (`expenses.totals_by_category`, `collections.totals_by_mode`,
+# `credit_sales.credit_sales_total`); this one file diverged.
+#
+# `cash_total` is a term of §6.4's cash equation. An understated one does not look wrong --
+# it makes the salesman appear to be holding less than he is, which is the plausible-but-
+# wrong number CLAUDE.md exists to prevent, and Phase 10 was about to consume it.
+
+
+async def test_the_page_totals_sum_the_whole_shift_not_just_the_first_page(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_repayment: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """101 repayments, `_MAX_ROWS` = 100. The 101st must still be inside both totals."""
+    manager = make_user("manager")
+    attendant = make_user("attendant")
+    shift = make_shift(attendant, business_date=date(2026, 10, 10), sequence=1)
+    customer = make_credit_customer()
+
+    for _ in range(101):
+        make_credit_repayment(shift, customer, amount="10.00", mode="cash")
+
+    response = await client.get(
+        f"/api/v1/shifts/{shift}/credit-repayments", headers=auth_headers(manager)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["truncated"] is True
+    assert len(body["items"]) == 100
+    assert Decimal(body["total"]) == Decimal("1010.00")
+    assert Decimal(body["cash_total"]) == Decimal("1010.00")
+
+
+async def test_the_cash_total_still_excludes_non_drawer_modes_when_truncated(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_repayment: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """The fix must not widen the filter: a bank transfer moves no money through the
+    drawer, and §6.4 must never see it (§5.2's note on `credit_repayment_mode`)."""
+    manager = make_user("manager")
+    attendant = make_user("attendant")
+    shift = make_shift(attendant, business_date=date(2026, 10, 11), sequence=1)
+    customer = make_credit_customer()
+
+    for _ in range(100):
+        make_credit_repayment(shift, customer, amount="10.00", mode="cash")
+    make_credit_repayment(shift, customer, amount="5000.00", mode="bank_transfer")
+
+    response = await client.get(
+        f"/api/v1/shifts/{shift}/credit-repayments", headers=auth_headers(manager)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert Decimal(body["total"]) == Decimal("6000.00")
+    assert Decimal(body["cash_total"]) == Decimal("1000.00")

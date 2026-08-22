@@ -443,7 +443,15 @@ async def test_storage_failure_returns_502_and_leaves_no_attachment_row(
     app.dependency_overrides[get_storage] = lambda: _ExplodingStorage()
     transport = ASGITransport(app=app)
 
-    before = engine.connect().execute(text("SELECT count(*) FROM attachments")).scalar_one()
+    # `with`, not a bare `engine.connect()`. An unclosed connection stays *idle in
+    # transaction* holding a shared lock on `attachments` until it is garbage collected, and
+    # `test_migration_is_reversible` -- which downgrades to base mid-suite -- then blocks
+    # forever on `DROP TABLE`. Found in Phase 10 Step 0, when two added tests shifted the
+    # timing enough to make a latent leak deterministic.
+    with engine.connect() as connection:
+        before = connection.execute(
+            text("SELECT count(*) FROM attachments")
+        ).scalar_one()
 
     async with _AsyncClient(transport=transport, base_url="http://test") as client:
         response = await _upload(
@@ -453,5 +461,8 @@ async def test_storage_failure_returns_502_and_leaves_no_attachment_row(
     assert response.status_code == 502
     assert response.json()["code"] == "STORAGE_UNAVAILABLE"
 
-    after = engine.connect().execute(text("SELECT count(*) FROM attachments")).scalar_one()
+    with engine.connect() as connection:
+        after = connection.execute(
+            text("SELECT count(*) FROM attachments")
+        ).scalar_one()
     assert after == before

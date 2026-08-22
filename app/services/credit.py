@@ -20,6 +20,7 @@ from uuid import UUID
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
+from app.core.credit import CreditRepaymentMode
 from app.core.errors import AppError
 from app.models.attachment import Attachment
 from app.models.credit import CreditCustomer, CreditRepayment, CreditSale
@@ -457,6 +458,58 @@ def credit_sales_total(db: Session, *, shift_id: UUID) -> Decimal:
             CreditSale.shift_id == shift_id
         )
     ).scalar_one()
+
+
+def _repayments_sum(
+    db: Session, *, shift_id: UUID, mode: CreditRepaymentMode | None = None
+) -> Decimal:
+    """Sum this shift's repayments, optionally narrowed to one mode.
+
+    Written once and parameterised, in the shape `pricing._effective_row_at` established for
+    `rate_at` / `margin_at`: the two public callers below differ by one `WHERE` clause, and
+    the parts that would drift apart in two copies -- the shift scoping, the `coalesce` that
+    turns "no rows" into ₹0.00 rather than `None`, and the decision *not* to filter reversals
+    -- are exactly the parts that matter.
+
+    **Reversals are included**, for the reason `outstanding` gives: a cancelled repayment must
+    show as the reduction it is rather than vanish. A reversal inherits the original's `mode`,
+    so a reversed cash repayment nets out inside the filter rather than escaping it.
+    """
+    conditions = [CreditRepayment.shift_id == shift_id]
+    if mode is not None:
+        conditions.append(CreditRepayment.mode == mode.value)
+    return db.execute(
+        select(
+            func.coalesce(func.sum(CreditRepayment.amount), Decimal("0.00"))
+        ).where(*conditions)
+    ).scalar_one()
+
+
+def repayments_total(db: Session, *, shift_id: UUID) -> Decimal:
+    """Every settlement received on this shift, all modes.
+
+    Not a term of §6.4 -- it is the figure the repayments page shows. It exists as a service
+    function rather than a `sum()` in the router because the router sums a *truncated* list:
+    Phase 9 wrote it inline over `rows[:_MAX_ROWS]`, so a shift with more than 100 repayments
+    under-reported. Aggregating in SQL over the whole shift is what every sibling router
+    already does (`totals_by_category`, `totals_by_mode`, `credit_sales_total`).
+    """
+    return _repayments_sum(db, shift_id=shift_id)
+
+
+def cash_repayments_total(db: Session, *, shift_id: UUID) -> Decimal:
+    """§6.4's `cash_credit_repayments` term for one shift.
+
+    **Only `mode = cash`.** A customer settling an old bill by bank transfer or card moves no
+    money through the drawer, so adding it to expected cash would invent a shortfall on the
+    very day they paid -- the argument `app/core/credit.py` makes beside the enum that defines
+    the modes.
+
+    Lives here rather than inline in `app/api/v1/credit_repayments.py`, where Phase 9 first
+    wrote it, so §6.4's equation reads every term from one layer. A router is not where a term
+    of the cash equation belongs, and Phase 10's engine must not import a router to find one.
+    """
+    return _repayments_sum(db, shift_id=shift_id, mode=CreditRepaymentMode.cash)
 
 
 def sales_missing_receipt(db: Session, *, shift: Shift) -> list[UUID]:
