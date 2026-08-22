@@ -307,7 +307,8 @@ Per-phase landing schedule:
 | 8 | `attachments` | **Yes** — no parent shift |
 | 9 | `credit_customers` | **Yes** |
 | 9 | `credit_sales`, `credit_repayments` | No — derivable via `shift_id` |
-| 10 | `bank_deposits` | No — derivable via `shift_id` |
+| 10 | `non_fuel_sales`, `bank_deposits` | No — derivable via `shift_id` |
+| 10 | `salesman_shortfalls`, `salesman_shortfall_settlements` | No — derivable via `shift_id` |
 | 10 | `daily_cash_summaries` | **Yes** |
 | ~~11~~ | ~~`audit_logs`~~ | Built in Phase 4 instead — see the row above |
 
@@ -702,27 +703,153 @@ collections and deposits are also cash flows)
 > IS NOT NULL AND amount < 0)`. Strict, not `>=`/`<=` — unlike a cash collection, a ₹0
 > expense records nothing and has no reason to exist.
 
+**`non_fuel_sales`** — lubricants, coolant, and anything else sold that no meter counts.
+**Phase 10 amendment** — §6.4 named `other_cash_income` from the beginning and §5.2 never
+gave it a column. This is that column, and it is per shift.
+- `shift_id` — FK
+- `amount` — NUMERIC(12,2). §6.9's sign rule, as below
+- `description` — text nullable
+- `reverses_id` — FK to `non_fuel_sales.id`, nullable, **unique**
+- `reversal_reason` — text, nullable, required (and non-blank) when `reverses_id` is set
+- No `outlet_id` — derivable via `shift_id`, per §5.0's rule
+
+> **Per shift, not per day**, even though §13.2 calls this "a manual entry field". A ₹500
+> bottle of oil is in the salesman's hand and **not** in the meter-derived figure, but it *is*
+> in the cash he counts into the locker. Compare derived fuel cash against his declaration
+> without it and he shows a ₹500 **surplus** every day he sells one — a phantom in his name.
+> The figure has to sit beside the declaration it is checked against, which is the shift.
+>
+> **It is added to `total_sales`, never to the cash side** — see §6.4's worked example. A
+> card-paid oil sale is already inside the card collections total, so putting it on the cash
+> side understates derived cash by exactly its amount.
+>
+> **Still not an itemised sales module (§12, §13.2).** An amount and an optional note. No
+> product catalogue, no stock, no unit price. It is a table rather than a column on `shifts`
+> only because it is a money row, and §6.9 says a money row is corrected by a reversal — and
+> you cannot reverse a column.
+
 **`bank_deposits`**
 - `shift_id` — FK
-- `business_date` — DATE
-- `amount` — NUMERIC(12,2)
+- `business_date` — DATE. **Set server-side from the shift**, never accepted from a client
+- `amount` — NUMERIC(12,2). §6.9's sign rule, as below
 - `bank_reference` — text nullable
 - `attachment_id` — FK nullable (deposit slip)
+- `reverses_id` — FK to `bank_deposits.id`, nullable, **unique**. **Phase 10 amendment**
+- `reversal_reason` — text, nullable, required (and non-blank) when `reverses_id` is set.
+  **Phase 10 amendment**
+- No `outlet_id` — derivable via `shift_id`, per §5.0's rule
+
+> **`business_date` is derivable from the shift and is written anyway**, which reads like a
+> breach of §5.0's own rule until you notice §5.0 is about *tenancy* columns with no correct
+> backfill. This one has a correct backfill, so it is kept for the reason §5.2 keeps
+> `expected_closing`: a deposit is filed against a trading day, and reading that through a
+> join every time makes the most-queried column on the table the one you cannot index
+> directly. **§3 rule 7 still applies** — the server recomputes it from
+> `shifts.business_date` and refuses to take the client's word for it, so the two cannot
+> drift.
+
+**`salesman_shortfalls`** — what a salesman owes because the drawer came up short.
+**Phase 10.** See §13.14 for why this is not a `credit_sale`.
+- `shift_id` — FK — the shift whose reconciliation produced it
+- `salesman_id` — FK to **`user_profiles`**, NOT NULL. **Never a `credit_customer_id`**
+- `amount` — NUMERIC(12,2). §6.9's sign rule, as below
+- `computed_gap` — NUMERIC(12,2), NOT NULL — what the system calculated at the moment of
+  booking, stored beside what the human actually booked
+- `reason` — text, NOT NULL, non-blank
+- `reverses_id` / `reversal_reason` — §6.9's shape
+- No `outlet_id` — derivable via `shift_id`
+
+> **`salesman_id` is not a payload field.** It is read from `shifts.attendant_id`, which §5.2
+> already defines as *"the one person accountable for this shift's cash… exactly one name
+> carries the drawer, and a shortfall is booked against it."* Accepting it from a client would
+> let a typo put a debt on the wrong person's name, and there is no second source of truth to
+> catch that.
+>
+> **A shortfall is booked by a human, never automatically.** The system computes the gap and
+> shows it; a manager books it with a mandatory reason. §4.7's argument applies with more
+> force here than anywhere else in this document — *"an assumed opening converts theft into a
+> debt owed by someone who did nothing wrong"* — because here the debt is explicit and
+> carries a name. A ₹500 gap is more often a mistyped reading, a forgotten UPI figure or an
+> unrecorded udhaar slip than it is theft, and the software must not be the thing that
+> decides.
+>
+> **`computed_gap` and `amount` are both stored, and may differ.** A manager may know part of
+> the gap is a slip he has already corrected. A divergence **logs a warning and writes** — it
+> never refuses, for the reason §6.8 gives about close preconditions: refusing a human's
+> judgement sends the correction outside the system, where nothing can see it. Storing both
+> is §4.7's predict-and-confirm shape again: the system's figure and the human's, side by
+> side, with the disagreement legible.
+
+**`salesman_shortfall_settlements`** — a salesman paying back what he owed. **Phase 10.**
+- `shift_id` — FK — the shift during which the money physically arrived
+- `salesman_id` — FK to `user_profiles`, NOT NULL
+- `amount` — NUMERIC(12,2). §6.9's sign rule, as below
+- `reverses_id` / `reversal_reason` — §6.9's shape
+- No `outlet_id` — derivable via `shift_id`
+
+> **The shape is `credit_sales` / `credit_repayments`, deliberately.** A shortfall is a debt
+> and a settlement pays it down, which is the same question udhaar already answers, so:
+>
+> ```
+> outstanding(salesman) = SUM(salesman_shortfalls.amount)
+>                       − SUM(salesman_shortfall_settlements.amount)
+> ```
+>
+> Summed over **every** row, reversals included — they carry negative amounts and net out.
+> **Computed, never stored.** §6.6's rule and the reasoning that deleted
+> `credit_sales.is_settled` both transfer verbatim, and §14's guardrail against a
+> denormalised running total covers this table too.
+>
+> A settlement points at the **salesman**, not at a particular shortfall — §5.2's reason for
+> `credit_repayments`: one payment covering part of three debts has no honest per-row answer.
+>
+> **No `mode` column, and every settlement is cash.** The owner's answer was that a shortfall
+> is repaid in cash — not written off, not deducted from wages. A `mode` column added later
+> backfills to `'cash'` for every existing row *correctly*, because every existing row
+> genuinely is cash, so by §5.0's own derivability rule it can wait rather than being guessed
+> at now (§11's rule against scaffolding ahead). **The consequence is recorded in §13.15**:
+> until that column exists there is no way to close out a ₹20 gap nobody will ever chase.
 
 **`daily_cash_summaries`** — one row per outlet per `business_date`
 - `outlet_id` — FK to outlets, NOT NULL
 - `business_date` — DATE; unique per outlet — `(outlet_id, business_date)`
 - `opening_balance` — NUMERIC(12,2)
+- `opening_balance_source` — enum: `seeded` | `counted` | `carried` (§6.5). **Phase 10**
 - `expected_closing` — NUMERIC(12,2) — **the figure the system computed and showed**
 - `actual_counted` — NUMERIC(12,2), nullable
 - `variance` — NUMERIC(12,2), generated as `actual_counted - expected_closing`
 - `is_finalised` — boolean
+- `finalised_by`, `finalised_at` — nullable. **Phase 10**, mirroring `shifts.closed_by`
+- `requires_review`, `review_note` — §13.10's flag, for a shift reopened beneath a finalised
+  day. **Phase 10**
 - `notes` — text nullable
+- **The component snapshot** — `metered_fuel_sales`, `non_fuel_sales_total`, `card_total`,
+  `upi_total`, `wallet_total`, `credit_sales_total`, `cash_credit_repayments`,
+  `cash_shortfall_settlements`, `cash_expenses`, `bank_deposits_total`, `shortfalls_booked`,
+  each NUMERIC(12,2) NOT NULL. **Phase 10**
 
 > **Why store `expected_closing` rather than always recomputing?**
 > If a calculation bug is fixed six months from now, you still need to know what the
 > system told the manager *on that day*. A recomputed-on-read figure destroys that record.
 > This is deliberate, not redundant storage.
+
+> **And why store every term, not just the total.** Every word of the paragraph above applies
+> to the components. A manager looking at a ₹300 variance needs the breakdown **as it stood**,
+> not as recomputed six months later after a reversal landed underneath it — otherwise the
+> total and its own explanation disagree, and the explanation is the part he can check. It is
+> also the only way to answer *which* term moved when two days are compared.
+
+> **Finalising is terminal, and requires every shift on the date to be `locked`.** Creating
+> the row requires them all `closed` or `locked` (409 `DAY_HAS_OPEN_SHIFTS`); setting
+> `is_finalised` requires `locked` (409 `DAY_NOT_LOCKED`). §6.5 chains days together, so a
+> stale `expected_closing` does not stay local — it propagates into every opening balance
+> after it. §5.2 already says nothing referencing a `locked` shift may be modified and §6.8
+> makes `locked` terminal, so that is the only state in which the snapshot is guaranteed to
+> stay true. It inherits §6.7's quality gate for free: a shift cannot lock while a flagged
+> expense is unreviewed.
+>
+> An admin may **unfinalise** with a mandatory reason, audit-logged — §6.8's shift-reopen
+> shape. A finalised summary is otherwise immutable (409 `SUMMARY_FINALISED`).
 
 ### 5.3 Supporting tables
 
@@ -795,12 +922,19 @@ never a raw URL string. Single authoritative representation of file knowledge (D
 
 ### 5.4 Relationship summary in plain English
 
-- A **shift** has many nozzle readings, collections, credit sales, expenses, deposits.
+- A **shift** has many nozzle readings, collections, credit sales, expenses, deposits,
+  non-fuel sales and shortfalls.
 - A **nozzle reading** belongs to exactly one shift and one nozzle.
 - A **credit sale** belongs to one shift, one customer, and **must** have one attachment.
 - A **credit repayment** belongs to one customer and the shift in which cash arrived.
 - An **expense** belongs to one shift and may have one attachment.
-- A **daily cash summary** aggregates one business date across both shifts.
+- A **non-fuel sale** belongs to one shift and nothing else — it has no product record (§13.2).
+- A **salesman shortfall** belongs to one shift and one `user_profiles` row — **never** a
+  credit customer (§13.14). A **settlement** belongs to one salesman and the shift in which
+  the cash arrived.
+- A **daily cash summary** aggregates one business date across **every** shift on it — one at
+  this outlet, three at a 24-hour one. (This line used to say "both shifts"; §4.7 removed the
+  two-shift assumption and the sentence survived it.)
 - Everything financial points to the user who created it and appears in `audit_logs`.
 
 ---
@@ -888,18 +1022,43 @@ a property of these particular trading hours, not a general guarantee: a 24-hour
 02:00–10:00 shift straddles 06:00 and the approximation applies in full. Do not delete the
 warning on the strength of the local case.
 
+**Valuation and profit are separable, and §6.4 needs only the first. Phase 10 amendment.**
+`sale_value` needs `rate_at`; `dealer_profit` needs `margin_at`. They are different questions
+with different reference data behind them, and a caller that wants one **must not be refused
+because the other is missing**.
+
+This is not hypothetical. Petrol and diesel dealer commissions have never been entered at this
+outlet (§14's open questions), so `margin_at` raises 409 `NO_MARGIN_FOR_DATE` for both. A cash
+engine that priced a shift through a single function computing both figures would refuse to
+reconcile **every petrol day**, on day one, because of a reference-data gap that has nothing
+to do with cash.
+
+§6.8 already settled this shape for close preconditions — *"a close precondition that
+inherited that would make every petrol shift unclosable because of a reference-data gap, which
+is a very confusing way to be told about a missing margin."* Reconciling the drawer is the
+same argument, one phase later. So the shift valuation takes a flag for whether profit is
+wanted; when it is not, no margin is looked up at all, and `margin_per_unit` / `dealer_profit`
+come back as `None` — **never `0`**, which would be a plausible-looking figure and completely
+wrong (§4.6, §13.7).
+
+**A missing *price* still refuses.** A day valued at zero reconciles to a cash surplus nobody
+can explain, and §5.1's helpers are right to raise rather than return null or zero.
+
 ### 6.4 Cash flow engine
 
 ```
+total_sales       = metered_fuel_sales + non_fuel_sales
+
 cash_sales        = total_sales − card_collections − upi_collections
                                  − wallet_collections − credit_sales_amount
 
 expected_closing  = opening_balance
                   + cash_sales
                   + cash_credit_repayments      ← settlements received in cash
-                  + other_cash_income           ← non-fuel sales (V1: manual entry)
+                  + cash_shortfall_settlements  ← a salesman paying back what he owed
                   − cash_expenses
                   − bank_deposits
+                  − shortfalls_booked           ← what a salesman owes instead of holding
 
 variance          = actual_counted − expected_closing
 ```
@@ -918,20 +1077,86 @@ variance          = actual_counted − expected_closing
   equation, the same way a `card`/`upi`/`wallet` collection contributes nothing to
   `cash_sales` except through the subtraction already shown.
 
+> **`other_cash_income` was renamed and moved, Phase 10.** It read
+> `+ other_cash_income ← non-fuel sales (V1: manual entry)`, on the *cash* side. That is
+> only correct when every non-fuel sale is paid in cash, and it is silently wrong otherwise.
+>
+> Take a ₹500 bottle of oil paid by **card**, on a day of ₹95,000 metered fuel, ₹20,500 on
+> the card machine (₹20,000 fuel + the oil), ₹10,000 UPI and ₹5,000 udhaar. The salesman
+> actually holds ₹60,000. The old wording gives
+> `95,000 − 20,500 − 10,000 − 5,000 = 59,500`, plus ₹0 of *cash* oil income — **₹59,500,
+> understated by exactly the card-paid oil**. Adding it to `total_sales` instead gives
+> `(95,000 + 500) − 20,500 − 10,000 − 5,000 = ₹60,000`.
+>
+> The sales-side form is also right in the all-cash case —
+> `(95,000 + 500) − 20,000 − 10,000 − 5,000 = ₹60,500`, which is what he holds. **It is
+> correct regardless of how the non-fuel sale was paid**, which is why it needs no mode
+> column of its own: the collections rows already record how the money arrived.
+
+> **Why `shortfalls_booked` is subtracted, Phase 10.** Without it the same money is an asset
+> twice. Monday's meters imply Ramesh should hand over ₹50,000; he declares ₹49,500; a
+> manager books ₹500 as udhaar against his own name (§14). The locker physically gains
+> ₹49,500 — but this equation adds the **derived** ₹50,000, so `expected_closing` says
+> ₹50,000 and Tuesday opens ₹500 rich. That ₹500 is now both Ramesh's debt *and* cash that is
+> not in the locker, and every count from then on is off by it with nothing to explain why.
+>
+> `derived − shortfall` is algebraically identical to the declared figure, which is the
+> reassurance that this is arithmetic rather than a fudge. It is written as a **subtraction**
+> deliberately: §14 forbids summing the `cash` collection row into a derived figure, and this
+> form means the equation **never reads that row at all**. The `cash` row stays what §5.2
+> says it is — the independent observation the derived figure is checked against.
+>
+> **When no shortfall is booked, nothing is subtracted.** The gap then resurfaces at the next
+> physical count as a variance with nobody's name on it. That is the correct outcome of a
+> manager choosing not to book, not a hole — §4.7's principle that the abnormal day becomes
+> visible rather than reassigned.
+
 ### 6.5 Rolling balance
 
 `opening_balance` for day N = `expected_closing`... **no.**
 
-`opening_balance` for day N = **`actual_counted`** of day N−1.
+`opening_balance` for day N = **`actual_counted`** of day N−1 — **whenever day N−1 was
+actually counted.**
 
 This is important and easy to get wrong. The physical cash actually in the drawer is
 what carries forward, not the theoretical figure. Otherwise a ₹200 shortage on Monday
 silently disappears instead of being visible in Monday's variance and absent from
 Tuesday's opening.
 
-- If day N−1 has no `actual_counted`, day N cannot be finalised. Return 409 with
-  code `PRIOR_DAY_NOT_RECONCILED`.
+**But this outlet has a locker, not a drawer, and nobody counts it nightly.** §14 records the
+answer to "who physically counts the cash, and at what time?": *there is no fixed counting
+moment.* The salesman reconciles his own shift, puts the cash in the locker, and the locker
+carries a running balance that rolls forward on any day with no bank deposit. So on most days
+`actual_counted` is null — and the original rule, which refused to finalise a day whose
+predecessor had no count, would have blocked **every day forever**.
+
+The rule is therefore stated in full as:
+
+```
+opening_balance(day N) = actual_counted(day N−1)      if day N−1 was counted
+                       = expected_closing(day N−1)    if it was not
+                       = <admin-seeded figure>        if there is no day N−1 at all
+```
+
+This is **§4.7's chain applied to money**: the system predicts, a human occasionally
+confirms, **both values are stored**, and a disagreement is recorded rather than absorbed.
+The paragraph above survives intact, because on every day a physical figure exists it is
+still the one that wins. A physical count is an occasional **audit that re-anchors the
+chain**, exactly as a confirmed meter reading re-anchors §4.7's.
+
+- **`PRIOR_DAY_NOT_RECONCILED` (409) keeps its code and narrows its meaning**: day N cannot
+  be finalised while day N−1 exists and is not finalised. It no longer fires merely because
+  nobody counted.
 - The very first day requires a manually seeded opening balance (admin-only, one-time).
+  **The anchor is that first summary row itself, not a separate record** — §4.7's argument
+  transplanted. When no prior summary exists, `opening_balance` becomes a *required* payload
+  field and the caller must be an admin (403 `OPENING_BALANCE_REQUIRES_ADMIN` otherwise).
+  Supplying one when a prior day *does* exist is refused with 409
+  `OPENING_BALANCE_IS_CHAINED` — the figure is derived, not typed. A separate seed table
+  would duplicate a value that already lives on that first row, and the two copies would
+  eventually disagree about where the locker started.
+- `daily_cash_summaries.opening_balance_source` records which of the three branches produced
+  the figure, so a reader never has to infer it from the previous row.
 
 ### 6.6 Udhaar (credit) rules
 
@@ -1248,6 +1473,7 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | Action | attendant | manager | admin |
 |---|:--:|:--:|:--:|
 | Create readings/collections/expenses/credit sales/repayments on an open shift | own only | any | any |
+| Record a non-fuel sale on an open shift (§6.4) | own only | any | any |
 | Upload a receipt against an open shift (§7.2) | own only | any | any |
 | Read a receipt's signed URL (§7.3) | own only | any | any |
 | Read own shift | ✅ | ✅ | ✅ |
@@ -1259,7 +1485,12 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | Close a shift | ❌ | ✅ | ✅ |
 | Record bank deposits | ❌ | ✅ | ✅ |
 | Review flagged expenses | ❌ | ✅ | ✅ |
+| Read a shift's cash position (§6.4) — it is a report, not a data-entry sheet | ❌ | ✅ | ✅ |
+| Book a salesman shortfall, or record a settlement (§13.14) | ❌ | ✅ | ✅ |
+| Read the shortfall ledger / who owes what | ❌ | ✅ | ✅ |
+| Create or update a daily cash summary, incl. `actual_counted` | ❌ | ✅ | ✅ |
 | Lock a shift / finalise a day | ❌ | ❌ | ✅ |
+| Unfinalise a day (mandatory reason, audit-logged) | ❌ | ❌ | ✅ |
 | Enter fuel prices and margins | ❌ | ❌ | ✅ |
 | Manage fuel types (add a new product, e.g. XP-95) | ❌ | ❌ | ✅ |
 | Manage expense categories, incl. `requires_receipt` (§5.1, §6.11) | ❌ | ❌ | ✅ |
@@ -1338,9 +1569,49 @@ test suite would give false confidence about exactly the rules that matter most.
 
 *Cash*
 - Full expected-cash calculation with every term non-zero
-- Cash udhaar repayment increases expected cash; UPI repayment does not
-- Rolling balance uses prior day's **actual counted**, not expected
+- Cash udhaar repayment increases expected cash; UPI repayment does not; `bank_transfer`
+  does not
+- A `cash` expense reduces expected cash; a `card` / `upi` / `bank_transfer` expense does not
+- Rolling balance uses prior day's **actual counted**, not expected, **whenever a count
+  exists** (§6.5)
+- With no prior count, the opening carries from the prior day's `expected_closing` and
+  `opening_balance_source = carried`
+- A count that disagrees **re-anchors**: the next day opens at the counted figure and
+  `opening_balance_source = counted`
+- The very first day requires an admin-seeded opening; a manager is refused 403
+  `OPENING_BALANCE_REQUIRES_ADMIN`; supplying one when a prior day exists → 409
 - Day N cannot finalise if day N−1 is unreconciled → 409
+- `variance` is NULL when nothing was counted, and is never auto-corrected into
+  `expected_closing`
+- **A ₹200 shortage on Monday appears in Monday's variance and is absent from Tuesday's
+  opening** — §6.5's worked example, as a test
+- Creating a summary with an open shift on that date → 409; finalising with a merely *closed*
+  shift → 409 (§5.2)
+- A shift reopened beneath a finalised day **flags** it and leaves `expected_closing`
+  byte-identical (§13.10)
+- A day containing petrol with a price but **no margin** reconciles end to end — no
+  `NO_MARGIN_FOR_DATE` anywhere in the cash path (§6.3)
+- A **missing price** still refuses; `price_only` leaves profit as `None`, never `0`
+
+*Non-fuel sales*
+- A **cash** non-fuel sale raises expected cash by its amount
+- A **card-paid** non-fuel sale leaves expected cash unchanged, and the salesman shows **no
+  phantom surplus** (§6.4's worked example)
+- Removing the non-fuel row makes the salesman look short by exactly that amount
+- A non-fuel sale is reversible under §6.9 and the reversal nets out of the day
+
+*Shortfalls*
+- The cash position endpoint returns every term and the gap, and **writes nothing**
+- A shortfall is attributed to `shifts.attendant_id`; a client-supplied salesman is refused
+- Booking an amount different from `computed_gap` succeeds and **logs a warning**
+- **A booked shortfall reduces `expected_closing` by exactly its amount** (§6.4)
+- An **unbooked** gap does not reduce it, and resurfaces at the next count
+- `outstanding(salesman)` correct after a partial settlement, a reversed shortfall, and a
+  reversed settlement
+- A settlement larger than outstanding is accepted; the balance goes negative
+- A cash settlement increases expected cash on the shift it arrived in
+- **A shortfall is never a `credit_sale`** — no `credit_customer` row is created, and §14's
+  guardrail comment is still present in the credit router
 
 *Credit*
 - Credit sale with no `attachment_id` → rejected
@@ -1540,13 +1811,31 @@ future reader must be able to tell the difference.
     The failure is a limit exceeded by one sale, not money lost or double-counted, and it is
     visible in the very next balance read. Revisit if an outlet ever runs concurrent
     drawers — the same change that needs a drawer concept needs this lock.
-14. **Salesman cash shortfalls are not credit sales, and are not modelled in Phase 9.**
+14. **Salesman cash shortfalls are their own record type, never credit sales.**
     This outlet books a shortfall as udhaar against the salesman's own name (§14), but a
     shortfall is the *outcome of a reconciliation*, not a sale: it has no receipt to satisfy
     `credit_sales.attachment_id`, and putting it there would pollute a real customer's
-    outstanding balance with staff debt. It gets its own record type in **Phase 10**, where
-    §6.4's reconciliation is what actually produces one. Until then a shortfall is visible
-    only as §6.4's variance. §5.2, §12
+    outstanding balance with staff debt — nobody could answer "what does this customer owe
+    me" again. **Phase 10 builds `salesman_shortfalls` and
+    `salesman_shortfall_settlements`** (§5.2), pointing at `user_profiles`, in the
+    `credit_sales`/`credit_repayments` shape. Phase 9 deliberately built neither, because
+    §6.4's reconciliation is the only thing that produces one and it did not exist yet (§11's
+    rule against scaffolding ahead). §5.2, §6.4, §12
+
+15. **A shortfall cannot be written off in V1, only repaid in cash.** The owner's answer was
+    that a salesman repays a shortfall in cash — not deducted from wages, not written off. So
+    `salesman_shortfall_settlements` has no `mode` column and every row reaches §6.4's drawer.
+    **The consequence: a ₹20 gap nobody will ever chase stays on that salesman's outstanding
+    balance permanently, and the balance only ever grows.** Recorded here as a known
+    limitation rather than discovered later as a puzzle. The fix is a `mode` column and a
+    filter, and it is cheap while the table is small. §5.2
+
+16. **The daily summary is a snapshot, and a reopened shift flags it rather than moving it.**
+    §13.10's rule, one table further on. An admin reopening a shift beneath a finalised day
+    marks the summary `requires_review` with a note naming the shift; `expected_closing` and
+    every stored component are left exactly as they were. Recomputing would be the silent
+    rewrite §5.2 stores `expected_closing` to prevent, and §6.5 chains days, so the rewrite
+    would not stay local. §5.2, §6.5, §13.10
 
 ---
 
@@ -1604,8 +1893,34 @@ to occur on this specific project.
 - **Book a salesman's cash shortfall as a `credit_sale`.** It is a reconciliation outcome,
   not a sale; it has no receipt to satisfy that table's `NOT NULL`; and it would mix staff
   debt into a real customer's outstanding balance, so nobody could answer "what does this
-  customer owe me" again. Phase 10 gives shortfalls their own record type (§13.14)
-- **Maintain a denormalised outstanding balance**, on the customer row or anywhere else.
+  customer owe me" again. Shortfalls have their own record type, `salesman_shortfalls`,
+  pointing at `user_profiles` (§5.2, §13.14)
+- **Book a shortfall automatically at shift close.** The system computes the gap and shows
+  it; a *human* books it, with a reason. §4.7's argument applies with more force here than
+  anywhere else in this document, because here the debt is explicit and carries a name: a
+  ₹500 gap is more often a mistyped reading, a forgotten UPI figure or an unrecorded udhaar
+  slip than it is theft, and the software must not be the thing that decides (§5.2)
+- **Take `salesman_id` from the client.** It is read from `shifts.attendant_id` — the one
+  name §5.2 says carries the drawer. A client-supplied value lets a typo put a debt on the
+  wrong person, with no second source of truth to catch it (§5.2)
+- **Forget §6.4's `− shortfalls_booked` term.** Without it a booked shortfall is an asset
+  twice over — the salesman's debt *and* cash the locker does not hold — and every count
+  after it is wrong by that amount with nothing to explain why (§6.4)
+- **Add non-fuel income to the cash side of §6.4.** It belongs in `total_sales`. On the cash
+  side, a card-paid oil sale understates derived cash by exactly its amount, because the
+  collections row already counted it (§6.4)
+- **Carry day N's opening from `expected_closing` when day N−1 was actually counted.** The
+  count wins whenever there is one; §6.5 exists precisely so a ₹200 shortage does not vanish
+  into the next day's opening. Carrying the arithmetic forward is the fallback for the days
+  nobody counted, never the default (§6.5)
+- **Recompute a finalised day's `expected_closing`** when a shift beneath it is reopened.
+  Flag it (§13.16). Recomputing is the silent rewrite §5.2 stores the figure to prevent, and
+  §6.5 chains days so it would not stay local
+- **Read `margin_at` on the cash path.** §6.4 needs the price, not the margin, and petrol and
+  diesel margins have never been entered here — a cash engine that looked one up would refuse
+  to reconcile every petrol day (§6.3)
+- **Maintain a denormalised outstanding balance**, on the customer row, a salesman row, or
+  anywhere else.
   §6.6 says compute it, and Phase 9 deleted `credit_sales.is_settled` for exactly this
   reason — a stored total drifts, and a stored per-row flag has no honest value once one
   repayment covers part of three bills (§5.2)
