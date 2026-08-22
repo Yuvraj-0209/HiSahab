@@ -423,13 +423,30 @@ Dispensers are deliberately *not* a separate table in V1 (YAGNI — a label suff
 >
 > This outlet has one row: sequence 1, 06:00 → 22:00. A 24-hour outlet has three.
 
-**`credit_customers`**
+**`credit_customers`** — who may take udhaar, **admin-managed**. **Phase 9 amendment.**
 - `outlet_id` — FK to outlets, NOT NULL
-- `name` — text
-- `phone` — text
-- `vehicle_numbers` — text[] (nullable)
-- `credit_limit` — NUMERIC(12,2), nullable (null = no limit)
+- `name` — text, NOT NULL, non-blank
+- `phone` — text, **NOT NULL**
+- `vehicle_numbers` — text[] (nullable), normalised upper-case
+- `credit_limit` — NUMERIC(12,2), nullable (null = no limit, **never read as zero**)
 - `is_active` — boolean
+- Unique constraint on `(outlet_id, phone)`
+
+> **Why `phone` is the natural key.** §6.7's argument about `Tea`/`tea`/`chai ` transfers
+> intact: two rows for one person split one real balance across two ledgers, and §6.6's
+> credit limit then never fires against either. Names genuinely collide — a pump has three
+> customers called Ramesh — and phone numbers do not, which is why the constraint is on the
+> phone rather than the name. This is the same middle ground `expense_categories.code`
+> occupies: open to new rows, closed to accidental duplicates.
+>
+> No `code` column, unlike `fuel_types` and `expense_categories`. A customer is not a label
+> an aggregate is grouped by, so `^[A-Z][A-Z0-9_]*$` has nothing to protect here.
+>
+> **Deactivation is asymmetric, and deliberately so.** A deactivated customer refuses a new
+> **credit sale** (409 `CREDIT_CUSTOMER_INACTIVE`) but still **accepts a repayment**. You
+> deactivate somebody precisely to stop the debt growing while they pay off what they owe;
+> refusing their money would be backwards, and would leave a balance nothing can ever clear.
+> Historical rows keep reading and reporting either way (§3 rule 6).
 
 **`expense_categories`** — what an expense can be filed under, **admin-managed**.
 **Phase 8 amendment** — replaces the `expense_category` enum.
@@ -567,8 +584,35 @@ unambiguous: there is always exactly one closing reading to carry forward.
 - `vehicle_number` — text nullable
 - **`attachment_id` — FK to `attachments`, `NOT NULL`** ← the receipt constraint,
   enforced at the database level, not in application code and not in JavaScript
-- `is_settled` — boolean, default false (derived convenience flag; the authoritative
-  outstanding figure comes from repayments — see §6.6)
+- `limit_override_reason` — text, nullable. **Phase 9 amendment** — §6.6's admin override,
+  required (and non-blank) whenever the sale was allowed past `credit_limit`
+- `reverses_id` — FK to `credit_sales.id`, nullable, **unique**. **Phase 9 amendment**
+- `reversal_reason` — text, nullable, required (and non-blank) when `reverses_id` is set.
+  **Phase 9 amendment**
+- ~~`is_settled`~~ — **removed in Phase 9.** See below
+
+> **Why `is_settled` is gone.** It was described here as a "derived convenience flag" while
+> §6.6, two sections down, says to compute outstanding from repayments and explicitly warns
+> against a denormalised running total because *"it will drift"*. Those two sentences could
+> not both be obeyed. Worse, the flag has no non-arbitrary value: a customer with three open
+> bills who pays a third of the total has settled *which* rows? Any answer is an invention,
+> and every answer is rewritten the moment a reversal lands. "Fully settled" is
+> `outstanding == 0`, derived, and that is the only form of the question with an answer.
+
+> **The `NOT NULL` on `attachment_id` survives §6.9 intact, via inheritance.** A reversal is
+> a new row, so a bare `NOT NULL` would appear to demand a receipt for a cancellation — the
+> exact thing §6.11 refuses to do for expenses, since a cancellation is not a spend and there
+> is nothing to photograph. `expenses` escapes through a CHECK that exempts reversals; **that
+> escape is deliberately not copied here.** This column is stated as `NOT NULL` *at the
+> database level* in two places, as the belt to the API's braces, and weakening it to a CHECK
+> would take the receipt control off genuine customer credit sales to solve a problem
+> inheritance already solves.
+>
+> So a `credit_sales` reversal — and its replacement, if any — **carries the original's
+> `attachment_id`**, exactly as an expense's replacement already does (§5.3). §5.3's
+> one-attachment-one-*live*-row rule still holds throughout: the original is reversed and so
+> not live, the reversal is itself a reversal and so not live, and the replacement is the
+> single live claimant. `link()` is not called again for either.
 
 **`credit_repayments`**
 - `credit_customer_id` — FK
@@ -576,6 +620,26 @@ unambiguous: there is always exactly one closing reading to carry forward.
 - `amount` — NUMERIC(12,2)
 - `mode` — enum: `cash` | `card` | `upi` | `bank_transfer`
 - `attachment_id` — FK nullable
+- `reverses_id` — FK to `credit_repayments.id`, nullable, **unique**. **Phase 9 amendment**
+- `reversal_reason` — text, nullable, required (and non-blank) when `reverses_id` is set.
+  **Phase 9 amendment**
+
+> **`mode` is its own Postgres type, `credit_repayment_mode`** — not `collection_mode`
+> (which has `wallet` and no `bank_transfer`) and not `expense_mode`, whose labels happen to
+> match today. Sharing a type would force a later phase to alter a live enum or carry a value
+> meaningless to one of its users; §5.2 already makes this argument for `collections`.
+>
+> **Only `mode = cash` repayments enter §6.4's equation.** A customer settling by bank
+> transfer moves no money through the drawer, and adding it to expected cash would invent a
+> shortfall on the day they pay.
+
+> **Both credit tables carry §6.9's reversal shape** (`reverses_id` unique, a mandatory
+> non-blank reason, the strict sign rule `(reverses_id IS NULL AND amount > 0) OR
+> (reverses_id IS NOT NULL AND amount < 0)`), for the reason §6.9 gives generally and one
+> specific to this outlet: §4.7 says the whole day is typed in **after the fact**, so a
+> mistyped udhaar discovered once the shift is closed is the *normal* case here, not an edge
+> one. Strict `>` / `<` rather than `>=` / `<=`, matching `expenses`: a ₹0 udhaar records
+> nothing and has no reason to exist.
 
 **`expenses`** (renamed from `cash_flows` — the old name was ambiguous, since
 collections and deposits are also cash flows)
@@ -877,9 +941,35 @@ Tuesday's opening.
   can bypass JavaScript, but not a database constraint.
 - Outstanding balance for a customer = `SUM(credit_sales.amount) − SUM(credit_repayments.amount)`.
   Compute it; do not maintain a denormalised running total in V1 (it will drift).
-- If `credit_limit` is set and a new sale would exceed outstanding + amount, reject with
-  409, code `CREDIT_LIMIT_EXCEEDED`. Admin may override; the override is audit-logged
-  with a mandatory reason.
+  **Sum every row, reversals included** — they carry negative amounts and net out on their
+  own. Do not filter to "live" rows here: a reversal that has not yet been replaced must show
+  as the reduction it is, which is the same convention `totals_by_category_range` follows.
+- **Outstanding may legitimately be negative.** A customer who pays in advance, or overpays
+  a bill by rounding up, is owed money by the pump. A repayment larger than the outstanding
+  balance is **accepted**, not refused. Recorded here so it reads as a decision rather than
+  an oversight the first time someone sees a minus sign.
+- **The credit limit check, stated unambiguously** (the original wording — "a new sale would
+  exceed outstanding + amount" — inverted the comparison):
+
+  ```
+  if credit_limit is not None and outstanding + amount > credit_limit:
+      -> 409 CREDIT_LIMIT_EXCEEDED
+  ```
+
+  **Strictly `>`**, matching §6.7's and §6.11's boundary convention: landing exactly on the
+  limit is allowed, one paisa over is not. **`credit_limit IS NULL` means no limit** and must
+  never be coerced to `0` — that would refuse every sale to an unlimited customer.
+- **An admin may override the limit**, and the mandatory reason is stored on the row
+  (`credit_sales.limit_override_reason`) **as well as** being audit-logged. A non-admin
+  supplying one is refused with 403 `LIMIT_OVERRIDE_REQUIRES_ADMIN`.
+
+  > Stored on the row, not audit-only. §14 already settled this argument for the analogous
+  > manual-quantity override: *"`override_reason` is mandatory in the database, so it can
+  > never be an unexplained number."* Nothing reads `audit_logs` at report time; a column is
+  > visible next to the figure it explains.
+- **The limit check is not serialised.** Two sales issued in the same instant can both read
+  the same outstanding balance and both pass. See §13.13 — this is a known approximation with
+  a stated reason, not an omission.
 
 ### 6.7 Expense review flagging
 
@@ -960,6 +1050,20 @@ Corrections create a **reversal entry**: a new row with the negated amount, a
 
 This is how double-entry accounting has worked for 600 years and it is the only way
 to answer "who changed this, when, and what was it before".
+
+**Tables carrying this shape**, one more per phase: `collections` (6), `expenses` (7),
+`credit_sales` and `credit_repayments` (9). Every one of them brings a
+`uq_<table>_reverses_id` whose only job is to lose a concurrent double-reversal loudly —
+**and every one of them must have an entry in `app/core/errors.py::_CONSTRAINT_ERRORS`**, or
+the losing caller gets an opaque 500 and cannot tell whether their reversal landed. This has
+now been forgotten twice (Phase 6 on `collections`, Phase 7 on `expenses`), which is why
+`tests/test_errors.py` asserts it structurally against `pg_constraint` rather than trusting
+anyone to remember. Phase 9 widened that test past reversals to **every** check-then-insert
+unique constraint, which is the real bug class.
+
+**A `credit_sales` reversal inherits the original's `attachment_id`** rather than needing a
+receipt of its own — see §5.2. A cancellation is not a spend, and §6.11 already refuses to
+demand a photograph for one.
 
 ### 6.10 Idempotency
 
@@ -1143,13 +1247,15 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 
 | Action | attendant | manager | admin |
 |---|:--:|:--:|:--:|
-| Create readings/collections/expenses/credit sales on an open shift | own only | any | any |
+| Create readings/collections/expenses/credit sales/repayments on an open shift | own only | any | any |
 | Upload a receipt against an open shift (§7.2) | own only | any | any |
 | Read a receipt's signed URL (§7.3) | own only | any | any |
 | Read own shift | ✅ | ✅ | ✅ |
 | Read all shifts / reports | ❌ | ✅ | ✅ |
 | Read the month-end expense summary | ❌ | ✅ | ✅ |
 | List expense categories (to fill a dropdown) | ✅ | ✅ | ✅ |
+| List credit customers (to fill a dropdown — **name and vehicles only**, §9) | ✅ | ✅ | ✅ |
+| Read one customer's detail, outstanding balance, or ledger | ❌ | ✅ | ✅ |
 | Close a shift | ❌ | ✅ | ✅ |
 | Record bank deposits | ❌ | ✅ | ✅ |
 | Review flagged expenses | ❌ | ✅ | ✅ |
@@ -1238,9 +1344,28 @@ test suite would give false confidence about exactly the rules that matter most.
 
 *Credit*
 - Credit sale with no `attachment_id` → rejected
-- Credit sale with a non-existent `attachment_id` → rejected
-- Credit sale exceeding credit limit → 409; admin override succeeds and is logged
+- Credit sale with a non-existent `attachment_id` → rejected, and **no row written**
+- Credit sale with an attachment already claimed by a live expense → 409
+  `ATTACHMENT_ALREADY_LINKED`, and the same in the other direction
+- Credit sale with an attachment from another outlet → 404, not 403
+- Credit sale exceeding credit limit → 409; admin override succeeds, the reason lands on the
+  row, and an `audit_logs` entry carries it
+- A non-admin supplying `limit_override_reason` → 403 `LIMIT_OVERRIDE_REQUIRES_ADMIN`
+- **Boundary:** outstanding + amount exactly equal to the limit is accepted; one paisa over
+  is refused. `credit_limit IS NULL` is unlimited
 - Outstanding balance correct after a partial repayment
+- Outstanding balance correct after a **reversed sale** and after a **reversed repayment** —
+  the negative rows net out (§6.6)
+- A repayment larger than outstanding is accepted; the balance goes negative
+- A deactivated customer refuses a new sale but **accepts a repayment**; historical rows
+  still read and report
+- A `credit_sales` reversal carries the original's `attachment_id`; no re-upload is demanded
+- A quantity with no `fuel_type_id` is refused — a measure with no unit is meaningless (§4.5)
+- A CBG credit sale's quantity resolves as `kilogram`; nothing in the credit path assumes
+  litres
+- Two customers cannot share a phone at one outlet; the same phone at a *different* outlet is
+  fine (the constraint is outlet-scoped)
+- An attendant listing customers sees no `phone`, no `credit_limit` and no balance
 
 *Expenses*
 - Boundary: ₹999.99 not flagged, ₹1000.00 not flagged, ₹1000.01 flagged
@@ -1407,6 +1532,21 @@ future reader must be able to tell the difference.
     separate drawers is not modelled, which is precisely why only one shift may be `open`
     at a time (§5.2). An outlet that needs it will need a drawer concept, not a second
     open shift.
+13. **§6.6's credit limit check is not serialised.** It reads the outstanding balance, then
+    inserts; two sales issued in the same instant both read the pre-sale figure and both
+    pass, so a customer can end up marginally over their limit. Not fixed with
+    `SELECT … FOR UPDATE` because this codebase holds **no** row locks anywhere, and §13.12
+    above means one outlet has one open shift and therefore effectively one person writing.
+    The failure is a limit exceeded by one sale, not money lost or double-counted, and it is
+    visible in the very next balance read. Revisit if an outlet ever runs concurrent
+    drawers — the same change that needs a drawer concept needs this lock.
+14. **Salesman cash shortfalls are not credit sales, and are not modelled in Phase 9.**
+    This outlet books a shortfall as udhaar against the salesman's own name (§14), but a
+    shortfall is the *outcome of a reconciliation*, not a sale: it has no receipt to satisfy
+    `credit_sales.attachment_id`, and putting it there would pollute a real customer's
+    outstanding balance with staff debt. It gets its own record type in **Phase 10**, where
+    §6.4's reconciliation is what actually produces one. Until then a shortfall is visible
+    only as §6.4's variance. §5.2, §12
 
 ---
 
@@ -1461,6 +1601,21 @@ to occur on this specific project.
   and §6.6's udhaar, and blocking on it teaches staff to type figures that balance (§6.8)
 - Sum the `cash` collection row together with §6.4's derived `cash_sales` — the cash row is
   a declaration to check that figure against, not a term in it (§5.2)
+- **Book a salesman's cash shortfall as a `credit_sale`.** It is a reconciliation outcome,
+  not a sale; it has no receipt to satisfy that table's `NOT NULL`; and it would mix staff
+  debt into a real customer's outstanding balance, so nobody could answer "what does this
+  customer owe me" again. Phase 10 gives shortfalls their own record type (§13.14)
+- **Maintain a denormalised outstanding balance**, on the customer row or anywhere else.
+  §6.6 says compute it, and Phase 9 deleted `credit_sales.is_settled` for exactly this
+  reason — a stored total drifts, and a stored per-row flag has no honest value once one
+  repayment covers part of three bills (§5.2)
+- **Weaken `credit_sales.attachment_id` from `NOT NULL` to a CHECK** to make room for a
+  reversal. The reversal inherits the original's attachment instead; the `NOT NULL` is the
+  receipt control the whole of §6.6 rests on (§5.2)
+- **Read `credit_limit IS NULL` as zero.** Null means *no limit*; coercing it refuses every
+  sale to the customers who are trusted most (§6.6)
+- Filter reversals out when computing an outstanding balance — they are negative rows that
+  net out, and dropping them makes a cancelled udhaar reappear as debt (§6.6)
 - Use offset pagination
 - Set `allow_origins=["*"]`
 - Add a frontend framework, bundler, or npm dependency
@@ -1506,16 +1661,15 @@ to occur on this specific project.
 - What are the petrol and diesel dealer commissions per litre? Needed to enter
   `fuel_margins` rows for them; CBG's ₹2.28 is known. Until entered, profit reporting
   covers CBG only.
-- **§5.2 vs §4.7 contradiction, decide before Phase 9 — the salesman shortfall.**
-  §5.2 makes `credit_sales.attachment_id` `NOT NULL` *at the database level*: every udhaar
-  row must carry a receipt photo, enforced so a client cannot bypass it. But this outlet
-  books a salesman's cash shortfall as udhaar **against his own name**, and a shortfall has
-  no receipt — there is nothing to photograph. Either shortfalls become their own record
-  type, or that `NOT NULL` is weakened, and weakening it silently removes the receipt
-  control from genuine *customer* credit sales too. **Recommendation:** keep `credit_sales`
-  receipt-mandatory and give shortfalls a separate table. They are a different economic
-  event — the outcome of a reconciliation, not a sale — and a customer's outstanding
-  balance should not be polluted by staff debts. Cheap now, ugly once rows exist.
+- ~~**§5.2 vs §4.7 contradiction, decide before Phase 9 — the salesman shortfall.**~~
+  **Answered before Phase 9, as recommended.** `credit_sales` stays receipt-mandatory —
+  the `NOT NULL` is untouched, and §6.9's reversal reaches it through inheritance rather
+  than by weakening it (§5.2). Shortfalls become **their own record type, built in Phase
+  10**, where §6.4's reconciliation is what actually produces one; building the table in
+  Phase 9 would have been scaffolding ahead of its only producer (§11). Until then a
+  shortfall shows up as §6.4's variance and nothing else. See §13.14 and §14's guardrail.
+  **Still to decide before Phase 10:** does a shortfall row point at a `user_profiles.id`
+  rather than a `credit_customer_id`, and is it repaid, written off, or deducted from wages?
 - **Phase 10 consequences of the locker model (§14 above), decide before Phase 10:**
   cash is not counted at a fixed moment and the drawer is never emptied on a schedule, so
   §6.5's "opening_balance for day N = actual_counted of day N−1" needs restating for a
