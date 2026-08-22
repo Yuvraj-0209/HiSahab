@@ -193,8 +193,16 @@ def upgrade() -> None:
             "quantity IS NULL OR fuel_type_id IS NOT NULL",
             name="ck_credit_sales_quantity_needs_fuel_type",
         ),
+        # Sign-aware, mirroring ck_credit_sales_amount_sign rather than a bare `> 0`.
+        # A reversal negates the quantity alongside the amount, so that a per-fuel udhaar
+        # report nets to zero the same way the money does -- leaving it positive would show
+        # 40 litres sold on credit with no money owed against them. A bare `quantity > 0`
+        # made that impossible and turned every reversal of a fuel sale into a 500.
         sa.CheckConstraint(
-            "quantity IS NULL OR quantity > 0", name="ck_credit_sales_quantity_positive"
+            "quantity IS NULL "
+            "OR (reverses_id IS NULL AND quantity > 0) "
+            "OR (reverses_id IS NOT NULL AND quantity < 0)",
+            name="ck_credit_sales_quantity_sign",
         ),
         sa.CheckConstraint(
             "limit_override_reason IS NULL OR limit_override_reason ~ '[^[:space:]]'",

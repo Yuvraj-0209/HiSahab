@@ -12,6 +12,7 @@ from app.api.v1 import (
     attachments,
     collections,
     credit_customers,
+    credit_sales,
     expense_categories,
     expenses,
     fuel_margins,
@@ -76,3 +77,8 @@ api_router.include_router(attachments.router)
 # /credit-customers/{customer_id}, or FastAPI parses "outstanding" as a customer id and the
 # report 422s on the UUID. Same hazard fuel_prices.py's "/current" has.
 api_router.include_router(credit_customers.router)
+
+# Phase 9 continued -- credit sales hang off a shift, same depth and shape as expenses.
+# All their paths are /shifts/{shift_id}/credit-sales..., one segment deeper than anything
+# in shifts.py, so there is no ordering hazard against it or against credit_customers.py.
+api_router.include_router(credit_sales.router)

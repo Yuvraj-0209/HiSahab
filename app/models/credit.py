@@ -169,8 +169,14 @@ class CreditSale(Base):
             "quantity IS NULL OR fuel_type_id IS NOT NULL",
             name="ck_credit_sales_quantity_needs_fuel_type",
         ),
+        # Sign-aware, mirroring the amount rule above. A reversal negates the quantity
+        # alongside the amount so a per-fuel udhaar report nets to zero the same way the
+        # money does; a bare `quantity > 0` made that impossible.
         sa.CheckConstraint(
-            "quantity IS NULL OR quantity > 0", name="ck_credit_sales_quantity_positive"
+            "quantity IS NULL "
+            "OR (reverses_id IS NULL AND quantity > 0) "
+            "OR (reverses_id IS NOT NULL AND quantity < 0)",
+            name="ck_credit_sales_quantity_sign",
         ),
         # §6.6's admin override. Mandatory *and non-blank* when present, for the reason §14
         # gives about `override_reason`: it can never be an unexplained number.

@@ -1671,3 +1671,30 @@ def test_the_credit_sign_rule_is_strict_like_expenses_not_collections(
     assert ">= (0)" not in definition
     assert "<= (0)" not in definition
     assert "> (0" in definition and "< (0" in definition
+
+
+def test_a_live_credit_sale_cannot_carry_a_negative_quantity(engine: Engine) -> None:
+    """The other half of `ck_credit_sales_quantity_sign`.
+
+    Phase 9 first shipped this as a bare `quantity > 0`, which was wrong in a way no
+    single-row test would have caught: §6.9's reversal negates the quantity alongside the
+    amount, so every reversal of a *fuel* credit sale hit the constraint and returned a 500.
+    Fixed to mirror `ck_credit_sales_amount_sign`. This asserts the direction that must still
+    be refused, so the fix cannot be over-applied into "any sign, anywhere".
+    """
+    definition = None
+    with engine.connect() as connection:
+        definition = connection.execute(
+            text(
+                "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+                "JOIN pg_class t ON t.oid = c.conrelid "
+                "WHERE t.relname = 'credit_sales' "
+                "AND c.conname = 'ck_credit_sales_quantity_sign'"
+            )
+        ).scalar_one()
+
+    # A live row (reverses_id IS NULL) still requires a positive quantity; only a reversal
+    # may carry a negative one.
+    assert "reverses_id IS NULL" in definition
+    assert "quantity > (0" in definition
+    assert "quantity < (0" in definition
