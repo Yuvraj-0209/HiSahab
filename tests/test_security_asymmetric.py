@@ -294,3 +294,46 @@ def test_an_unknown_kid_is_a_401(monkeypatch: pytest.MonkeyPatch, ec_keypair) ->
 
     assert caught.value.status_code == 401
     assert caught.value.code == "INVALID_TOKEN"
+
+
+def test_the_jwks_client_is_built_once_per_url() -> None:
+    """The cache is the point, not an optimisation.
+
+    `PyJWKClient` fetches over the network on a miss. A fresh client per request would mean
+    a round trip to Supabase on **every authenticated call**, which on the rural connectivity
+    §6.10 is written for would be far more expensive than the verification itself.
+
+    Asserted by identity: the same URL must give back the same object.
+    """
+    from app.core.jwks import get_jwks_client
+
+    first = get_jwks_client("https://example.supabase.co/auth/v1/.well-known/jwks.json")
+    second = get_jwks_client("https://example.supabase.co/auth/v1/.well-known/jwks.json")
+    other = get_jwks_client("https://other.supabase.co/auth/v1/.well-known/jwks.json")
+
+    assert first is second
+    assert first is not other
+
+
+def test_settings_derives_the_jwks_uri_from_the_supabase_url() -> None:
+    """Derived rather than configured separately, so the two cannot disagree.
+
+    A second environment variable would be one more thing to get wrong in a .env, pointing
+    at a different project than the issuer check uses.
+    """
+    from app.core.config import Settings
+
+    required = {"DATABASE_URL": "postgresql+psycopg://u:p@localhost:5433/db"}
+
+    configured = Settings(
+        _env_file=None, SUPABASE_URL="https://project.supabase.co/", **required
+    )
+    assert (
+        configured.supabase_jwks_uri
+        == "https://project.supabase.co/auth/v1/.well-known/jwks.json"
+    )
+
+    # No URL, no JWKS -- which is what tells decode_access_token it cannot verify an
+    # asymmetric token, rather than letting it try and fail obscurely.
+    absent = Settings(_env_file=None, SUPABASE_URL=None, **required)
+    assert absent.supabase_jwks_uri is None

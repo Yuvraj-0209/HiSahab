@@ -494,27 +494,27 @@ any kind — Phase 13 decides what is worth plotting before anything plots it.
 ## 7. Verification checklist
 
 ### A — suite and migration health
-- [ ] `pytest` green twice back to back against the same database, single process
-- [ ] Test count recorded; `alembic` still at `0014` — **this phase adds no migration**
-- [ ] `alembic check` clean; `downgrade base && upgrade head` round-trips
-- [ ] 100% coverage on `app/api/v1/client_config.py` and the changed lines of `app/main.py`
+- [x] `pytest` green twice back to back against the same database, single process
+- [x] Test count recorded; `alembic` still at `0014` — **this phase adds no migration**
+- [x] `alembic check` clean; `downgrade base && upgrade head` round-trips
+- [x] 100% coverage on `app/api/v1/client_config.py` and the changed lines of `app/main.py`
 
 ### B — the structural guarantees (Step 13)
-- [ ] `GET /api/v1/health` and one authenticated API route still return JSON **with the mount
+- [x] `GET /api/v1/health` and one authenticated API route still return JSON **with the mount
       installed** — the shadowing test, and the reason D1 exists
-- [ ] `GET /` returns `index.html`; an unknown path under the mount 404s rather than 200-ing the shell
-- [ ] `tests/test_routes.py` passes with `/auth-config` added to the exemption list and **fails**
+- [x] `GET /` returns `index.html`; an unknown path under the mount 404s rather than 200-ing the shell
+- [x] `tests/test_routes.py` passes with `/auth-config` added to the exemption list and **fails**
       if a second path is added without one
-- [ ] No asset references an external host: no `src=`/`href=` with `http`, no `@import` off-origin
-- [ ] `parseFloat` and `Number(` appear in no money path; the rule's prose lives in the **Python
+- [x] No asset references an external host: no `src=`/`href=` with `http`, no `@import` off-origin
+- [x] `parseFloat` and `Number(` appear in no money path; the rule's prose lives in the **Python
       test docstring**, not in a JS comment, so the check cannot trip over its own documentation
       (the mistake Phase 10 and Phase 11 both record)
-- [ ] `client-config` cannot leak: asserted by **name** against `SUPABASE_SERVICE_KEY`,
+- [x] `client-config` cannot leak: asserted by **name** against `SUPABASE_SERVICE_KEY`,
       `SUPABASE_JWT_SECRET`, `DATABASE_URL`
-- [ ] Every JS module is reachable from `index.html`'s import graph — no orphans
-- [ ] **Every router in `app/api/v1/` is named by a screen module**, discovered by directory
+- [x] Every JS module is reachable from `index.html`'s import graph — no orphans
+- [x] **Every router in `app/api/v1/` is named by a screen module**, discovered by directory
       listing; a new router with no screen fails the suite
-- [ ] Each new structural test **deliberately broken once** and confirmed to fail naming the
+- [x] Each new structural test **deliberately broken once** and confirmed to fail naming the
       right file
 
 ### C — the domain rules the UI must not soften
@@ -568,7 +568,60 @@ any kind — Phase 13 decides what is worth plotting before anything plots it.
 
 ## 8. What actually shipped
 
-*Filled in at the end of the phase.*
+**1,302 tests, up from 1,213.** 89 new across five files. 100% coverage on `app/main.py`,
+`app/core/security.py`, `app/core/jwks.py` and `app/api/v1/client_config.py`. `alembic` still
+at `0014` — this phase added **no migration**, as predicted. Suite green twice back to back
+against the same database. 34 JavaScript modules, ~10,000 lines of frontend including CSS.
+
+| Step | Commit |
+|---|---|
+| 0 | *(no commit — the Phase 11 audit found no defect)* |
+| 1 | `Spec: what a frontend needs from the API, before Phase 12` |
+| 2 | `Phase 12 Step 2: the two things a browser needs before it can ask anything` |
+| 3 | `Phase 12 Step 3: the app is served, and the API is not shadowed` |
+| 4 | `Phase 12 Step 4: interruptible springs without a dependency` |
+| 5 | `Phase 12 Step 5: material and depth -- the component kit` |
+| 6 | `Phase 12 Step 6: sign in, and the shell knows who you are` |
+| 7 | `Phase 12 Step 7: the shift spine` |
+| 8 | `Phase 12 Step 8: confirm the meter, do not assume it` |
+| 9 | `Phase 12 Step 9: the money that moves through a shift` |
+| 10 | `Phase 12 Step 10: udhaar` |
+| 11 | `Phase 12 Step 11: reconciling the locker` |
+| 11a | `Phase 12 Step 11a: a broken named import is a blank page, and nothing caught it` |
+| 11b | `Phase 12 Step 11b: verify ES256 tokens, because Supabase no longer signs with HS256` |
+| 11c | `Phase 12 Step 11c: lay the dashboard out as a grid` |
+| 12 | `Phase 12 Step 12: the knobs, and the record of who turned them` |
+| 13 | `Phase 12 Step 13: a router with no screen fails the suite` |
+| 14 | `Phase 12 Step 14: plan and notes docs` |
+
+**Where it differs from the plan above.**
+
+- **Three unplanned steps, 11a–11c, and two of them were defects the plan could not have
+  foreseen.** 11a is the blank-page import bug the owner found by opening the browser; 11b is
+  Supabase's move to ES256, discovered while getting their real project working; 11c is the
+  grid layout, which the owner asked for on seeing it.
+- **D4's two endpoints landed as specified**, but `SUPABASE_ANON_KEY` also became **required in
+  production**, which the plan did not say. The frontend is served by this application, so a
+  prod deploy without it boots fine and serves a login page that cannot work.
+- **The dependency count went up by one, which the plan explicitly said it would not.**
+  `PyJWT[crypto]` was unavoidable once ES256 was confirmed — see §4 of the notes. The owner was
+  asked before it was added, per §14.
+- **`money.js` was written in Step 6 and deliberately held back to Step 7.** Nothing rendered a
+  money figure until Today existed, and a module with no consumer is scaffolding ahead (§11) —
+  caught by the import-graph orphan test rather than by review.
+- **`create_app` gained a `serve_ui` flag**, unplanned. D1 predicted the mount could not break
+  `test_routes.py` and that held, but it did not anticipate that a catch-all shadows routes
+  registered *after* `create_app` returns — which broke 23 permission tests.
+- **M11's optional node harness was not optional in the end.** Node was present, so the spring
+  math is genuinely tested rather than eyeballed; 16 assertions.
+- **Step 13 found a real feature gap on its first run**: nothing called
+  `GET /attachments/{id}/url`, so a receipt could be uploaded and never viewed. `ui/receipt.js`
+  closes it.
+- **The screen inventory grew from 19 to 21** — the salesman shortfall ledger and the
+  flagged-expense queue became their own screens rather than sections, and the receipt viewer
+  is a shared component rather than a screen.
+- **D13's seven traps all held.** No change was needed to any of them; the `datetime-local`
+  offset one in particular would have 422'd the very first fuel price entry.
 
 ---
 
