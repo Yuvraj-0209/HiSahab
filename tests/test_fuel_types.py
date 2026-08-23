@@ -251,3 +251,55 @@ async def test_reading_fuel_types_requires_a_token(client) -> None:
 
     assert response.status_code == 401
     assert response.json()["code"] == "NOT_AUTHENTICATED"
+
+
+# --- coverage gaps found auditing Phase 3 (Phase 11 Step 0) -------------------
+#
+# These branches were reachable and untested. The four Phase 3 routers predate the
+# 100%-coverage habit that Phases 5-10 hold to; the tests land here, with the phase that
+# was editing these files anyway, rather than as a separate sweep.
+
+
+async def test_patching_a_fuel_type_that_does_not_exist_is_a_404(
+    client, make_user, auth_headers
+) -> None:
+    """Unlike `nozzles`, `fuel_types` has no outlet resolver to 404 first.
+
+    `nozzles.py`'s equivalent branch carries `# pragma: no cover - the resolver above already
+    404s`, because a nozzle PATCH authorises through `resolve_outlet_from_nozzle`. A fuel type
+    is global reference data (§5.0) with nothing to resolve, so this check is the only one and
+    it is genuinely reachable.
+    """
+    from uuid import uuid4
+
+    response = await client.patch(
+        f"/api/v1/fuel-types/{uuid4()}",
+        headers=auth_headers(make_user("admin")),
+        json={"display_name": "Nothing"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "FUEL_TYPE_NOT_FOUND"
+
+
+async def test_an_explicit_null_leaves_a_field_alone(
+    client, make_user, auth_headers, make_fuel_type
+) -> None:
+    """`exclude_unset` keeps "not mentioned" and "explicitly null" apart, and the loop then
+    skips the null rather than writing it.
+
+    Worth pinning because the alternative -- letting a null through to `setattr` -- would
+    violate the column's NOT NULL and surface as a 500 on a request that looks reasonable.
+    """
+    fuel_type_id = make_fuel_type("NULLPATCH", display_name="Keep Me")
+
+    response = await client.patch(
+        f"/api/v1/fuel-types/{fuel_type_id}",
+        headers=auth_headers(make_user("admin")),
+        json={"display_name": None, "is_active": False},
+    )
+
+    assert response.status_code == 200
+    # The null was skipped; the real change alongside it still landed.
+    assert response.json()["display_name"] == "Keep Me"
+    assert response.json()["is_active"] is False

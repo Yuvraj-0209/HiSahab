@@ -214,3 +214,45 @@ async def test_listing_nozzles_requires_a_token(client) -> None:
     response = await client.get("/api/v1/nozzles")
 
     assert response.status_code == 401
+
+
+# --- coverage gaps found auditing Phase 3 (Phase 11 Step 0) -------------------
+
+
+async def test_patching_a_nozzle_with_no_fields_is_refused(
+    client, make_user, auth_headers, make_nozzle, fuel_type_ids
+) -> None:
+    """An empty PATCH is a 422, not a silent 200.
+
+    The silent version is the dangerous one, for the reason `NozzleUpdate`'s own docstring
+    gives about immutable fields: somebody who "edited" something and got a 200 back would
+    reasonably believe it worked.
+    """
+    nozzle_id = make_nozzle(fuel_type_ids["PETROL"], label="DU-3/N-1")
+
+    response = await client.patch(
+        f"/api/v1/nozzles/{nozzle_id}",
+        headers=auth_headers(make_user("admin")),
+        json={},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "NO_FIELDS_TO_UPDATE"
+
+
+async def test_an_explicit_null_leaves_a_nozzle_field_alone(
+    client, make_user, auth_headers, make_nozzle, fuel_type_ids
+) -> None:
+    """The `fuel_types.py` counterpart of this test explains why the null is skipped rather
+    than written: `label` is NOT NULL, so passing it through would be a 500."""
+    nozzle_id = make_nozzle(fuel_type_ids["PETROL"], label="DU-2/N-9")
+
+    response = await client.patch(
+        f"/api/v1/nozzles/{nozzle_id}",
+        headers=auth_headers(make_user("admin")),
+        json={"label": None, "is_active": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["label"] == "DU-2/N-9"
+    assert response.json()["is_active"] is False

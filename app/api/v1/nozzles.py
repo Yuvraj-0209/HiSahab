@@ -22,12 +22,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import Actor, get_default_outlet_id, require_role
+from app.core.audit import AuditAction
 from app.core.errors import AppError
 from app.core.roles import Role
 from app.core.units import UnitOfMeasure
 from app.db.session import get_db
 from app.models.fuel import FuelType
 from app.models.nozzle import Nozzle
+from app.services import audit
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +128,28 @@ def _to_response(nozzle: Nozzle, fuel_type: FuelType) -> NozzleResponse:
     )
 
 
+def _audit_snapshot(nozzle: Nozzle) -> dict[str, object]:
+    """What §5.3's trail keeps about a nozzle.
+
+    `fuel_type_id` and `totalizer_max_value` are recorded even though `NozzleUpdate` refuses
+    to change either. That refusal is exactly why they belong here: both feed §6.2 and §6.3,
+    which recompute historical sales on read, so the insert row is the record of what this
+    meter was wired to and what its rollover ceiling was on the day it was registered.
+
+    `meter_installed_at` is included because §4.7 anchors a nozzle's reading chain at
+    installation -- a nozzle whose install date is wrong has a chain that starts in the wrong
+    place, and this says who entered it.
+    """
+    return {
+        "label": nozzle.label,
+        "dispenser_label": nozzle.dispenser_label,
+        "fuel_type_id": nozzle.fuel_type_id,
+        "totalizer_max_value": nozzle.totalizer_max_value,
+        "meter_installed_at": nozzle.meter_installed_at,
+        "is_active": nozzle.is_active,
+    }
+
+
 @router.get("/nozzles", response_model=list[NozzleResponse])
 def list_nozzles(
     include_inactive: bool = Query(default=False),
@@ -191,6 +215,18 @@ def create_nozzle(
         created_by=actor.user.id,
     )
     db.add(nozzle)
+    # flush so the id exists for the audit row; one transaction carries both (§5.3).
+    db.flush()
+
+    audit.record(
+        db,
+        outlet_id=actor.outlet_id,
+        table_name="nozzles",
+        record_id=nozzle.id,
+        action=AuditAction.insert,
+        changed_by=actor.user.id,
+        new_values=_audit_snapshot(nozzle),
+    )
     db.commit()
     db.refresh(nozzle)
 
@@ -230,11 +266,25 @@ def update_nozzle(
             detail="Provide at least one field to change.",
         )
 
+    # Before the mutation -- see the same note in fuel_types.py.
+    before = _audit_snapshot(nozzle)
+
     for field, value in changes.items():
         if value is None:
             continue
         setattr(nozzle, field, value.strip() if isinstance(value, str) else value)
 
+    audit.record(
+        db,
+        outlet_id=actor.outlet_id,
+        table_name="nozzles",
+        record_id=nozzle.id,
+        # `update`, including a deactivation -- see fuel_types.py for why not `status_change`.
+        action=AuditAction.update,
+        changed_by=actor.user.id,
+        old_values=before,
+        new_values=_audit_snapshot(nozzle),
+    )
     db.commit()
     db.refresh(nozzle)
 

@@ -22,11 +22,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import Actor, require_role
+from app.core.audit import AuditAction
 from app.core.errors import AppError
 from app.core.roles import Role
 from app.core.units import UnitOfMeasure
 from app.db.session import get_db
 from app.models.fuel import FuelType
+from app.services import audit
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +117,28 @@ def list_fuel_types(
     ]
 
 
+def _audit_snapshot(row: FuelType) -> dict[str, object]:
+    """What §5.3's trail keeps about a fuel type.
+
+    `code` and `unit_of_measure` are included even though neither can ever change (§5.1), and
+    that is the point: the insert row records what this fuel *was declared to be*, so a later
+    argument about whether a quantity was litres or kilograms has an answer that does not
+    depend on the current table.
+
+    `max_flow_rate_per_minute` matters more than it looks -- §6.2 reads it as the sanity
+    ceiling that refuses a mistyped reading, and §14 records that the seeded CBG figure is a
+    guess nobody has confirmed. When somebody eventually widens it, this is the record of who
+    and by how much.
+    """
+    return {
+        "code": row.code,
+        "display_name": row.display_name,
+        "unit_of_measure": row.unit_of_measure,
+        "max_flow_rate_per_minute": row.max_flow_rate_per_minute,
+        "is_active": row.is_active,
+    }
+
+
 @router.post("/fuel-types", response_model=FuelTypeResponse, status_code=201)
 def create_fuel_type(
     payload: FuelTypeCreate,
@@ -143,6 +167,24 @@ def create_fuel_type(
         created_by=actor.user.id,
     )
     db.add(row)
+    # flush, not commit: the id has to exist for the audit row to point at, and both must
+    # land in one transaction (§5.3 -- the caller commits, so a separately committed audit
+    # row could describe a change that was rolled back).
+    db.flush()
+
+    audit.record(
+        db,
+        # §5.3: `fuel_types` is global reference data with no `outlet_id` of its own, while
+        # `audit_logs.outlet_id` is NOT NULL. This is therefore *the outlet whose admin made
+        # the change*, not the outlet that owns the row -- invisible while V1 has one outlet,
+        # and a real distinction the day it has two.
+        outlet_id=actor.outlet_id,
+        table_name="fuel_types",
+        record_id=row.id,
+        action=AuditAction.insert,
+        changed_by=actor.user.id,
+        new_values=_audit_snapshot(row),
+    )
     db.commit()
     db.refresh(row)
 
@@ -195,11 +237,29 @@ def update_fuel_type(
             detail="Provide at least one field to change.",
         )
 
+    # Captured before the mutation, or `old_values` records the new state and the history is
+    # lost -- the one ordering mistake this whole retrofit exists to avoid.
+    before = _audit_snapshot(row)
+
     for field, value in changes.items():
         if value is None:
             continue
         setattr(row, field, value.strip() if isinstance(value, str) else value)
 
+    audit.record(
+        db,
+        outlet_id=actor.outlet_id,
+        table_name="fuel_types",
+        record_id=row.id,
+        # `update`, even when the change is `is_active: true -> false`. §5.2 reserves
+        # `status_change` for a *shift* lifecycle move; because §3 rule 6 forbids hard
+        # deletes, `is_active` is how every reference table retires a row, so admitting those
+        # would make the label mean "a shift moved, or anything at all was deactivated".
+        action=AuditAction.update,
+        changed_by=actor.user.id,
+        old_values=before,
+        new_values=_audit_snapshot(row),
+    )
     db.commit()
     db.refresh(row)
 
