@@ -32,9 +32,11 @@ from sqlalchemy.orm import Session
 
 from app.api.cursor import DEFAULT_LIMIT, MAX_LIMIT, decode_cursor, encode_cursor
 from app.api.deps import Actor, require_role
+from app.core.audit import AuditAction
 from app.core.errors import AppError
 from app.core.roles import Role
 from app.db.session import get_db
+from app.services import audit
 from app.models.fuel import FuelMargin, FuelType
 from app.services.pricing import margin_at
 
@@ -83,6 +85,27 @@ class CurrentMarginResponse(BaseModel):
     fuel_type_code: str
     margin_per_unit: Decimal
     at: datetime
+
+
+def _audit_snapshot(row: FuelMargin) -> dict[str, object]:
+    """What §5.3's trail keeps about an appended margin.
+
+    This table is append-only -- no UPDATE, no DELETE, enforced by a trigger -- so there is
+    never an `old_values` side to record and every row here is an `insert`. That makes the
+    trail look redundant next to `entered_by`, and it is not, for one reason: **backdating**.
+
+    A row whose `effective_from` is in the past silently revalues shifts that are already
+    closed (§6.3 values a shift at the rate effective at its `started_at`, recomputed on
+    read). The endpoint permits it deliberately -- refusing would leave a stale rate with no
+    legal correction -- so the trail is what makes it visible afterwards rather than merely
+    logged and forgotten.
+    """
+    return {
+        "fuel_type_id": row.fuel_type_id,
+        "margin_per_unit": row.margin_per_unit,
+        "effective_from": row.effective_from,
+        "entered_by": row.entered_by,
+    }
 
 
 def _to_response(row: FuelMargin, *, is_backdated: bool = False) -> FuelMarginResponse:
@@ -144,6 +167,26 @@ def create_fuel_margin(
         created_by=actor.user.id,
     )
     db.add(row)
+    # flush so the id exists for the audit row; one transaction carries both (§5.3).
+    db.flush()
+
+    audit.record(
+        db,
+        outlet_id=actor.outlet_id,
+        table_name="fuel_margins",
+        record_id=row.id,
+        # Always `insert`. The table is append-only, so a correction is a *later* row with a
+        # new `effective_from`, never an edit to this one -- there is no `update` to record.
+        action=AuditAction.insert,
+        changed_by=actor.user.id,
+        # `is_backdated` is folded into the snapshot rather than being a column, the same way
+        # shifts.py folds in a reopen reason and credit_sales.py an override reason:
+        # AuditAction's labels are fixed at migration time and none of them says "backdated".
+        # It belongs here because it is the fact that makes this row consequential -- it is
+        # the difference between setting tomorrow's rate and revaluing last week's closed
+        # shifts.
+        new_values=_audit_snapshot(row) | {"is_backdated": is_backdated},
+    )
     db.commit()
     db.refresh(row)
 

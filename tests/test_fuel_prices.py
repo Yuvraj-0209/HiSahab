@@ -240,3 +240,75 @@ async def test_the_price_history_requires_a_token(client) -> None:
     response = await client.get("/api/v1/fuel-prices")
 
     assert response.status_code == 401
+
+
+# Phase 11: alias matching the name used in tests/test_reference_data_audit.py.
+_FUTURE_AT = FUTURE
+
+
+# --- coverage gaps found auditing Phase 3 (Phase 11 Step 0) -------------------
+#
+# Three reachable branches with no test. The four Phase 3 routers predate the 100%-coverage
+# habit Phases 5-10 hold to; these land with the phase that was editing the files anyway.
+
+
+async def test_a_naive_timestamp_is_refused_rather_than_assumed(
+    client, make_user, auth_headers
+) -> None:
+    """§3 rule 4: every instant is stored in UTC, and a naive one has no instant in it.
+
+    Guessing a timezone here would be the worst kind of wrong -- `?at=` selects which rate
+    was in force, so assuming UTC for a value the caller meant as IST shifts the answer by
+    five and a half hours and silently returns the *previous* rate across a 06:00 revision
+    (§4.1). Refusing is the only honest option.
+    """
+    response = await client.get(
+        "/api/v1/fuel-prices/current",
+        headers=auth_headers(make_user("attendant")),
+        params={"at": "2027-01-01T06:00:00"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "NAIVE_TIMESTAMP"
+
+
+async def test_the_history_can_be_filtered_to_one_fuel(
+    client, make_user, auth_headers, engine, fuel_type_ids, make_fuel_price
+) -> None:
+    """`?fuel_type_id=` narrows the history. Untested until now, which mattered more than it
+    looks: a filter that silently ignored its argument would return *every* fuel's rates
+    under a heading naming one of them."""
+    admin = make_user("admin")
+    make_fuel_price(fuel_type_ids["PETROL"], "104.21", _FUTURE_AT, entered_by=admin)
+    make_fuel_price(fuel_type_ids["CBG"], "88.50", _FUTURE_AT, entered_by=admin)
+
+    response = await client.get(
+        "/api/v1/fuel-prices",
+        headers=auth_headers(admin),
+        params={"fuel_type_id": str(fuel_type_ids["PETROL"])},
+    )
+
+    assert response.status_code == 200
+    returned = {row["fuel_type_id"] for row in response.json()["items"]}
+    assert returned == {str(fuel_type_ids["PETROL"])}
+
+
+async def test_the_unfiltered_history_returns_every_fuel(
+    client, make_user, auth_headers, engine, fuel_type_ids, make_fuel_price
+) -> None:
+    """The other half, so the filter above is proven to narrow rather than the fixture merely
+    having created one row."""
+    admin = make_user("admin")
+    make_fuel_price(fuel_type_ids["PETROL"], "104.21", _FUTURE_AT, entered_by=admin)
+    make_fuel_price(fuel_type_ids["CBG"], "88.50", _FUTURE_AT, entered_by=admin)
+
+    response = await client.get(
+        "/api/v1/fuel-prices", headers=auth_headers(admin)
+    )
+
+    assert response.status_code == 200
+    returned = {row["fuel_type_id"] for row in response.json()["items"]}
+    assert returned == {
+        str(fuel_type_ids["PETROL"]),
+        str(fuel_type_ids["CBG"]),
+    }
