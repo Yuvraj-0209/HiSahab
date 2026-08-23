@@ -124,7 +124,12 @@ async def test_the_stylesheet_and_entry_module_are_served() -> None:
 
     assert js_status == 200
     assert "javascript" in js_headers["content-type"]
-    assert "export function el(" in js_body
+    # Asserted on the module's *shape* rather than on any particular symbol. An earlier
+    # version looked for `export function el(`, which broke the moment that helper moved
+    # into js/dom.js in Step 5 -- a test failing because correctly-organised code moved is a
+    # test coupled to the wrong thing. What must remain true is that this file is an ES
+    # module the browser can load without a bundler.
+    assert "import" in js_body
 
 
 async def test_an_unknown_static_path_is_a_404_not_the_shell() -> None:

@@ -14,32 +14,9 @@
  *      forbids the dependency a CDN would smuggle in.
  */
 
+import { el, render } from "./dom.js";
+
 const APP = document.getElementById("app");
-
-/** Build an element. The only DOM constructor this codebase uses.
- *
- * `text` goes through textContent, never innerHTML -- that is the entire point, and it is
- * why every screen builds its DOM through here instead of assembling strings.
- */
-export function el(tag, { className, text, attrs } = {}, children = []) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined && text !== null) node.textContent = String(text);
-  if (attrs) {
-    for (const [key, value] of Object.entries(attrs)) {
-      if (value !== undefined && value !== null) node.setAttribute(key, String(value));
-    }
-  }
-  for (const child of children) {
-    if (child) node.appendChild(child);
-  }
-  return node;
-}
-
-/** Replace a container's contents. */
-export function render(container, ...nodes) {
-  container.replaceChildren(...nodes);
-}
 
 async function boot() {
   // Same-origin, so a relative path is all that is needed -- and it is why

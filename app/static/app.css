@@ -497,6 +497,57 @@ body {
   margin-top: var(--sp-2);
 }
 
+/* A real checkbox, sized to be hittable. Deliberately not restyled into a custom control:
+ * the native one already carries keyboard behaviour, the indeterminate state and the
+ * platform's own focus ring, and §16's Familiarity principle says build on what people
+ * already know. `accent-color` recolours it without replacing it. */
+.field-checkbox {
+  flex: none;
+  width: 1.375rem;
+  height: 1.375rem;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* The confirm control for §4.7's chained opening reading. Deliberately large and deliberately
+ * NOT pre-satisfied -- see js/screens/readings.js. An assumed opening turns overnight theft
+ * into a salesman's debt, so confirming has to be a physical act rather than a default. */
+.confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-3) var(--sp-4);
+  min-height: 3rem;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--t-fast) var(--ease-out),
+    border-color var(--t-fast) var(--ease-out),
+    background-color var(--t-fast) var(--ease-out);
+}
+
+.confirm:active {
+  transform: scale(0.985);
+}
+
+.confirm[data-state="confirmed"] {
+  border-color: var(--success);
+  background: var(--success-tint);
+  color: var(--success);
+}
+
+.confirm[data-state="mismatch"] {
+  border-color: var(--warning);
+  background: var(--warning-tint);
+  color: var(--warning);
+}
+
 select.field-input {
   appearance: none;
   background-image: linear-gradient(45deg, transparent 50%, var(--text-secondary) 50%),
