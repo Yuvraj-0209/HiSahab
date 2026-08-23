@@ -253,6 +253,97 @@ def test_no_money_value_is_parsed_into_a_float() -> None:
     assert offenders == [], f"float parsing in the money path: {offenders}"
 
 
+def test_every_router_is_reachable_from_a_screen() -> None:
+    """A Phase 13 router that ships with no way to reach it fails here, not in review.
+
+    **This is the deliverable of Step 13**, and it is the same construction
+    `tests/test_audit_coverage.py` uses for the same reason. Phase 11's notes put it plainly:
+    the audit gap survived seven phases "because nothing failed when it was missing". A screen
+    that was never built is exactly that shape -- the API works, every test passes, and the
+    feature simply does not exist for anybody using the application.
+
+    Routers are discovered by **listing the directory**, never from a hardcoded list, so the
+    module somebody adds next week is covered without anyone remembering to add it here.
+
+    The check is deliberately loose about *how* a screen reaches a router: it looks for the
+    router's URL prefix appearing in an `api.get/post/patch` path anywhere under `js/`. A
+    stricter check would have to parse JavaScript properly, which needs a dependency (§14),
+    and would buy little -- the failure this guards against is a router with *nothing at all*
+    pointing at it, not a subtly wrong path.
+    """
+    routers = {
+        path.stem
+        for path in (_STATIC.parent / "api" / "v1").glob("*.py")
+        if path.stem not in {"__init__", "router"}
+    }
+    assert routers, "no routers found -- did app/api/v1 move?"
+
+    # Each router's URL prefix, as it appears in a client call. Derived from the module name
+    # where they agree, with the handful of genuine exceptions named.
+    prefixes = {
+        "health": "/health",
+        "me": "/me",
+        "client_config": "/client-config",
+        "fuel_types": "/fuel-types",
+        "nozzles": "/nozzles",
+        "fuel_prices": "/fuel-prices",
+        "fuel_margins": "/fuel-margins",
+        "shift_templates": "/shift-templates",
+        "shifts": "/shifts",
+        "readings": "/readings",
+        "collections": "/collections",
+        "expenses": "/expenses",
+        "expense_categories": "/expense-categories",
+        "uploads": "/uploads/receipt",
+        "attachments": "/attachments/",
+        "credit_customers": "/credit-customers",
+        "credit_sales": "/credit-sales",
+        "credit_repayments": "/credit-repayments",
+        "non_fuel_sales": "/non-fuel-sales",
+        "bank_deposits": "/bank-deposits",
+        "cash_position": "/cash-position",
+        "shortfalls": "shortfall",
+        "daily_summaries": "/daily-summaries",
+        "audit_logs": "/audit-logs",
+    }
+
+    unmapped = routers - prefixes.keys()
+    assert unmapped == set(), (
+        f"new router(s) with no entry in this test's prefix map: {sorted(unmapped)}. "
+        "Add the URL prefix, then make sure a screen actually calls it."
+    )
+
+    # Routers that legitimately have no screen. Additions need a reason here, not just an
+    # entry -- the same discipline `tests/test_audit_coverage.py` applies to `uploads.py`.
+    #
+    # "health": an operator's liveness probe, not a feature. It answers whether the process
+    #           and Postgres are up, which is a thing a monitor asks and a salesman does not.
+    #           Rendering it would be inventing a screen to satisfy a test.
+    exempt = {"health"}
+
+    # Comments STRIPPED, and this is not a detail. The first version of this test searched
+    # raw source and passed while the audit-log screen was deliberately broken, because that
+    # module's own docstring says "Phase 11 built `GET /audit-logs`" -- the prose describing
+    # the endpoint satisfied the search for it.
+    #
+    # That is Phase 10's lesson arriving a third time: "left as a text search, it would have
+    # taught the next person to delete the comment." Here it was worse than that -- the
+    # comment did not break the test, it *silently satisfied* it, which is the version that
+    # never gets noticed.
+    source = "\n".join(
+        "\n".join(line for _, line in _code_lines(path)) for path in _js_modules()
+    )
+
+    unreachable = sorted(
+        name for name in routers - exempt if prefixes[name] not in source
+    )
+
+    assert unreachable == [], (
+        "routers no screen calls -- the feature exists in the API and not in the app: "
+        f"{unreachable}"
+    )
+
+
 def test_the_dom_helper_is_the_only_place_that_sets_text() -> None:
     """A weaker guarantee than it sounds, and worth stating precisely.
 

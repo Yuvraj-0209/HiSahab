@@ -19,6 +19,7 @@ import { businessDate } from "../time.js";
 import { field, Form } from "../ui/field.js";
 import { openSheet } from "../ui/sheet.js";
 import { openReversalSheet, reversalBadge } from "../ui/reversal.js";
+import { receiptButton } from "../ui/receipt.js";
 import { notify } from "../ui/toast.js";
 import { errorCard } from "./today.js";
 
@@ -108,6 +109,7 @@ function depositCard(deposit, context) {
       ? el("p", { className: "t-caption", text: `Reason: ${deposit.reversal_reason}` })
       : null,
     el("div", { className: "row" }, [
+      receiptButton(deposit.attachment_id, { label: "View slip" }),
       context.editable && live
         ? el("button", {
             className: "btn grow",

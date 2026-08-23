@@ -38,6 +38,7 @@ import { relative } from "../time.js";
 import { field, Form, select } from "../ui/field.js";
 import { openSheet } from "../ui/sheet.js";
 import { openReversalSheet, reversalBadge } from "../ui/reversal.js";
+import { receiptButton } from "../ui/receipt.js";
 import { notify } from "../ui/toast.js";
 import { satisfies } from "../ui/nav.js";
 import { errorCard } from "./today.js";
@@ -218,6 +219,9 @@ function actionRow(expense, context) {
       }),
     );
   }
+
+  const view = receiptButton(expense.attachment_id);
+  if (view) buttons.push(view);
 
   if (expense.requires_review && !expense.reviewed_at && isManager) {
     buttons.push(
