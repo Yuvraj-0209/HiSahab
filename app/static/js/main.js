@@ -43,6 +43,10 @@ import { renderExpenses } from "./screens/expenses.js";
 import { renderNonFuelSales } from "./screens/non_fuel_sales.js";
 import { renderCreditSales } from "./screens/credit_sales.js";
 import { renderCreditRepayments } from "./screens/credit_repayments.js";
+import { renderBankDeposits } from "./screens/bank_deposits.js";
+import { renderCash } from "./screens/cash.js";
+import { renderCashPosition } from "./screens/cash_position.js";
+import { renderDailySummaries, renderDailySummary } from "./screens/daily_summaries.js";
 
 const APP = document.getElementById("app");
 
@@ -207,6 +211,14 @@ function registerRoutes() {
     tab: "entry",
     role: "attendant",
   });
+  route("/shifts/:shiftId/bank-deposits", shiftScreen(renderBankDeposits), {
+    tab: "entry",
+    role: "manager",
+  });
+  route("/shifts/:shiftId/cash-position", shiftScreen(renderCashPosition), {
+    tab: "cash",
+    role: "manager",
+  });
 
   route(
     "/shifts/:shiftId/readings",
@@ -219,11 +231,26 @@ function registerRoutes() {
     { tab: "entry", role: "attendant" },
   );
 
-  route("/cash", placeholder(
-    "Cash",
-    "The cash position, shortfalls, deposits and the daily summary.",
-    "cash",
-  ), { tab: "cash", role: "manager" });
+  route(
+    "/cash",
+    () => renderCash(session.shell.screen, { session, navigate }),
+    { tab: "cash", role: "manager" },
+  );
+  route(
+    "/daily-summaries",
+    () => renderDailySummaries(session.shell.screen, { session, navigate }),
+    { tab: "cash", role: "manager" },
+  );
+  route(
+    "/daily-summaries/:businessDate",
+    (params) =>
+      renderDailySummary(session.shell.screen, {
+        session,
+        navigate,
+        businessDate: params.businessDate,
+      }),
+    { tab: "cash", role: "manager" },
+  );
 
   route("/admin", placeholder(
     "Admin",
