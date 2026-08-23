@@ -166,6 +166,7 @@ async def test_client_config_returns_the_values_the_ui_must_not_hardcode(
     assert body["tz_display"] == "Asia/Kolkata"
     assert body["expense_review_threshold"] == "1000.00"
     assert body["expense_receipt_threshold"] == "5000.00"
+    assert body["variance_alert_threshold"] == "100.00"
     assert body["max_upload_bytes"] == 5242880
     assert body["outlet_name"] == "Main Outlet"
 
@@ -207,6 +208,7 @@ async def test_the_two_thresholds_are_reported_independently(
     async with _client_with(
         EXPENSE_REVIEW_THRESHOLD=Decimal("250.00"),
         EXPENSE_RECEIPT_THRESHOLD=Decimal("7500.00"),
+        VARIANCE_ALERT_THRESHOLD=Decimal("42.00"),
     ) as client:
         response = await client.get(
             "/api/v1/client-config", headers=auth_headers(user_id)
@@ -216,6 +218,31 @@ async def test_the_two_thresholds_are_reported_independently(
     body = response.json()
     assert body["expense_review_threshold"] == "250.00"
     assert body["expense_receipt_threshold"] == "7500.00"
+    assert body["variance_alert_threshold"] == "42.00"
+
+
+async def test_the_variance_threshold_reaches_the_client_as_a_string(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    auth_headers: Callable[[UUID], dict[str, str]],
+) -> None:
+    """§3 rule 1, and it matters more here than for the expense dials.
+
+    The reports screen compares this figure against a day's variance to decide whether to mark
+    the row. If it arrived as a JSON number the obvious client implementation is
+    `Number(variance) > threshold` -- which is arithmetic on money in JavaScript, the thing
+    §14 forbids. Arriving as a string, the only comparison that type-checks is the one the
+    server already did, so the client renders `alert` rather than recomputing it.
+    """
+    user_id = make_user("manager")
+
+    response = await client.get(
+        "/api/v1/client-config", headers=auth_headers(user_id)
+    )
+
+    assert '"variance_alert_threshold":"100.00"' in response.text.replace(" ", "")
+    assert isinstance(response.json()["variance_alert_threshold"], str)
+    assert Decimal(response.json()["variance_alert_threshold"]) == Decimal("100.00")
 
 
 async def test_client_config_requires_a_token(client: AsyncClient) -> None:

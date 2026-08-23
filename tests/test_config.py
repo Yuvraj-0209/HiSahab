@@ -55,6 +55,67 @@ def test_expense_threshold_from_env_stays_exact() -> None:
     assert settings.EXPENSE_REVIEW_THRESHOLD == Decimal("1000.01")
 
 
+# --- §13.23's variance dial (Phase 13) ----------------------------------------
+
+
+def test_variance_alert_threshold_is_decimal_not_float() -> None:
+    """§14 again, for the third dial. Same rule, and it does not get an exemption for
+    being a comparison threshold rather than a stored amount."""
+    settings = _settings()
+
+    assert isinstance(settings.VARIANCE_ALERT_THRESHOLD, Decimal)
+    assert not isinstance(settings.VARIANCE_ALERT_THRESHOLD, float)
+    assert settings.VARIANCE_ALERT_THRESHOLD == Decimal("100.00")
+
+
+def test_variance_alert_threshold_from_env_stays_exact() -> None:
+    settings = _settings(VARIANCE_ALERT_THRESHOLD="100.01")
+
+    assert settings.VARIANCE_ALERT_THRESHOLD == Decimal("100.01")
+
+
+def test_the_three_thresholds_are_independent_dials() -> None:
+    """§16: "Never fold them into one value."
+
+    The two expense dials already had this guarantee against each other. §13.23's dial asks a
+    third, unrelated question -- whether a whole day's cash reconciled, not whether one expense
+    deserves a look or a receipt -- so it needs the same protection. Every figure here is
+    deliberately a non-default, because all three defaults being correct is exactly what would
+    let one setting hide behind three names.
+    """
+    settings = _settings(
+        EXPENSE_REVIEW_THRESHOLD="250.00",
+        EXPENSE_RECEIPT_THRESHOLD="7500.00",
+        VARIANCE_ALERT_THRESHOLD="42.00",
+    )
+
+    assert settings.EXPENSE_REVIEW_THRESHOLD == Decimal("250.00")
+    assert settings.EXPENSE_RECEIPT_THRESHOLD == Decimal("7500.00")
+    assert settings.VARIANCE_ALERT_THRESHOLD == Decimal("42.00")
+
+
+@pytest.mark.parametrize("bad", ["0", "0.00", "-1.00"])
+def test_a_non_positive_variance_threshold_refuses_to_load(bad: str) -> None:
+    """Both bad directions are *silent* misconfigurations, which is why they are refused here
+    rather than left to surface as a strange report.
+
+    Zero flags every day whose variance is anything but exactly nil, including the ₹0.01 a
+    real count produces -- a list that is always full is a list nobody reads. A negative value
+    flags nothing at all, since §13.23 compares an absolute value, so the alerts screen would
+    sit permanently empty and look like it was working.
+    """
+    with pytest.raises(ValidationError, match="greater than zero"):
+        _settings(VARIANCE_ALERT_THRESHOLD=bad)
+
+
+def test_the_expense_thresholds_still_refuse_a_non_positive_value() -> None:
+    """The validator gained a third field in Phase 13; this pins that it did not *lose* the
+    two it already had. Widening a shared validator is exactly where that goes unnoticed."""
+    for name in ("EXPENSE_REVIEW_THRESHOLD", "EXPENSE_RECEIPT_THRESHOLD"):
+        with pytest.raises(ValidationError, match="greater than zero"):
+            _settings(**{name: "0.00"})
+
+
 def test_database_url_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
     """Refusing to boot beats silently connecting somewhere unexpected.
 

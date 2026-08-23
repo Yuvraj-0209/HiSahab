@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     # §6.11 -- a DIFFERENT dial from the line above, on purpose: "a manager should look at
     # this" and "this needs paper proof" are different questions. Never fold them into one.
     EXPENSE_RECEIPT_THRESHOLD: Decimal = Decimal("5000.00")
+    # §13.23 (Phase 13) -- above this, a day's cash variance is worth a manager's attention.
+    #
+    # A THIRD dial, and separate from the two above for the reason those two are separate from
+    # each other: they ask about a single expense, this asks whether a whole day reconciled.
+    # Folding it into either would weld two unrelated questions to one number forever.
+    #
+    # The figure is a guess (§14's open questions). Too low and every day is flagged, which
+    # teaches a manager to dismiss the list unread; too high and the ₹500 gap §5.2 describes --
+    # the one booked as udhaar against a salesman's own name -- never surfaces at all.
+    VARIANCE_ALERT_THRESHOLD: Decimal = Decimal("100.00")
     MAX_UPLOAD_BYTES: int = 5_242_880
     MAX_FLOW_RATE_LPM: int = 60
     SIGNED_URL_TTL_SECONDS: int = 300
@@ -100,11 +110,25 @@ class Settings(BaseSettings):
             )
         return value
 
-    @field_validator("EXPENSE_REVIEW_THRESHOLD", "EXPENSE_RECEIPT_THRESHOLD", mode="after")
+    @field_validator(
+        "EXPENSE_REVIEW_THRESHOLD",
+        "EXPENSE_RECEIPT_THRESHOLD",
+        "VARIANCE_ALERT_THRESHOLD",
+        mode="after",
+    )
     @classmethod
     def _threshold_must_be_positive(cls, value: Decimal) -> Decimal:
+        """A threshold of zero or less is never what somebody meant.
+
+        `VARIANCE_ALERT_THRESHOLD` joins the two expense dials here in Phase 13 rather than
+        getting a validator of its own. Zero would flag every day whose variance is anything
+        other than exactly nil -- including the ₹0.01 rounding noise a real count produces --
+        and a negative value would flag nothing at all, since §13.23 compares an absolute
+        value. Both are silent misconfigurations rather than errors, which is exactly the kind
+        this class refuses at load time rather than at the first surprising report.
+        """
         if value <= 0:
-            raise ValueError("Expense thresholds must be greater than zero.")
+            raise ValueError("Thresholds must be greater than zero.")
         return value
 
     @model_validator(mode="after")

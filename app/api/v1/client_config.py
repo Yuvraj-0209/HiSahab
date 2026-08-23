@@ -81,6 +81,11 @@ class ClientConfigResponse(BaseModel):
     expense_review_threshold: Decimal
     # §6.11 -- "this needs paper proof". A DIFFERENT dial, deliberately (§16).
     expense_receipt_threshold: Decimal
+    # §13.23 -- above this, a day's cash variance is flagged. Here for the same reason the two
+    # above are: the reports screen marks a row "over threshold" and must mark exactly the days
+    # the server marks. A copy hardcoded in JavaScript would keep flagging at the old figure
+    # the moment this one moved, and the screen is the version the manager believes.
+    variance_alert_threshold: Decimal
     # §7.2's ceiling, so the client can refuse an oversized file before spending a minute of
     # rural bandwidth uploading it and receiving a 413. The server still enforces it -- this
     # is a courtesy, not a control (§8: hiding a button is UX, not a control).
@@ -143,6 +148,7 @@ def read_client_config(
         tz_display=settings.TZ_DISPLAY,
         expense_review_threshold=settings.EXPENSE_REVIEW_THRESHOLD,
         expense_receipt_threshold=settings.EXPENSE_RECEIPT_THRESHOLD,
+        variance_alert_threshold=settings.VARIANCE_ALERT_THRESHOLD,
         max_upload_bytes=settings.MAX_UPLOAD_BYTES,
         outlet_name=settings.DEFAULT_OUTLET_NAME,
     )
