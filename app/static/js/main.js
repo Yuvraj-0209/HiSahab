@@ -35,6 +35,7 @@ import { buildShell, satisfies } from "./ui/nav.js";
 import { notify } from "./ui/toast.js";
 import { setZone } from "./time.js";
 import { renderLogin } from "./screens/login.js";
+import { renderToday } from "./screens/today.js";
 
 const APP = document.getElementById("app");
 
@@ -164,11 +165,11 @@ function registerRoutes() {
 
   route("/", () => redirect("#/today"));
 
-  route("/today", placeholder(
-    "Today",
-    "The current shift, its status, and the lifecycle actions for it.",
-    "today",
-  ), { tab: "today", role: "attendant" });
+  route(
+    "/today",
+    () => renderToday(session.shell.screen, { session, navigate }),
+    { tab: "today", role: "attendant" },
+  );
 
   route("/entry", placeholder(
     "Entry",
