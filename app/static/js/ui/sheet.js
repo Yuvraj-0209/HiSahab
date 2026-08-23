@@ -24,8 +24,8 @@
  */
 
 import { el } from "../dom.js";
-import { PRESETS, Spring } from "../motion/spring.js";
-import { project, shouldCommit, verticalDrag } from "../motion/gesture.js";
+import { PRESETS, project, Spring } from "../motion/spring.js";
+import { shouldCommit, verticalDrag } from "../motion/gesture.js";
 
 const LAYERS = () => document.getElementById("layers");
 

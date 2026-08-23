@@ -125,6 +125,66 @@ def test_every_module_is_reachable_from_the_entry_point() -> None:
     assert orphans == [], f"modules nothing imports: {orphans}"
 
 
+def test_every_named_import_resolves_to_a_real_export() -> None:
+    """The blank-page bug, and the reason `node --check` did not catch it.
+
+    `ui/sheet.js` and `ui/toast.js` both imported `project` from `motion/gesture.js`, where it
+    does not exist -- it is exported by `motion/spring.js`. In ES modules that is a
+    **link-time** error, not a runtime one: the browser refuses the entire module graph, so
+    `main.js` never executes and the page renders as a blank white screen.
+
+    Every test in this file passed. `node --check` parses one file at a time and has no idea
+    what another module exports, the mount served all fifteen files with a 200, and the import
+    graph walk only checked that the *file* existed -- not that the names came out of it.
+
+    This is precisely the gap §13.18 admits to and the reason that section names structural
+    checks as the half that has to be automated: the failure is invisible in Python, total in a
+    browser, and produces no error anywhere a test was looking.
+
+    Parsing is deliberately shallow -- a real JS parser would be a dependency (§14) -- and
+    only handles the two forms this codebase actually uses: `export function/class/const NAME`
+    and `import { a, b as c } from "./x.js"`. Default and namespace imports are not used here;
+    if one ever is, this test skips it rather than guessing.
+    """
+    export_pattern = re.compile(r"^export\s+(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)")
+    import_pattern = re.compile(
+        r"""import\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]""", re.MULTILINE
+    )
+
+    exports: dict[pathlib.Path, set[str]] = {}
+    for path in _js_modules():
+        names = set()
+        for _, line in _code_lines(path):
+            match = export_pattern.match(line.strip())
+            if match:
+                names.add(match.group(1))
+        exports[path.resolve()] = names
+
+    offenders: list[str] = []
+    for path in _js_modules():
+        source = "\n".join(line for _, line in _code_lines(path))
+        for raw_names, specifier in import_pattern.findall(source):
+            if not specifier.startswith("."):
+                continue
+            target = (path.parent / specifier).resolve()
+            if target not in exports:
+                offenders.append(f"{path.name}: imports from missing module {specifier}")
+                continue
+            for entry in raw_names.split(","):
+                name = entry.strip().split(" as ")[0].strip()
+                if not name:
+                    continue
+                if name not in exports[target]:
+                    offenders.append(
+                        f"{path.name}: imports '{name}' from {specifier}, "
+                        f"which does not export it"
+                    )
+
+    assert offenders == [], "broken imports (the whole app fails to load):\n  " + "\n  ".join(
+        offenders
+    )
+
+
 def test_no_module_imports_from_outside_this_origin() -> None:
     """§14 forbids the npm dependency; a bare or absolute specifier is one by another route.
 

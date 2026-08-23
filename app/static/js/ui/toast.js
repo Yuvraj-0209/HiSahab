@@ -17,8 +17,8 @@
  */
 
 import { el } from "../dom.js";
-import { PRESETS, Spring } from "../motion/spring.js";
-import { project, verticalDrag } from "../motion/gesture.js";
+import { PRESETS, project, Spring } from "../motion/spring.js";
+import { verticalDrag } from "../motion/gesture.js";
 
 const STACK_ID = "toast-stack";
 
