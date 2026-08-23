@@ -41,6 +41,8 @@ import { renderEntry } from "./screens/entry.js";
 import { renderCollections } from "./screens/collections.js";
 import { renderExpenses } from "./screens/expenses.js";
 import { renderNonFuelSales } from "./screens/non_fuel_sales.js";
+import { renderCreditSales } from "./screens/credit_sales.js";
+import { renderCreditRepayments } from "./screens/credit_repayments.js";
 
 const APP = document.getElementById("app");
 
@@ -194,6 +196,14 @@ function registerRoutes() {
     role: "attendant",
   });
   route("/shifts/:shiftId/non-fuel-sales", shiftScreen(renderNonFuelSales), {
+    tab: "entry",
+    role: "attendant",
+  });
+  route("/shifts/:shiftId/credit-sales", shiftScreen(renderCreditSales), {
+    tab: "entry",
+    role: "attendant",
+  });
+  route("/shifts/:shiftId/credit-repayments", shiftScreen(renderCreditRepayments), {
     tab: "entry",
     role: "attendant",
   });
