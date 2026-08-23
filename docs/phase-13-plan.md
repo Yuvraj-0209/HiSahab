@@ -584,24 +584,24 @@ Grouped by failure class. Each line is one test. **Money is asserted as
 ## 9. Verification checklist
 
 ### A — suite and migration health
-- [ ] `pytest` green twice back to back against the same database
-- [ ] Test count recorded; `alembic` still at `0014` — **this phase adds no migration**
-- [ ] `alembic check` clean; `downgrade base && upgrade head` round-trips
-- [ ] 100% coverage on `app/services/reporting.py` and `app/api/v1/reports.py`
+- [x] `pytest` green twice back to back against the same database
+- [x] Test count recorded; `alembic` still at `0014` — **this phase adds no migration**
+- [x] `alembic check` clean; `downgrade base && upgrade head` round-trips
+- [x] 100% coverage on `app/services/reporting.py` and `app/api/v1/reports.py`
 
 ### B — the structural guarantees (Step 8)
-- [ ] Every new structural test **deliberately broken once** and confirmed to fail naming the
+- [x] Every new structural test **deliberately broken once** and confirmed to fail naming the
       right file. Break it **where the test actually looks** — Phase 12's notes record a test
       that stayed green because a comment satisfied its search
-- [ ] A report that recomputes a snapshotted day fails the suite
-- [ ] `reports.py` with no screen fails `test_every_router_is_reachable_from_a_screen`
+- [x] A report that recomputes a snapshotted day fails the suite
+- [x] `reports.py` with no screen fails `test_every_router_is_reachable_from_a_screen`
 
 ### C — the domain rules a report must not soften
-- [ ] A snapshotted figure is never recomputed
-- [ ] A partial profit total is never presented as a total
-- [ ] Litres and kilograms are never added
-- [ ] `null` is never coalesced to zero, in Python or JavaScript
-- [ ] No money value is divided in JavaScript
+- [x] A snapshotted figure is never recomputed
+- [x] A partial profit total is never presented as a total
+- [x] Litres and kilograms are never added
+- [x] `null` is never coalesced to zero, in Python or JavaScript
+- [x] No money value is divided in JavaScript
 
 ### D — the checks no test replaces
 - [ ] Compare one real week's report against the paper register
@@ -610,7 +610,49 @@ Grouped by failure class. Each line is one test. **Money is asserted as
 
 ---
 
-## 10. Not in Phase 13
+## 10. What actually shipped
+
+**1,403 tests, up from 1,302.** 101 new across four files. **100% coverage on
+`app/services/reporting.py` and `app/api/v1/reports.py`.** `alembic` still at `0014` —
+this phase added **no migration**, as predicted. Suite green twice back to back against the
+same database; `alembic check` reports no new operations.
+
+| Step | Commit |
+|---|---|
+| 0 | *(no commit — the Phase 12 audit found no defect)* |
+| 1 | `Spec: what a report may compute, before Phase 13` |
+| 2 | `Phase 13 Step 2: the threshold that decides what is worth looking at` |
+| 3 | `Phase 13 Step 3: profit per fuel, and never a partial total` |
+| 4–7 | `Phase 13 Steps 4-7: the endpoints, and the screens that reach them` |
+| 8 | `Phase 13 Step 8: a report that recomputes a snapshot fails the suite` |
+| 9 | `Phase 13 Step 9: plan and notes docs` |
+
+**Where it differs from the plan above.**
+
+- **Steps 4–7 landed as one commit, and a test decided that.** The plan had four. The moment
+  `reports.py` existed, `tests/test_frontend_assets.py` failed with *"new router(s) with no
+  entry in this test's prefix map"* — exactly what Phase 12 built it to do. A router cannot
+  land green without a screen, so the phase's real unit of work is endpoint-plus-screen. The
+  structural test dictated the commit granularity, which is the best outcome one can have.
+- **One test file, not three.** `tests/test_reports_api.py` covers all three endpoints; they
+  share fixtures and splitting them would have meant three copies of `_window` and the two
+  fuel fixtures.
+- **`dom.js` gained `svgEl`**, which the plan anticipated, but not the reason it could not be
+  a flag on `el()`: `document.createElement("rect")` does not fail — it silently returns an
+  HTML unknown element that lays out as nothing. Nor that `className` on an SVG element is a
+  read-only `SVGAnimatedString`, so it must be set as an attribute.
+- **A zero margin turned out to be unreachable.** `ck_fuel_margins_margin_positive` refuses
+  it, so the planned "a ₹0.00 margin is a real margin" test could not be written from data.
+  It became a test asserting the *constraint*, so anyone relaxing it lands on the reasoning.
+- **The fourth occurrence of the comment-satisfies-its-own-test trap**, found by deliberately
+  breaking the new structural test. See §3 of the notes.
+- **No new error codes**, as predicted. No `_CONSTRAINT_ERRORS` entry, no `conftest.py`
+  change — both predictions held, and the second was verified by running the suite twice
+  rather than assumed.
+
+---
+
+## 11. Not in Phase 13
 
 Charts beyond the bar/variance pair (no pie, no multi-series, no zoom); CSV/PDF export;
 scheduled or emailed reports (§12's no-notifications rule); cross-outlet reporting (§12,
@@ -620,7 +662,7 @@ post-V1 module); per-transaction drill-down (§12); a stored alert with an ackno
 
 ---
 
-## 11. Still owed by the owner
+## 12. Still owed by the owner
 
 **New:**
 - Is ₹100 the right variance alert threshold? It is a guess, live on real money from day one
