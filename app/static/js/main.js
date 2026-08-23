@@ -37,6 +37,10 @@ import { setZone } from "./time.js";
 import { renderLogin } from "./screens/login.js";
 import { renderToday } from "./screens/today.js";
 import { renderReadings } from "./screens/readings.js";
+import { renderEntry } from "./screens/entry.js";
+import { renderCollections } from "./screens/collections.js";
+import { renderExpenses } from "./screens/expenses.js";
+import { renderNonFuelSales } from "./screens/non_fuel_sales.js";
 
 const APP = document.getElementById("app");
 
@@ -172,11 +176,27 @@ function registerRoutes() {
     { tab: "today", role: "attendant" },
   );
 
-  route("/entry", placeholder(
-    "Entry",
-    "Readings, collections, expenses, credit sales and repayments for the open shift.",
-    "entry",
-  ), { tab: "entry", role: "attendant" });
+  route(
+    "/entry",
+    () => renderEntry(session.shell.screen, { session, navigate }),
+    { tab: "entry", role: "attendant" },
+  );
+
+  const shiftScreen = (fn) => (params) =>
+    fn(session.shell.screen, { session, navigate, shiftId: params.shiftId });
+
+  route("/shifts/:shiftId/collections", shiftScreen(renderCollections), {
+    tab: "entry",
+    role: "attendant",
+  });
+  route("/shifts/:shiftId/expenses", shiftScreen(renderExpenses), {
+    tab: "entry",
+    role: "attendant",
+  });
+  route("/shifts/:shiftId/non-fuel-sales", shiftScreen(renderNonFuelSales), {
+    tab: "entry",
+    role: "attendant",
+  });
 
   route(
     "/shifts/:shiftId/readings",
