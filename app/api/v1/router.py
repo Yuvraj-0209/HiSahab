@@ -10,6 +10,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     attachments,
+    audit_logs,
     bank_deposits,
     cash_position,
     collections,
@@ -107,3 +108,9 @@ api_router.include_router(shortfalls.router)
 # static-before-parameterised hazard does not apply -- 'outstanding' would never parse
 # as a date either way. Its two action routes are one segment deeper than the resource.
 api_router.include_router(daily_summaries.router)
+
+# Phase 11 -- reading the audit trail. A single static path, /audit-logs, which collides with
+# nothing above and has no parameterised sibling, so the static-before-parameterised hazard
+# that fuel_prices.py's "/current" and credit_customers.py's "/outstanding" carry does not
+# arise here. Deliberately last: it is the only router that reads *about* the others.
+api_router.include_router(audit_logs.router)
