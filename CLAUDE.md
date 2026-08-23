@@ -1509,6 +1509,9 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | Read own shift | ✅ | ✅ | ✅ |
 | Read all shifts / reports | ❌ | ✅ | ✅ |
 | Read the month-end expense summary | ❌ | ✅ | ✅ |
+| Read the daily report (§13.20) | ❌ | ✅ | ✅ |
+| Read the rolling range report | ❌ | ✅ | ✅ |
+| Read the variance alerts (§13.23) | ❌ | ✅ | ✅ |
 | List expense categories (to fill a dropdown) | ✅ | ✅ | ✅ |
 | List credit customers (to fill a dropdown — **name and vehicles only**, §9) | ✅ | ✅ | ✅ |
 | Read one customer's detail, outstanding balance, or ledger | ❌ | ✅ | ✅ |
@@ -1841,7 +1844,33 @@ ahead — no empty modules for later phases.
     momentum projection and rubber-banding are about 200 lines of vanilla JS over
     `requestAnimationFrame`. See `docs/phase-12-plan.md` for the decisions and §13.18–19 for
     what this phase deliberately does not test.
-13. **Reporting** — daily summary, 7-day rolling view, variance alerts
+13. **Reporting** — daily summary, 7-day rolling view, variance alerts. Three manager-floor
+    read endpoints under `/api/v1/reports/`, three screens on the Cash tab, **no migration and
+    no new table**: every figure already exists, and this phase is about *presenting* it.
+
+    The scope is unchanged from the line above. What needed writing down is **which figures a
+    report may compute**, because that is the question a reporting layer gets wrong:
+
+    **(a) A snapshot is read, never recomputed.** §5.2 stores `expected_closing` *and every
+    component* so a reader can see what the manager was told on the day. A report that
+    recomputed would destroy exactly that record, and §6.5 chains days so the damage would not
+    stay local. This is now pinned structurally, the same way §13.10's rule is.
+
+    **(b) But a day nobody reconciled has no snapshot at all**, and a 7-day view that silently
+    drops yesterday because nobody created a summary is a report lying by omission — the
+    opposite of §4.7's *"the abnormal day becomes visible instead of reassigned."* So an
+    unreconciled day **is** computed live, and every row says which it was. `source` is not
+    decoration; it is the difference between *what we were told* and *what is true now*.
+
+    **(c) The fuel breakdown is always live, even on a finalised day**, because there is
+    nothing else it could be — `daily_cash_summaries` stores `metered_fuel_sales` as one
+    number with no per-fuel split and no margin. That has a consequence worth stating: the
+    breakdown is computed *today* beside a total frozen *then*, and a backdated price revision
+    makes them disagree. §13.22 is what this phase does about it.
+
+    Two read-only screens' worth of hand-written SVG lands here, and §14 gains a guardrail
+    about it: **the server sends bar heights as CSS percentage strings**, because
+    `value / max` is arithmetic on money and §3 rule 1 does not stop at the API boundary.
 
 ---
 
@@ -2010,6 +2039,72 @@ future reader must be able to tell the difference.
     no `innerHTML` on a server-derived value anywhere in the app. Recorded here so the next
     person to reach for a CDN convenience knows what it costs. §7.3, §8
 
+20. **A report reads the snapshot where one exists and computes live where none does — and
+    always says which.** Phase 13. §5.2 keeps `expected_closing` and its eleven components so a
+    reader can see the figure *as it stood*; §14 forbids recomputing a finalised day. But a
+    business date nobody reconciled has no stored row at all, and omitting it from a 7-day view
+    would make the report quietly wrong about the week.
+
+    So each day carries a `source`: `snapshot` (read verbatim), `computed` (live, because there
+    was nothing to read), `no_trading` (no shifts and no summary), or `unavailable` (live
+    computation refused — see §13.21's sibling case, a missing price). **The two are never
+    mixed within one day**, and the field is part of the contract rather than a hint: a
+    computed figure is an estimate of a day still in motion, a snapshot is a record. Reading
+    them as the same number is the mistake this field exists to prevent. §5.2, §6.5, §13.16
+
+21. **Profit in a report is per fuel type, and the combined total is withheld when any fuel
+    with sales has no margin.** Phase 13. §6.3 already established that valuation and profit
+    are separable and that the cash path must not be refused for a missing margin; a report
+    wants the profit but must not be refused either, since petrol and diesel margins have never
+    been entered at this outlet (§14's open questions). So reporting calls `shift_sales` with
+    `price_only=True` and looks up `margin_at` per fuel inside a `try/except`, rather than
+    relaxing `pricing.py` — the raise is correct and stays correct; the reporting layer is the
+    one with a reason to tolerate a gap.
+
+    A fuel with no margin reports `null` and a reason code, **never `0`**. The combined total is
+    `null` unless coverage is complete, alongside a list naming the fuels excluded. A partial
+    total presented as a total is exactly the plausible-but-wrong number this document opens by
+    warning about. §4.6, §6.3, §13.7
+
+22. **The fuel breakdown on a snapshotted day is computed live, and may legitimately disagree
+    with the stored `metered_fuel_sales`.** Phase 13, and it follows from §13.20 rather than
+    contradicting it: there is no stored per-fuel split to read, so the breakdown has no choice
+    but to be live.
+
+    Which means a backdated `effective_from` — which §11 already names as the reason
+    `fuel_prices` needed an audit trail, since it *"can revalue a closed shift"* — makes the
+    breakdown and the total disagree. §5.2 warns about precisely this shape: *"the total and
+    its own explanation disagree, and the explanation is the part he can check."*
+
+    **The report detects it and shows both figures**, rather than picking a winner or hiding
+    the difference. Nothing else in the system notices that a closed day has been revalued.
+    §5.2, §11, §13.20
+
+23. **Variance alerts are derived on every read and cannot be individually dismissed.** Phase
+    13. Every signal an alert reports is already stored — `daily_cash_summaries.variance` and
+    `.requires_review`, `expenses.requires_review`, `nozzle_readings.requires_review`,
+    `shifts.status` — so an alerts table would be a second copy of facts that already exist,
+    free to drift from them. Clearing an alert means reviewing the row it points at, through
+    the review route that row already has.
+
+    Two consequences to be honest about. **Alerts are windowed**, so a flag older than the
+    window is not surfaced here (the dedicated queues, `/expenses/flagged` among them, remain
+    the complete view). And **there is no "seen it, it's fine" state** — a variance a manager
+    has consciously accepted keeps appearing while it is in range. Revisit if the list starts
+    being ignored, which is the failure mode §5.2 names for a flag nobody can clear. §6.7,
+    §13.10, §13.16
+
+24. **The range report is O(days × shifts) for unreconciled days, and is capped at 31.** Phase
+    13. A `snapshot` day is one row read; a `computed` day is a full §6.4 pass — `day_totals`
+    loops the date's shifts and each shift costs roughly eight aggregates plus a valuation.
+    Seven reconciled days is trivial; thirty-one unreconciled ones is a few hundred queries.
+
+    The cap is deliberately tighter than `/expenses/summary`'s 366 days, because that endpoint
+    reads rows and this one may compute. Recorded as a decision rather than discovered as a
+    slow page: 31 covers both §11's 7-day view and a calendar month, and the honest move is to
+    name the cost and revisit it with a real query count rather than optimise on a guess —
+    the same reasoning §13.17 applies to audit-log growth. §6.4, §6.5
+
 ---
 
 ## 14. Guardrails for Claude Code
@@ -2160,6 +2255,24 @@ to occur on this specific project.
   dependency and a CDN is the same dependency with worse failure modes — plus §13.19 makes any
   third-party script able to read the session token. The CSP refuses it and a structural test
   refuses it; do not weaken either (§13.19)
+- **Recompute a snapshotted day's cash figures in a report.** Read the stored row. §5.2 keeps
+  `expected_closing` and its eleven components so a reader can see what the manager was told on
+  the day, and a report is the one thing whose whole job is to show that. §6.5 chains days, so a
+  recomputed figure would not even stay local to the day it got wrong. Compute live **only**
+  where there is no snapshot, and say so with `source` (§13.20)
+- **Sum a partial profit into a total.** A fuel with no margin makes the combined figure
+  *unknowable*, not smaller — so the total is `null` and the excluded fuels are named. Petrol
+  and diesel margins have never been entered here, so a naive `sum()` over per-fuel profit is
+  wrong on the very first day it runs, and wrong in the direction that looks plausible
+  (§4.6, §13.7, §13.21)
+- **Sum quantities across units of measure.** Litres of petrol and kilograms of CBG do not add,
+  and a `total_quantity` field is a number with no meaning. Report `quantity_by_unit`, the shape
+  `ShiftSales` already uses (§4.5)
+- **Divide a money value in JavaScript to size a chart bar.** `value / max` is arithmetic on
+  money one language further out, and it is the kind that looks harmless because the output is a
+  pixel rather than a rupee. The server computes bar heights in `Decimal` and sends a CSS
+  percentage string the client can only assign — which also makes the chart provably consistent
+  with the table beneath it, since both come from one pass (§3 rule 1, §13.18)
 - "Improve" the schema mid-implementation without flagging it first
 
 **Do:**
@@ -2225,6 +2338,17 @@ to occur on this specific project.
   Phase 8 seeds `SALARY`, `MAINTENANCE`, `ELECTRICITY` and `OTHER`, with `OTHER` alone
   requiring one, and everything else is now data entry (§5.1) — but seeding the real list
   means the app matches the paper register from day one instead of after a round of typing.
+- **`VARIANCE_ALERT_THRESHOLD` is defaulted to ₹100 and that figure is a guess** — the same
+  admission `EXPENSE_RECEIPT_THRESHOLD` carries, and the same risk. Too low and every day is
+  flagged, which trains a manager to dismiss the list without reading it; too high and the
+  ₹500 gap §5.2 describes — the one that gets booked as udhaar against a salesman's own name —
+  never surfaces at all. Needs a week of real variances behind it to be anything but arbitrary.
+- **Are §13.23's six alert kinds the right list?** Variance over threshold, a day never
+  reconciled, a summary flagged by a reopened shift, unreviewed flagged expenses, a reading
+  flagged for review, and a shift still open on a past date. Each is derived from a signal the
+  system already stores, so adding or removing one is cheap — but a list that reports things
+  the owner does not act on is a list that gets ignored, and then the ones that matter are
+  ignored with it.
 
 ---
 
@@ -2270,6 +2394,14 @@ EXPENSE_REVIEW_THRESHOLD=1000.00   # §6.7 -- flag for a manager's eyes
 EXPENSE_RECEIPT_THRESHOLD=5000.00  # §6.11 -- demand a receipt. A DIFFERENT dial from the
                               # line above on purpose: "look at this" and "prove this"
                               # are different questions. Never fold them into one value.
+VARIANCE_ALERT_THRESHOLD=100.00    # §13.23 (Phase 13) -- a THIRD dial, and separate for the
+                              # same reason the two above are separate from each other. Those
+                              # two ask about one expense; this asks whether a whole day's
+                              # cash reconciled. Served by GET /client-config so the screen
+                              # and the server agree on which days are flagged -- a copy
+                              # hardcoded in JavaScript desynchronises the moment it moves.
+                              # THE FIGURE IS A GUESS, exactly as the 5000.00 above is, and
+                              # it is live on real money from the day reporting ships.
 MAX_UPLOAD_BYTES=5242880
 MAX_FLOW_RATE_LPM=60           # seeds fuel_types.max_flow_rate_per_minute for litre
                               # fuels in migration 0003 ONLY. The §6.2 guard reads the
