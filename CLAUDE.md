@@ -51,6 +51,18 @@ The rules that make this decoupled are:
 
 If you ever find yourself building HTML strings in Python, you have broken the architecture.
 
+**Where the files live, and what "no build step" means concretely (Phase 12).** The assets sit
+in `app/static/` — inside the package `pyproject.toml` already installs, so deployment ships one
+artefact rather than two that can drift — and are mounted **after** `include_router`, which is
+what stops the mount shadowing `/api/v1`. The mount is a Starlette `Mount` rather than an
+`APIRoute`, so `tests/test_routes.py` neither sees it nor is broken by it.
+
+No bundler, no transpiler, no `package.json`: the browser loads ES modules natively via
+`<script type="module">`, and routing is hash-based (`#/shifts/{id}/readings`) so a deep link
+never reaches the server and needs no SPA rewrite. The mount serving `index.html` is still not
+rendering: FastAPI hands over a file it did not generate, which is the distinction this section
+is about.
+
 ---
 
 ## 3. Non-Negotiable Rules
@@ -1801,7 +1813,34 @@ ahead — no empty modules for later phases.
     asserting every `@router.post` / `@router.patch` in `app/api/v1/` calls `audit.record`.
     The gap survived seven phases because nothing failed when it was missing — the same reason
     §6.9 gives for `_CONSTRAINT_ERRORS` being forgotten twice, and the same fix.
-12. **Frontend** — minimal HTML/CSS/JS forms and tables
+12. **Frontend** — static HTML/CSS/vanilla JS, served by `StaticFiles`, **no build step**.
+    This line used to read "minimal HTML/CSS/JS forms and tables", which is still the scope:
+    forms and tables over the endpoints eleven phases have already built, adding no business
+    rule of its own. What it understated is that **this is the first phase a human being
+    touches.** Every rule in this document has been verified against a test client and never
+    against a salesman with a phone, and §4.7's own argument — the day is typed in after the
+    fact, in one sitting, by somebody who would rather be elsewhere — makes the interface a
+    control rather than a decoration. §6.8 says as much in the other direction: a form that
+    fights its user teaches that user to type figures that balance.
+
+    **Coverage is every router, not the easy ones.** Nineteen screens across four role-gated
+    tabs; the admin reference data and the audit log included. A structural test asserts that
+    every module in `app/api/v1/` is named by a screen, discovered by directory listing, so a
+    Phase 13 router shipping with no way to reach it fails the suite rather than the review —
+    the same construction, and the same reasoning, as `tests/test_audit_coverage.py`.
+
+    **Two read-only config endpoints land here**, and they exist to stop config being copied
+    into JavaScript. `GET /auth-config` is unauthenticated and returns the Supabase URL and
+    anon key, because a login screen cannot authenticate without them (both are public by
+    design; `SUPABASE_SERVICE_KEY` never leaves the server). `GET /client-config` sits at the
+    attendant floor and returns `TZ_DISPLAY` and the two expense thresholds — §6.7 and §6.11
+    both say *"changing it must not require a deploy"*, and a threshold hardcoded in the client
+    to warn before the server refuses would desynchronise the moment it moved.
+
+    The motion and material vocabulary is hand-written — §14 forbids npm, so the spring,
+    momentum projection and rubber-banding are about 200 lines of vanilla JS over
+    `requestAnimationFrame`. See `docs/phase-12-plan.md` for the decisions and §13.18–19 for
+    what this phase deliberately does not test.
 13. **Reporting** — daily summary, 7-day rolling view, variance alerts
 
 ---
@@ -1832,7 +1871,18 @@ and ask.
 - Mobile app (the API must *permit* one; V1 does not *build* one)
 - Real-time updates, websockets, push notifications
 - Per-transaction (per-fill) data capture
-- Role-based UI theming, dark mode, i18n
+- Role-based UI theming, **a dark/light mode toggle**, i18n. **Phase 12 clarification:** all
+  three of these are *per-user configurability* features — a theme that varies by role, a
+  switch between two palettes, a language picker — and each costs a second code path that has
+  to be maintained and tested forever. None of them describes **shipping one palette that
+  happens to be dark**, which is what Phase 12 does: no toggle, no second palette, no
+  persistence, no setting. It is the app's look, not a mode.
+
+  What the single palette *does* honour, because these are accessibility signals rather than
+  user preferences: `prefers-reduced-motion` (springs become cross-fades, overshoot removed,
+  gesture tracking retained — reduced motion means gentler, not dead),
+  `prefers-reduced-transparency` (materials go solid, `backdrop-filter` dropped) and
+  `prefers-contrast: more`. Refusing those would not be scope discipline, it would be a bug
 - Any frontend framework or build step
 
 ---
@@ -1933,6 +1983,32 @@ future reader must be able to tell the difference.
     hard-deleting *unlinked attachments* only because they are not a financial record, and
     §3 rule 6's no-hard-deletes rule would apply in full to anything that could be reconstructed
     from an audit row. §5.3, §7.4
+
+18. **The frontend has no automated behavioural tests.** Phase 12. Everything below the browser
+    is tested to 100%; the JavaScript itself is verified by hand against the checklist in
+    `docs/phase-12-plan.md` §7.
+
+    This is a consequence of §14's no-npm rule, not an oversight: Jest and Vitest are npm
+    dependencies, and a headless-browser runner is a build step. What *is* automated is
+    everything Python can reach — that the mount does not shadow the API, that no asset
+    references an external host, that no money path calls `parseFloat`, that every router has a
+    screen. Those are **structural** guarantees, and they are the half that rots silently. The
+    behavioural half is checked by a person, because a person is the only thing that can tell
+    whether a sheet *feels* right.
+
+    The consequence to be honest about: a refactor of `api.js` can break a form without failing
+    the suite. Revisit if the frontend grows past what one person can re-check in an afternoon.
+
+19. **The access token lives in the browser, not in an httpOnly cookie.** Phase 12. Supabase
+    issues a bearer token to the client and §8 verifies it server-side on every request, so the
+    token has to be readable by JavaScript to be sent at all. The access token is held **in
+    memory** and only the refresh token reaches `sessionStorage`, which limits the window but
+    does not close it: script injected into this origin could read either.
+
+    The mitigations are therefore structural rather than incidental — a strict
+    `Content-Security-Policy` of `default-src 'self'`, no third-party script of any kind, and
+    no `innerHTML` on a server-derived value anywhere in the app. Recorded here so the next
+    person to reach for a CDN convenience knows what it costs. §7.3, §8
 
 ---
 
@@ -2056,6 +2132,34 @@ to occur on this specific project.
   table retires a row, so admitting those would make the label mean "a shift moved, or anything
   at all was deactivated" and nobody could query for lifecycle events again. A deactivation is
   an ordinary `update`, already fully legible in `old_values` / `new_values` (§5.3)
+- **Do arithmetic on a money value in JavaScript.** JS has no decimal type and
+  `0.1 + 0.2 !== 0.3` there exactly as it does in Python, so §3 rule 1 does not stop at the API
+  boundary. Every figure the frontend shows — totals, gaps, outstanding balances, variances —
+  is already computed server-side and is rendered **as received, as a string**. `parseFloat` on
+  a money field is the same bug as `float` in a fixture, one language further out (§3 rule 1,
+  §13.18)
+- **Coalesce a `null` money value to zero.** `?? 0` and `|| 0` are the most dangerous two
+  characters this project can write in a client. `declared_cash: null` means *nobody declared*
+  and `"0.00"` means *they counted zero* — §6.8's "zero as an answer, never zero as an
+  omission", and the same distinction carries `gap`, `variance`, `actual_counted` and
+  `credit_limit`, where null means **no limit** and zero would refuse every sale (§5.2, §6.6)
+- **Mint a fresh `Idempotency-Key` on a retry.** The key belongs to the *submission*, not to
+  the `fetch` call: minted once when a form is first submitted and reused by every retry until
+  it succeeds. A key per call reintroduces, in the client, the exact duplicate-₹5,000-expense
+  §6.10 was built to prevent — and the network it was built for is the one that makes retries
+  routine (§6.10)
+- **Pre-confirm a chained opening reading, or default `testing_quantity` to 0, in the UI.**
+  `opening_confirmed` is a required boolean with no server-side default precisely so that "I
+  checked the meter" cannot be what happens when nobody looked. A pre-ticked box in the client
+  defeats that as completely as a default in the schema would, and §4.7 spells out the cost: an
+  assumed opening converts theft into a debt owed by someone who did nothing wrong (§4.2, §4.7)
+- **Treat a hidden control as a permission check.** §8 already says hiding a button is UX, not
+  a control. The corollary for Phase 12: every screen still handles a 403 as a real outcome,
+  and no client-side rule exists that the server does not also enforce (§8)
+- **Add a `<script src>`, stylesheet, or font from an external host.** §14 forbids the npm
+  dependency and a CDN is the same dependency with worse failure modes — plus §13.19 makes any
+  third-party script able to read the session token. The CSP refuses it and a structural test
+  refuses it; do not weaken either (§13.19)
 - "Improve" the schema mid-implementation without flagging it first
 
 **Do:**
@@ -2155,6 +2259,11 @@ python -m app.jobs.cleanup_attachments
 DATABASE_URL
 SUPABASE_URL
 SUPABASE_SERVICE_KEY          # server-side only, never exposed to frontend
+SUPABASE_ANON_KEY             # Phase 12. PUBLIC BY DESIGN -- it is meant to ship in a
+                              # browser, and GET /api/v1/auth-config serves it unauthenticated
+                              # so the login screen can reach Supabase at all. Note the
+                              # contrast with the line above: same provider, opposite rule.
+                              # Confusing the two hands a client full database access.
 SUPABASE_JWT_SECRET
 SUPABASE_STORAGE_BUCKET=receipts
 EXPENSE_REVIEW_THRESHOLD=1000.00   # §6.7 -- flag for a manager's eyes
