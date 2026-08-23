@@ -47,6 +47,18 @@ import { renderBankDeposits } from "./screens/bank_deposits.js";
 import { renderCash } from "./screens/cash.js";
 import { renderCashPosition } from "./screens/cash_position.js";
 import { renderDailySummaries, renderDailySummary } from "./screens/daily_summaries.js";
+import {
+  renderAdmin,
+  renderCategories,
+  renderFuelTypes,
+  renderNozzles,
+  renderShiftTemplates,
+} from "./screens/admin.js";
+import { renderPricing } from "./screens/admin_pricing.js";
+import { renderCustomerLedger, renderCustomers } from "./screens/admin_customers.js";
+import { renderAuditLogs } from "./screens/audit_logs.js";
+import { renderShortfallLedger } from "./screens/shortfalls.js";
+import { renderFlaggedExpenses } from "./screens/flagged_expenses.js";
 
 const APP = document.getElementById("app");
 
@@ -252,11 +264,49 @@ function registerRoutes() {
     { tab: "cash", role: "manager" },
   );
 
-  route("/admin", placeholder(
-    "Admin",
-    "Fuel types, nozzles, prices, margins, categories, customers and the audit log.",
-    "admin",
-  ), { tab: "admin", role: "admin" });
+  const adminScreen = (fn, extra = {}) => (params) =>
+    fn(session.shell.screen, { session, navigate, ...extra, ...params });
+
+  route("/admin", adminScreen(renderAdmin), { tab: "admin", role: "admin" });
+  route("/admin/fuel-types", adminScreen(renderFuelTypes), { tab: "admin", role: "admin" });
+  route("/admin/nozzles", adminScreen(renderNozzles), { tab: "admin", role: "admin" });
+  route("/admin/prices", adminScreen(renderPricing, { kind: "price" }), {
+    tab: "admin",
+    role: "admin",
+  });
+  route("/admin/margins", adminScreen(renderPricing, { kind: "margin" }), {
+    tab: "admin",
+    role: "admin",
+  });
+  route("/admin/categories", adminScreen(renderCategories), { tab: "admin", role: "admin" });
+  route("/admin/customers", adminScreen(renderCustomers), { tab: "admin", role: "admin" });
+  route("/admin/customers/:customerId/ledger", adminScreen(renderCustomerLedger), {
+    tab: "admin",
+    role: "admin",
+  });
+  route("/admin/shift-templates", adminScreen(renderShiftTemplates), {
+    tab: "admin",
+    role: "admin",
+  });
+  route("/admin/audit", adminScreen(renderAuditLogs), { tab: "admin", role: "admin" });
+
+  // The two links the Cash hub was already offering, which reached the not-found route
+  // until now (noted in Step 11's message).
+  route(
+    "/salesmen/:salesmanId/ledger",
+    (params) =>
+      renderShortfallLedger(session.shell.screen, {
+        session,
+        navigate,
+        salesmanId: params.salesmanId,
+      }),
+    { tab: "cash", role: "manager" },
+  );
+  route(
+    "/expenses/flagged",
+    () => renderFlaggedExpenses(session.shell.screen, { session, navigate }),
+    { tab: "cash", role: "manager" },
+  );
 
   setNotFound((path) => {
     const { shell } = session;
