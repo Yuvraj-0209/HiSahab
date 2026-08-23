@@ -140,6 +140,19 @@ class Settings(BaseSettings):
         return self
 
     @property
+    def supabase_jwks_uri(self) -> str | None:
+        """Where Supabase publishes the public keys for asymmetric access tokens.
+
+        Projects created since Supabase moved to JWT signing keys issue ES256 tokens, whose
+        signatures are checked against a public key rather than the shared secret. Derived
+        from SUPABASE_URL rather than configured separately: it is a fixed path on the same
+        host, and a second env var would only be an opportunity for the two to disagree.
+        """
+        if not (self.SUPABASE_URL or "").strip():
+            return None
+        return f"{self.SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json"
+
+    @property
     def supabase_issuer(self) -> str | None:
         """The `iss` claim Supabase stamps on its access tokens.
 

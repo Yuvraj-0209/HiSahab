@@ -12,9 +12,12 @@ dependencies = [
     "sqlalchemy>=2.0.36",
     "psycopg[binary]>=3.2",
     "alembic>=1.14",
-    # Supabase signs access tokens with HS256, which is symmetric -- so no
-    # cryptography extra is needed. Plain PyJWT covers verification.
-    "PyJWT>=2.9",
+    # Phase 12: the crypto extra is required. Supabase used to sign access tokens with
+    # HS256 (symmetric, no extra needed), but projects created since its move to JWT
+    # signing keys issue ES256 over P-256 -- verifying an elliptic-curve signature needs
+    # `cryptography`, which the extra pulls in. Both schemes stay supported; see
+    # app/core/jwks.py for why that is an improvement and not just a workaround.
+    "PyJWT[crypto]>=2.9",
     # Phase 8, both forced by §7.1's proxy-upload choice. python-multipart: FastAPI cannot
     # parse multipart/form-data (the receipt upload) without it. httpx: promoted from dev-
     # only -- app/services/storage.py calls the Supabase Storage REST API directly rather

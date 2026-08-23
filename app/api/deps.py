@@ -104,11 +104,19 @@ def get_current_user(
             detail="An Authorization: Bearer <token> header is required.",
         )
 
-    if not (settings.SUPABASE_JWT_SECRET or "").strip():
-        # Misconfiguration, not a client error. Must never fall through to "allow":
-        # an unconfigured deployment has to refuse traffic, not authenticate everyone.
-        # The prod config validator makes this unreachable in production.
-        logger.error("SUPABASE_JWT_SECRET is not configured; refusing to verify tokens")
+    # Misconfiguration, not a client error. Must never fall through to "allow": an
+    # unconfigured deployment has to refuse traffic, not authenticate everyone. The prod
+    # config validator makes this unreachable in production.
+    #
+    # Either scheme is enough to verify SOMETHING, so this refuses only when neither is
+    # available. Which one applies to a given token is decided by its own header, inside
+    # decode_access_token -- a deployment with only a JWKS still rejects an HS256 token and
+    # vice versa, with the same 500, raised there.
+    if not (settings.SUPABASE_JWT_SECRET or "").strip() and not settings.supabase_jwks_uri:
+        logger.error(
+            "neither SUPABASE_JWT_SECRET nor SUPABASE_URL is configured; "
+            "refusing to verify tokens",
+        )
         raise AppError(
             status_code=500,
             code="AUTH_NOT_CONFIGURED",
@@ -117,12 +125,13 @@ def get_current_user(
 
     # Raises AppError(401) on any verification failure. No partial trust: nothing below
     # runs unless the signature, expiry, audience and (when configured) issuer all check
-    # out. Note this needs no network call to Supabase -- it is local computation over the
-    # token and the shared secret.
+    # out. An HS256 token is verified by pure local computation; an ES256 one needs the
+    # public key, fetched once and cached (app/core/jwks.py).
     claims = decode_access_token(
         credentials.credentials,
         secret=settings.SUPABASE_JWT_SECRET,
         issuer=settings.supabase_issuer,
+        jwks_uri=settings.supabase_jwks_uri,
     )
 
     user = db.execute(
