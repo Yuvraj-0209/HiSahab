@@ -277,9 +277,39 @@ body {
   flex: 1;
   padding: var(--sp-4);
   padding-bottom: calc(var(--tabbar-height) + var(--safe-bottom) + var(--sp-6));
-  max-width: 46rem;
+  /* Wide enough for two columns of cards on a laptop, capped so a full-width monitor does
+   * not stretch a line of text past comfortable reading length. The grid below is what
+   * actually uses the extra width; a single column stays narrow on its own. */
+  max-width: 76rem;
   width: 100%;
   margin-inline: auto;
+}
+
+/* Cards side by side where there is room, stacked where there is not.
+ *
+ * auto-fit + minmax means the breakpoint is the CONTENT's, not a guessed device width: a
+ * card never squeezes below 21rem, and the moment two of them fit, two appear. That also
+ * means it responds to the user's text-size setting -- at a larger font the same viewport
+ * holds fewer columns, which is right, rather than cramming and clipping.
+ *
+ * `min(100%, 21rem)` rather than a bare 21rem: on a narrow phone the track would otherwise
+ * be wider than the screen and force a horizontal scroll, which §9's layout rule forbids. */
+.grid {
+  display: grid;
+  gap: var(--sp-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
+  align-items: start;
+}
+
+/* A card that should keep the full width inside a grid -- a worked equation reads badly in
+ * a narrow column, and a primary figure earns the space. */
+.grid-wide {
+  grid-column: 1 / -1;
+}
+
+/* Inside a grid, `.card + .card` margin would fight the gap. */
+.grid > .card + .card {
+  margin-top: 0;
 }
 
 .tabbar {

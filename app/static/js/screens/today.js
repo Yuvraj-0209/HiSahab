@@ -85,9 +85,13 @@ export async function renderToday(container, { session, navigate }) {
   render(
     container,
     el("div", { className: "stack" }, [
-      shiftCard(shift, me),
-      sales ? salesCard(sales) : null,
-      actionsCard(shift, { session, container, navigate }),
+      // A grid rather than a column: on a laptop these three read as a dashboard, and on a
+      // phone auto-fit collapses them back to one column with no breakpoint to maintain.
+      el("div", { className: "grid" }, [
+        shiftCard(shift, me),
+        sales ? salesCard(sales) : null,
+        actionsCard(shift, { session, container, navigate }),
+      ]),
       el("div", { className: "section-label t-micro", text: "Entry" }),
       el("div", { className: "list" }, [
         linkRow("Nozzle readings", "Meters, testing, and the carried opening", () =>

@@ -73,9 +73,9 @@ export async function renderCashPosition(container, { session, navigate, shiftId
 
   render(
     container,
-    el("div", { className: "stack" }, [
+    el("div", { className: "grid" }, [
       // The comparison, kept as two figures side by side rather than one net number.
-      el("div", { className: "card stack" }, [
+      el("div", { className: "card stack grid-wide" }, [
         el("div", { className: "t-micro", text: "The comparison" }),
         el("div", { className: "list" }, [
           term("Accountable — what the meters imply", position.accountable_cash),
@@ -110,8 +110,9 @@ export async function renderCashPosition(container, { session, navigate, shiftId
         : null,
 
       // §6.4 written out. The order matches the equation in the spec exactly, so somebody
-      // holding the document can follow along line by line.
-      el("div", { className: "card stack" }, [
+      // holding the document can follow along line by line. Full width deliberately: a
+      // worked equation reads badly in a narrow column.
+      el("div", { className: "card stack grid-wide" }, [
         el("div", { className: "t-micro", text: "How the accountable figure is built" }),
         el("div", { className: "list" }, [
           term("Metered fuel sales", position.metered_fuel_sales),
