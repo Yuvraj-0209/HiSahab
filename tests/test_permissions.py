@@ -44,7 +44,10 @@ async def client() -> AsyncIterator[AsyncClient]:
     """
     from app.main import create_app
 
-    app = create_app()
+    # serve_ui=False: this app registers its own routes below, and Phase 12's static
+    # mount is a catch-all at "/" that would shadow anything added after
+    # create_app() returns. See app/main.py::create_app.
+    app = create_app(serve_ui=False)
 
     @app.get(ATTENDANT_FLOOR)
     def attendant_floor(
@@ -363,7 +366,10 @@ async def test_unconfigured_jwt_secret_refuses_instead_of_allowing(
     from app.main import create_app
 
     user_id = make_user(Role.admin)
-    app = create_app()
+    # serve_ui=False: this app registers its own routes below, and Phase 12's static
+    # mount is a catch-all at "/" that would shadow anything added after
+    # create_app() returns. See app/main.py::create_app.
+    app = create_app(serve_ui=False)
 
     @app.get(ATTENDANT_FLOOR)
     def guarded(actor: Actor = Depends(require_role(Role.attendant))) -> dict[str, str]:

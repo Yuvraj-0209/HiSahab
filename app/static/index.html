@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- viewport-fit=cover so the safe-area-inset-* values in app.css are non-zero on a
+         notched phone; without it the tab bar sits under the home indicator. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0b0b0d" />
+
+    <!--
+      Content-Security-Policy (CLAUDE.md §13.19, §14).
+
+      This is a control, not a precaution. §13.19 records that the session token is readable
+      by JavaScript -- a bearer-token API requires that -- so any script running on this
+      origin can read it. The policy below is what keeps "any script" equal to "our scripts".
+
+        default-src 'self'   nothing loads from anywhere else, full stop
+        script-src  'self'   no inline <script>, no CDN. §14 forbids the npm dependency and
+                             a CDN is the same dependency with worse failure modes
+        style-src   'self'   app.css only; no inline <style>
+        connect-src 'self' https://*.supabase.co
+                             the API is same-origin; Supabase Auth and Storage are the one
+                             external host we deliberately talk to (login, and the signed
+                             URLs GET /attachments/{id}/url hands back)
+        img-src     'self' data: https://*.supabase.co
+                             data: for inline SVG glyphs; supabase for receipt images
+        form-action 'none'   every form is submitted by fetch(); a real form POST would be
+                             a bug, and this makes it a blocked one
+        base-uri / frame-ancestors 'none'
+                             no <base> hijack, and this app is never framed
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        script-src 'self';
+        style-src 'self';
+        img-src 'self' data: https://*.supabase.co;
+        font-src 'self';
+        connect-src 'self' https://*.supabase.co;
+        form-action 'none';
+        base-uri 'none';
+        frame-ancestors 'none';
+      "
+    />
+    <meta name="referrer" content="same-origin" />
+
+    <title>HiSahab</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <!--
+      The whole application renders into #app. This document is the only one the server ever
+      serves: routing is hash-based (see js/router.js), so a deep link never asks for a second
+      document and the StaticFiles mount needs no SPA fallback rewrite.
+
+      Nothing below is a template. Every node is built in JavaScript with createElement and
+      textContent -- §14 forbids innerHTML on server-derived values, because with a readable
+      token (§13.19) an injected <img onerror> is a session theft, not a cosmetic bug.
+    -->
+    <div id="app">
+      <noscript>
+        <div class="screen">
+          <h1 class="t-title">JavaScript is required</h1>
+          <p class="t-body">
+            HiSahab is a client-side application that talks to the HiSahab API. Please
+            enable JavaScript.
+          </p>
+        </div>
+      </noscript>
+    </div>
+
+    <!-- Toasts and sheets mount here, outside #app, so a screen swap cannot tear down a
+         message about the request that caused it. -->
+    <div id="layers"></div>
+
+    <!-- Announces toasts to a screen reader. An error that is only visual is not an error
+         everybody can see. -->
+    <div id="live" class="sr-only" role="status" aria-live="polite"></div>
+
+    <script type="module" src="/js/main.js"></script>
+  </body>
+</html>

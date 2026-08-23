@@ -213,7 +213,10 @@ async def test_a_locked_shift_refuses_writes(
     # A stand-in for the collection/expense/reading endpoints that do not exist yet, wired
     # to the same dependency they will use. Mirrors how tests/test_permissions.py bolts on
     # synthetic floor routes.
-    app = create_app()
+    # serve_ui=False: this app registers its own routes below, and Phase 12's static
+    # mount is a catch-all at "/" that would shadow anything added after
+    # create_app() returns. See app/main.py::create_app.
+    app = create_app(serve_ui=False)
 
     @app.post("/api/v1/_test/shifts/{shift_id}/write")
     def write(access=Depends(require_shift_access(Role.attendant, writable=True))):
@@ -248,7 +251,10 @@ async def test_a_closed_shift_refuses_writes_with_a_recoverable_code(
     attendant = make_user("attendant")
     shift_id = make_shift(attendant, status="closed")
 
-    app = create_app()
+    # serve_ui=False: this app registers its own routes below, and Phase 12's static
+    # mount is a catch-all at "/" that would shadow anything added after
+    # create_app() returns. See app/main.py::create_app.
+    app = create_app(serve_ui=False)
 
     @app.post("/api/v1/_test/shifts/{shift_id}/write")
     def write(access=Depends(require_shift_access(Role.attendant, writable=True))):

@@ -1,0 +1,800 @@
+/* HiSahab -- the whole visual system (CLAUDE.md §2, §12, §13.19).
+ *
+ * ONE palette, deliberately dark. §12's out-of-scope line names "role-based UI theming, a
+ * dark/light mode toggle, i18n" -- all three are per-user configurability features, each
+ * costing a second code path maintained forever. Shipping one palette that happens to be
+ * dark is none of them: no toggle, no second palette, no persistence, no setting.
+ *
+ * What IS honoured below, because these are accessibility signals rather than preferences:
+ * prefers-reduced-motion, prefers-reduced-transparency, prefers-contrast. Refusing those
+ * would be a bug, not scope discipline.
+ *
+ * No webfont, no CDN, no @import off-origin. §14 forbids the dependency and §13.19 makes any
+ * third-party asset able to read the session token; the CSP in index.html refuses it too.
+ */
+
+/* ==========================================================================
+   1. Tokens
+   ========================================================================== */
+
+:root {
+  /* --- Ground and surfaces -------------------------------------------------
+   * A near-black ground rather than pure #000: pure black makes the elevation
+   * shadows below invisible, so there is no way to show depth. Each step up is
+   * lighter, which is how a dark interface expresses "closer to the viewer".
+   */
+  --ground: #0b0b0d;
+  --surface: #141417;
+  --surface-raised: #1c1c21;
+  --surface-high: #26262c;
+
+  /* Translucent materials (§12 of the design vocabulary). Bigger surfaces read
+   * as thicker: more blur and a deeper shadow than a small chip. NEVER stack a
+   * light translucent surface on another -- legibility collapses. */
+  --material-chrome: rgba(20, 20, 23, 0.72);
+  --material-sheet: rgba(28, 28, 33, 0.82);
+  --material-blur-chrome: blur(20px) saturate(180%);
+  --material-blur-sheet: blur(30px) saturate(180%);
+  /* The bright top edge is light catching the material. It is what stops a
+   * translucent panel reading as a flat grey rectangle. */
+  --material-edge: rgba(255, 255, 255, 0.08);
+
+  /* --- Text ----------------------------------------------------------------
+   * Vibrancy: over blurred surfaces, flat grey text goes muddy. These are higher
+   * contrast than a naive 60%/40% ramp, and secondary text gets a small tracking
+   * bump rather than only a lighter colour.
+   */
+  --text-primary: #f2f2f7;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+  --text-on-accent: #ffffff;
+
+  /* --- Accent and status ---------------------------------------------------
+   * One accent. Status colours are used for meaning only -- never decoration --
+   * and each is paired with a tint for backgrounds so text never sits on a
+   * saturated field.
+   */
+  --accent: #0a84ff;
+  --accent-pressed: #0060df;
+  --accent-tint: rgba(10, 132, 255, 0.14);
+
+  --danger: #ff453a;
+  --danger-tint: rgba(255, 69, 58, 0.14);
+  --warning: #ff9f0a;
+  --warning-tint: rgba(255, 159, 10, 0.14);
+  --success: #32d74b;
+  --success-tint: rgba(50, 215, 75, 0.14);
+
+  /* Money that needs a sign read at a glance: short (owed to us) vs surplus. */
+  --short: var(--danger);
+  --surplus: var(--success);
+
+  --hairline: rgba(255, 255, 255, 0.09);
+  --hairline-strong: rgba(255, 255, 255, 0.16);
+
+  /* --- Elevation -----------------------------------------------------------
+   * Context-aware: heavier over busy content for separation. Three steps only;
+   * a fourth would be a distinction nobody can see.
+   */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 12px 48px rgba(0, 0, 0, 0.65);
+
+  /* --- Spacing -------------------------------------------------------------
+   * rem, not px, so the layout scales with the user's text-size setting --
+   * the web equivalent of Dynamic Type. A larger font must not break the grid.
+   */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.5rem;
+  --sp-6: 2rem;
+  --sp-7: 3rem;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 26px;
+  --radius-pill: 999px;
+
+  /* Safe areas, so the tab bar clears a home indicator on a real phone. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  --chrome-height: 3.25rem;
+  --tabbar-height: 3.5rem;
+
+  /* --- Motion --------------------------------------------------------------
+   * These two are the ONLY durations in the stylesheet, and they exist for
+   * non-gesture affordances (hover, colour, opacity). Anything a finger can
+   * touch is driven by the spring in js/motion/spring.js instead -- a CSS
+   * transition cannot be grabbed mid-flight and reversed, which §3 of the
+   * design vocabulary calls the single most important property.
+   */
+  --t-fast: 100ms;
+  --t-base: 200ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ==========================================================================
+   2. Reset and base
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Respect the user's text-size setting; never a fixed px root. */
+  font-size: 100%;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  /* System font stack. It already ships optical sizing, tracking tables and
+   * legibility tuning -- §15 of the design vocabulary says override only with a
+   * reason, and "no webfont" is also §14's no-dependency rule. */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--ground);
+  -webkit-font-smoothing: antialiased;
+  /* The app owns the viewport; only designated regions scroll. */
+  overscroll-behavior-y: none;
+}
+
+/* Kill the 300ms tap delay and the grey flash. §1: be vigilant about every
+ * latency on the input path. */
+* {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ==========================================================================
+   3. Typography
+   --------------------------------------------------------------------------
+   §15: tracking is size-specific and leading tracks size inversely. A single
+   letter-spacing value is wrong somewhere -- large text reads too loose, small
+   text too tight. Hierarchy is built from weight + size + leading as a set.
+   ========================================================================== */
+
+.t-display {
+  font-size: clamp(1.75rem, 7vw, 2.25rem);
+  line-height: 1.08;
+  letter-spacing: -0.022em; /* negative as it grows */
+  font-weight: 700;
+}
+
+.t-title {
+  font-size: 1.3125rem;
+  line-height: 1.2;
+  letter-spacing: -0.012em;
+  font-weight: 650;
+}
+
+.t-headline {
+  font-size: 1rem;
+  line-height: 1.3;
+  letter-spacing: -0.004em;
+  font-weight: 600;
+}
+
+.t-body {
+  font-size: 1rem;
+  line-height: 1.5;
+  letter-spacing: 0; /* body sits at zero */
+}
+
+.t-caption {
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  letter-spacing: 0.008em; /* positive for small text */
+  color: var(--text-secondary);
+}
+
+.t-micro {
+  font-size: 0.6875rem;
+  line-height: 1.3;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+/* Money and meter readings. Tabular figures so digits align in a column and a
+ * changing value does not make the row jitter -- the numeric equivalent of a
+ * stable layout, and it matters most in exactly the tables this app is. */
+.t-numeric {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.01em;
+}
+
+.t-amount {
+  font-size: 1.9375rem;
+  line-height: 1.05;
+  letter-spacing: -0.024em;
+  font-weight: 680;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A value the server did not give us. §14: null is never rendered as ₹0.00 --
+ * "not declared" and "declared zero" are different facts (§6.8). */
+.t-absent {
+  color: var(--text-tertiary);
+  font-style: italic;
+  letter-spacing: 0.004em;
+}
+
+/* ==========================================================================
+   4. Layout shell
+   ========================================================================== */
+
+#app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Chrome: a translucent floating layer with content scrolling UNDER it, not an
+ * opaque bar consuming a fixed strip (§12 of the design vocabulary). */
+.chrome {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  padding: calc(var(--safe-top) + var(--sp-2)) var(--sp-4) var(--sp-2);
+  background: var(--material-chrome);
+  -webkit-backdrop-filter: var(--material-blur-chrome);
+  backdrop-filter: var(--material-blur-chrome);
+  border-bottom: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: var(--chrome-height);
+}
+
+/* Scroll edge effect, not a hard divider: the hairline fades in only once
+ * content actually slides under the chrome. Driven by main.js. */
+.chrome[data-scrolled="true"] {
+  border-bottom-color: var(--hairline);
+}
+
+.screen {
+  flex: 1;
+  padding: var(--sp-4);
+  padding-bottom: calc(var(--tabbar-height) + var(--safe-bottom) + var(--sp-6));
+  max-width: 46rem;
+  width: 100%;
+  margin-inline: auto;
+}
+
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  justify-content: space-around;
+  padding-bottom: var(--safe-bottom);
+  background: var(--material-chrome);
+  -webkit-backdrop-filter: var(--material-blur-chrome);
+  backdrop-filter: var(--material-blur-chrome);
+  border-top: 1px solid var(--material-edge);
+}
+
+.tab {
+  flex: 1;
+  border: 0;
+  background: none;
+  color: var(--text-tertiary);
+  padding: var(--sp-2) var(--sp-1);
+  min-height: var(--tabbar-height);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font: inherit;
+  font-size: 0.625rem;
+  letter-spacing: 0.02em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease-out);
+}
+
+.tab[aria-selected="true"] {
+  color: var(--accent);
+}
+
+.tab .tab-glyph {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+/* ==========================================================================
+   5. Surfaces
+   ========================================================================== */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-4);
+  box-shadow: var(--shadow-1);
+}
+
+.card + .card {
+  margin-top: var(--sp-3);
+}
+
+.card-raised {
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-2);
+}
+
+/* A grouped list, the way a settings screen groups rows: one surface, hairlines
+ * between, nothing between the last row and the edge. */
+.list {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  min-height: 3rem;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.list-row:last-child {
+  border-bottom: 0;
+}
+
+.list-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.list-row-value {
+  margin-left: auto;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Section heading above a group. */
+.section-label {
+  padding: var(--sp-5) var(--sp-1) var(--sp-2);
+}
+
+/* ==========================================================================
+   6. Controls
+   --------------------------------------------------------------------------
+   §1: feedback lives on the PRESS, not the release. :active fires on
+   pointer-down, so the scale change is instant. Waiting for click feels dead.
+   ========================================================================== */
+
+.btn {
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: -0.006em;
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: var(--sp-3) var(--sp-5);
+  min-height: 2.75rem; /* comfortable touch target */
+  background: var(--surface-high);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: transform var(--t-fast) var(--ease-out),
+    background-color var(--t-fast) var(--ease-out),
+    opacity var(--t-fast) var(--ease-out);
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+.btn-primary:active {
+  background: var(--accent-pressed);
+}
+
+.btn-danger {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+
+.btn-plain {
+  background: none;
+  color: var(--accent);
+  padding-inline: var(--sp-2);
+}
+
+.btn-block {
+  display: block;
+  width: 100%;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* A disabled control must say WHY. §16's wayfinding rule: never leave a dead
+ * control with no explanation -- see the shortfall screen, where booking is
+ * disabled until cash is declared (409 NO_CASH_DECLARED otherwise). */
+.btn-reason {
+  margin-top: var(--sp-2);
+  text-align: center;
+}
+
+/* --- Fields --------------------------------------------------------------- */
+
+.field {
+  display: block;
+  margin-bottom: var(--sp-4);
+}
+
+.field-label {
+  display: block;
+  margin-bottom: var(--sp-2);
+}
+
+.field-input {
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  width: 100%;
+  padding: var(--sp-3) var(--sp-4);
+  min-height: 2.75rem;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  transition: border-color var(--t-fast) var(--ease-out),
+    background-color var(--t-fast) var(--ease-out);
+}
+
+.field-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface-high);
+}
+
+.field-input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+/* Inline validation, shown against the field named in the 422 envelope's
+ * detail[].loc -- §16: validate inline, not on submit. */
+.field-error {
+  margin-top: var(--sp-2);
+  color: var(--danger);
+}
+
+.field-hint {
+  margin-top: var(--sp-2);
+}
+
+select.field-input {
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-secondary) 50%),
+    linear-gradient(135deg, var(--text-secondary) 50%, transparent 50%);
+  background-position: calc(100% - 20px) center, calc(100% - 14px) center;
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  padding-right: var(--sp-7);
+}
+
+/* ==========================================================================
+   7. Sheets and scrims
+   --------------------------------------------------------------------------
+   Position and opacity are written by js/ui/sheet.js on every frame; nothing
+   here animates them. §12: a modal task pairs the surface with a dimming scrim
+   and pushes the background back. Sheets materialise -- blur and scale together
+   -- rather than fading, so the surface reads as glass arriving.
+   ========================================================================== */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  will-change: opacity;
+}
+
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 51;
+  max-height: 92dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--material-sheet);
+  -webkit-backdrop-filter: var(--material-blur-sheet);
+  backdrop-filter: var(--material-blur-sheet);
+  border-top: 1px solid var(--material-edge);
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  box-shadow: var(--shadow-3);
+  /* Starts off-screen; the spring takes over from the first frame. */
+  transform: translate3d(0, 100%, 0);
+  will-change: transform;
+  padding-bottom: var(--safe-bottom);
+}
+
+/* The grab handle. Its presence is the affordance that says "this can be
+ * dragged" -- without it, drag-to-dismiss is a secret. */
+.sheet-grip {
+  flex: none;
+  align-self: center;
+  width: 2.25rem;
+  height: 0.3125rem;
+  margin: var(--sp-3) 0 var(--sp-1);
+  border-radius: var(--radius-pill);
+  background: var(--hairline-strong);
+}
+
+.sheet-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4) var(--sp-3);
+}
+
+.sheet-title {
+  flex: 1;
+}
+
+.sheet-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 var(--sp-4) var(--sp-5);
+  /* So a drag that starts on the body scrolls it, and a drag on the grip or head
+   * moves the sheet. sheet.js only claims the gesture when scrollTop is 0. */
+  overscroll-behavior: contain;
+}
+
+/* ==========================================================================
+   8. Toasts
+   ========================================================================== */
+
+.toast-stack {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--tabbar-height) + var(--safe-bottom) + var(--sp-4));
+  z-index: 60;
+  width: min(28rem, calc(100vw - 2rem));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  background: var(--surface-high);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
+  padding: var(--sp-3) var(--sp-4);
+  will-change: transform, opacity;
+}
+
+.toast-error {
+  border-color: var(--danger);
+}
+
+/* The request_id, so a user can quote it (§9). Small, selectable, never hidden. */
+.toast-request-id {
+  margin-top: var(--sp-1);
+  user-select: all;
+  word-break: break-all;
+}
+
+/* ==========================================================================
+   9. Status pills and flags
+   ========================================================================== */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0.15rem var(--sp-3);
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.pill-open {
+  background: var(--success-tint);
+  color: var(--success);
+}
+.pill-closed {
+  background: var(--warning-tint);
+  color: var(--warning);
+}
+.pill-locked {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+.pill-review {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.pill-neutral {
+  background: var(--surface-high);
+  color: var(--text-secondary);
+}
+
+/* A row the server flagged for review (§6.7, §13.10). The left edge is the
+ * signal -- it survives at a glance down a long list, which a badge does not. */
+.flagged {
+  border-left: 3px solid var(--warning);
+}
+
+/* ==========================================================================
+   10. Utility
+   ========================================================================== */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+.stack > * + * {
+  margin-top: var(--sp-3);
+}
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hidden {
+  display: none !important;
+}
+.text-right {
+  text-align: right;
+}
+.text-short {
+  color: var(--short);
+}
+.text-surplus {
+  color: var(--surplus);
+}
+
+/* Visible only to screen readers. Used for the live region that announces a
+ * toast, so an error is not purely visual. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Wide content scrolls inside its own container; the page body never scrolls
+ * horizontally. */
+.scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.empty {
+  padding: var(--sp-7) var(--sp-4);
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+/* A capped list that did not return everything (`truncated: true`). Shown, never
+ * silent: a partial list a reader believes is complete produces a wrong total. */
+.truncation-notice {
+  margin-top: var(--sp-3);
+  padding: var(--sp-3);
+  border-radius: var(--radius-md);
+  background: var(--warning-tint);
+  color: var(--warning);
+}
+
+/* ==========================================================================
+   11. Accessibility preferences
+   --------------------------------------------------------------------------
+   These are the three signals §12's scope note does not cover, because they are
+   not preferences about taste. See app.css's header.
+   ========================================================================== */
+
+/* Reduced motion means GENTLER, not dead. Springs become short cross-fades and
+ * all overshoot is dropped -- but gesture tracking stays, because a drag that
+ * stops following the finger is broken, not calm. js/motion/spring.js reads the
+ * same query and settles immediately. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: var(--t-fast) !important;
+  }
+  .btn:active {
+    transform: none;
+  }
+}
+
+/* Frostier, not transparent. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --material-chrome: #141417;
+    --material-sheet: #1c1c21;
+    --material-blur-chrome: none;
+    --material-blur-sheet: none;
+  }
+  .chrome,
+  .tabbar,
+  .sheet {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* Near-solid backgrounds with defined, contrasting borders. */
+@media (prefers-contrast: more) {
+  :root {
+    --text-secondary: #d4d4d8;
+    --text-tertiary: #a1a1aa;
+    --hairline: rgba(255, 255, 255, 0.28);
+    --hairline-strong: rgba(255, 255, 255, 0.45);
+    --material-chrome: #101013;
+    --material-sheet: #17171b;
+  }
+  .card,
+  .list,
+  .field-input {
+    border-width: 1px;
+    border-color: var(--hairline);
+  }
+}

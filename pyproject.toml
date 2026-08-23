@@ -37,6 +37,16 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["app*"]
 
+# Phase 12. `packages.find` collects Python packages; the frontend is data files inside one,
+# so without this the wheel installs an `app` package with no `static/` and `create_app`
+# logs "static directory not found" in production while working perfectly from a source
+# checkout. That is a deployment-only failure, which is the worst kind to discover late.
+#
+# Not a build step: no bundler, no transpiler, nothing generated. setuptools copies the
+# files it is told to copy (CLAUDE.md §2, §14).
+[tool.setuptools.package-data]
+app = ["static/*.html", "static/*.css", "static/js/**/*.js"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
