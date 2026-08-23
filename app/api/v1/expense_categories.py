@@ -33,9 +33,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import Actor, require_role
+from app.core.audit import AuditAction
 from app.core.errors import AppError
 from app.core.roles import Role
 from app.db.session import get_db
+from app.services import audit
 from app.models.expense_category import CODE_PATTERN, ExpenseCategory
 
 logger = logging.getLogger(__name__)
@@ -118,6 +120,27 @@ def resolve_outlet_from_expense_category(
     return outlet_id
 
 
+def _audit_snapshot(row: ExpenseCategory) -> dict[str, object]:
+    """What §5.3's trail keeps about a category.
+
+    `requires_receipt` is the reason this table needed auditing at all. §6.11 goes to
+    considerable trouble to *snapshot* the answer onto each expense at insert, precisely
+    because this flag is editable -- so flipping it never rewrites whether history complied.
+    That is the right design and it leaves a hole: the flip itself was invisible. The system
+    recorded what the rule was on the day, and not who changed the rule.
+
+    `code` is included although it is immutable (§5.1): a category's code is what every
+    historical expense is grouped by in §6.7's aggregate, so the insert row is the record of
+    what that grouping was declared to mean.
+    """
+    return {
+        "code": row.code,
+        "display_name": row.display_name,
+        "requires_receipt": row.requires_receipt,
+        "is_active": row.is_active,
+    }
+
+
 def _to_response(row: ExpenseCategory) -> ExpenseCategoryResponse:
     return ExpenseCategoryResponse(
         id=row.id,
@@ -198,6 +221,18 @@ def create_expense_category(
         created_by=actor.user.id,
     )
     db.add(row)
+    # flush so the id exists for the audit row; one transaction carries both (§5.3).
+    db.flush()
+
+    audit.record(
+        db,
+        outlet_id=actor.outlet_id,
+        table_name="expense_categories",
+        record_id=row.id,
+        action=AuditAction.insert,
+        changed_by=actor.user.id,
+        new_values=_audit_snapshot(row),
+    )
     db.commit()
     db.refresh(row)
 
@@ -242,11 +277,25 @@ def update_expense_category(
             detail="Provide at least one field to change.",
         )
 
+    # Before the mutation, or old_values records the new state and the change is unreadable.
+    before = _audit_snapshot(row)
+
     for field, value in changes.items():
         if value is None:
             continue
         setattr(row, field, value.strip() if isinstance(value, str) else value)
 
+    audit.record(
+        db,
+        outlet_id=actor.outlet_id,
+        table_name="expense_categories",
+        record_id=row.id,
+        # `update`, including a deactivation -- see fuel_types.py for why not `status_change`.
+        action=AuditAction.update,
+        changed_by=actor.user.id,
+        old_values=before,
+        new_values=_audit_snapshot(row),
+    )
     db.commit()
     db.refresh(row)
 

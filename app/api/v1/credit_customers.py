@@ -38,9 +38,11 @@ from sqlalchemy.orm import Session
 
 from app.api.cursor import DEFAULT_LIMIT, MAX_LIMIT, decode_cursor, encode_cursor
 from app.api.deps import Actor, require_role
+from app.core.audit import AuditAction
 from app.core.errors import AppError
 from app.core.roles import Role
 from app.db.session import get_db
+from app.services import audit
 from app.models.credit import CreditCustomer, CreditRepayment, CreditSale
 from app.services import credit as credit_service
 
@@ -206,6 +208,31 @@ def resolve_outlet_from_credit_customer(
             detail="No credit customer with that id.",
         )
     return outlet_id
+
+
+def _audit_snapshot(row: CreditCustomer) -> dict[str, object]:
+    """What §5.3's trail keeps about a credit customer.
+
+    `credit_limit` is why this table needed auditing, and the reasoning is §6.6's own. That
+    section insists an admin *override* of the limit is both stored on the row and
+    audit-logged, because allowing a sale past the limit is a decision somebody has to answer
+    for. Quietly **raising the limit** reaches the same outcome for every future sale and, until
+    Phase 11, recorded nothing at all -- the row held the new figure and no trace of the old.
+
+    A null limit means *no limit* (§6.6) and is recorded as JSON null, never coerced to 0. The
+    two are opposite facts: null trusts the customer without bound, 0 refuses them every sale.
+
+    `phone` is included because it is the natural key §5.1 chose over the name -- names
+    genuinely collide at a pump, phone numbers do not -- so a change to it is a change to who
+    this row is, and it is the one field here whose edit could merge two people's ledgers.
+    """
+    return {
+        "name": row.name,
+        "phone": row.phone,
+        "vehicle_numbers": row.vehicle_numbers,
+        "credit_limit": row.credit_limit,
+        "is_active": row.is_active,
+    }
 
 
 def _to_list_item(row: CreditCustomer) -> CreditCustomerListItem:
@@ -385,6 +412,18 @@ def create_credit_customer(
         created_by=actor.user.id,
     )
     db.add(row)
+    # flush so the id exists for the audit row; one transaction carries both (§5.3).
+    db.flush()
+
+    audit.record(
+        db,
+        outlet_id=actor.outlet_id,
+        table_name="credit_customers",
+        record_id=row.id,
+        action=AuditAction.insert,
+        changed_by=actor.user.id,
+        new_values=_audit_snapshot(row),
+    )
     db.commit()
     db.refresh(row)
 
@@ -441,11 +480,27 @@ def update_credit_customer(
     if changes.get("vehicle_numbers") is not None:
         changes["vehicle_numbers"] = _normalise_vehicles(changes["vehicle_numbers"])
 
+    # Before the mutation, or old_values records the new state and the change is unreadable.
+    before = _audit_snapshot(customer)
+
     for field, value in changes.items():
         if value is None and field not in _NULLABLE_FIELDS:
             continue
         setattr(customer, field, value)
 
+    audit.record(
+        db,
+        outlet_id=customer.outlet_id,
+        table_name="credit_customers",
+        record_id=customer.id,
+        # `update`, including a deactivation -- see fuel_types.py for why not `status_change`.
+        # Deactivating a customer is §5.1's asymmetric retirement: no new udhaar, repayments
+        # still accepted, so it is squarely an ordinary field change.
+        action=AuditAction.update,
+        changed_by=actor.user.id,
+        old_values=before,
+        new_values=_audit_snapshot(customer),
+    )
     db.commit()
     db.refresh(customer)
 

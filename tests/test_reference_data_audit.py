@@ -24,6 +24,7 @@ because nothing failed when it was missing.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -456,3 +457,644 @@ async def test_a_non_admin_registering_a_nozzle_writes_no_audit_row(
 
     assert response.status_code == 403
     assert _audit_count(engine, table_name="nozzles") == before
+
+
+# --- fuel_prices and fuel_margins (§4.1, §4.6, §5.1) --------------------------
+#
+# The sharpest case in this phase. Both tables are append-only -- no UPDATE, no DELETE,
+# enforced by a trigger -- so `entered_by` on the row looks like it already answers "who".
+# It does not answer the question that matters, because **backdating is permitted**: a row
+# whose `effective_from` is in the past silently revalues shifts that are already closed
+# (§6.3 recomputes valuation on read). §4.1 made these tables append-only precisely because
+# a mutable price column "silently corrupts every historical report" -- and until Phase 11
+# the one operation that can still do that left no trail at all.
+
+# Well clear of "now" in both directions, so the backdating assertions do not depend on when
+# the suite runs. The `datetime` pair is what `make_fuel_price` takes; the ISO strings are
+# what a JSON body carries.
+_FUTURE_AT = datetime(2030, 6, 1, 6, 0, tzinfo=timezone.utc)
+_PAST_AT = datetime(2026, 1, 1, 6, 0, tzinfo=timezone.utc)
+_FUTURE = _FUTURE_AT.isoformat()
+_PAST = _PAST_AT.isoformat()
+
+
+def _clear_effective_dated(engine, table: str) -> None:
+    """Append-only means the trigger has to come off to clean up (the house pattern)."""
+    with engine.begin() as connection:
+        connection.execute(
+            text(f"ALTER TABLE {table} DISABLE TRIGGER trg_{table}_append_only")
+        )
+        connection.execute(text(f"DELETE FROM {table}"))
+        connection.execute(
+            text(f"ALTER TABLE {table} ENABLE TRIGGER trg_{table}_append_only")
+        )
+
+
+async def test_entering_a_rate_records_one_insert_with_the_money_as_a_string(
+    client, make_user, auth_headers, engine, fuel_type_ids
+) -> None:
+    """§3 rule 1 reaches into the audit trail too.
+
+    `jsonable_encoder`'s default for `Decimal` is `float`, which is wrong twice over here: it
+    is the forbidden type, and it drops the scale, so `Decimal("104.21")` would come back as
+    `104.21` the float and the row could no longer show two decimal places. `services/audit.py`
+    stringifies instead, and this asserts it end to end rather than at the helper.
+    """
+    admin = make_user("admin")
+
+    response = await client.post(
+        "/api/v1/fuel-prices",
+        headers=auth_headers(admin),
+        json={
+            "fuel_type_id": str(fuel_type_ids["PETROL"]),
+            "rate_per_unit": "104.21",
+            "effective_from": _FUTURE,
+        },
+    )
+    try:
+        assert response.status_code == 201
+        rows = _audit_rows(
+            engine, table_name="fuel_prices", record_id=response.json()["id"]
+        )
+        assert len(rows) == 1
+        assert rows[0]["action"] == "insert"
+        assert rows[0]["old_values"] is None
+        # A string, not a float -- and it round-trips exactly.
+        assert rows[0]["new_values"]["rate_per_unit"] == "104.21"
+        assert Decimal(rows[0]["new_values"]["rate_per_unit"]) == Decimal("104.21")
+    finally:
+        _clear_effective_dated(engine, "fuel_prices")
+
+
+async def test_a_backdated_rate_is_recorded_as_backdated(
+    client, make_user, auth_headers, engine, fuel_type_ids
+) -> None:
+    """The assertion this whole step exists for.
+
+    Backdating is allowed on purpose: refusing it would leave Tuesday's unentered revision
+    valuing Tuesday and Wednesday at a stale rate permanently, with no legal correction. The
+    cost is that it revalues closed shifts, so the trail has to say it happened -- a log line
+    alone is not the record §5.3 requires.
+    """
+    admin = make_user("admin")
+
+    response = await client.post(
+        "/api/v1/fuel-prices",
+        headers=auth_headers(admin),
+        json={
+            "fuel_type_id": str(fuel_type_ids["PETROL"]),
+            "rate_per_unit": "99.99",
+            "effective_from": _PAST,
+        },
+    )
+    try:
+        assert response.status_code == 201
+        assert response.json()["is_backdated"] is True
+
+        rows = _audit_rows(
+            engine, table_name="fuel_prices", record_id=response.json()["id"]
+        )
+        assert rows[0]["new_values"]["is_backdated"] is True
+        assert rows[0]["changed_by"] == admin
+    finally:
+        _clear_effective_dated(engine, "fuel_prices")
+
+
+async def test_a_forward_dated_rate_is_recorded_as_not_backdated(
+    client, make_user, auth_headers, engine, fuel_type_ids
+) -> None:
+    """The other half, so the flag is proven to discriminate rather than always being true."""
+    response = await client.post(
+        "/api/v1/fuel-prices",
+        headers=auth_headers(make_user("admin")),
+        json={
+            "fuel_type_id": str(fuel_type_ids["PETROL"]),
+            "rate_per_unit": "104.21",
+            "effective_from": _FUTURE,
+        },
+    )
+    try:
+        assert response.status_code == 201
+        rows = _audit_rows(
+            engine, table_name="fuel_prices", record_id=response.json()["id"]
+        )
+        assert rows[0]["new_values"]["is_backdated"] is False
+    finally:
+        _clear_effective_dated(engine, "fuel_prices")
+
+
+async def test_a_clashing_effective_from_writes_no_audit_row(
+    client, make_user, auth_headers, engine, fuel_type_ids, make_fuel_price
+) -> None:
+    """Append-only means a clash cannot be resolved by overwriting, so it is a 409 -- and a
+    refusal writes nothing."""
+    admin = make_user("admin")
+    make_fuel_price(fuel_type_ids["PETROL"], "104.21", _FUTURE_AT, entered_by=admin)
+    before = _audit_count(engine, table_name="fuel_prices")
+
+    response = await client.post(
+        "/api/v1/fuel-prices",
+        headers=auth_headers(admin),
+        json={
+            "fuel_type_id": str(fuel_type_ids["PETROL"]),
+            "rate_per_unit": "105.00",
+            "effective_from": _FUTURE,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "PRICE_ALREADY_EFFECTIVE_AT"
+    assert _audit_count(engine, table_name="fuel_prices") == before
+
+
+async def test_entering_a_margin_records_one_insert(
+    client, make_user, auth_headers, engine, fuel_type_ids
+) -> None:
+    """§4.6: margin is stored directly and effective-dated, never derived from a purchase
+    price. CBG's ₹2.28/kg is the only one entered at this outlet (§14), so the record of who
+    entered it -- and of anybody who later changes it -- is the whole history there is."""
+    admin = make_user("admin")
+
+    response = await client.post(
+        "/api/v1/fuel-margins",
+        headers=auth_headers(admin),
+        json={
+            "fuel_type_id": str(fuel_type_ids["CBG"]),
+            "margin_per_unit": "2.28",
+            "effective_from": _FUTURE,
+        },
+    )
+    try:
+        assert response.status_code == 201
+        rows = _audit_rows(
+            engine, table_name="fuel_margins", record_id=response.json()["id"]
+        )
+        assert len(rows) == 1
+        assert rows[0]["action"] == "insert"
+        assert rows[0]["new_values"]["margin_per_unit"] == "2.28"
+        assert rows[0]["new_values"]["is_backdated"] is False
+    finally:
+        _clear_effective_dated(engine, "fuel_margins")
+
+
+async def test_a_backdated_margin_is_recorded_as_backdated(
+    client, make_user, auth_headers, engine, fuel_type_ids
+) -> None:
+    response = await client.post(
+        "/api/v1/fuel-margins",
+        headers=auth_headers(make_user("admin")),
+        json={
+            "fuel_type_id": str(fuel_type_ids["CBG"]),
+            "margin_per_unit": "2.28",
+            "effective_from": _PAST,
+        },
+    )
+    try:
+        assert response.status_code == 201
+        rows = _audit_rows(
+            engine, table_name="fuel_margins", record_id=response.json()["id"]
+        )
+        assert rows[0]["new_values"]["is_backdated"] is True
+    finally:
+        _clear_effective_dated(engine, "fuel_margins")
+
+
+async def test_a_non_admin_entering_a_rate_writes_no_audit_row(
+    client, make_user, auth_headers, engine, fuel_type_ids
+) -> None:
+    """§8 puts prices and margins above the manager floor."""
+    before = _audit_count(engine, table_name="fuel_prices")
+
+    response = await client.post(
+        "/api/v1/fuel-prices",
+        headers=auth_headers(make_user("manager")),
+        json={
+            "fuel_type_id": str(fuel_type_ids["PETROL"]),
+            "rate_per_unit": "104.21",
+            "effective_from": _FUTURE,
+        },
+    )
+
+    assert response.status_code == 403
+    assert _audit_count(engine, table_name="fuel_prices") == before
+
+
+async def test_a_rate_for_a_deactivated_fuel_is_refused_and_writes_no_audit_row(
+    client, make_user, auth_headers, engine, make_fuel_type
+) -> None:
+    """§5.1 retires a fuel with `is_active = false` rather than a DELETE, and a retired fuel
+    must not accept new rates.
+
+    Both halves matter. Accepting one would put a live rate on a product the outlet has
+    stopped selling, and §6.3 would happily value a stray reading with it. And the refusal
+    must leave no trail entry, or the log records a revision that never took effect.
+
+    This is one of Step 0's uncovered branches: it was reachable and untested in both
+    append-only routers, and it is exactly the "a refused write records nothing" case the
+    verification checklist requires -- so it lands here rather than in a separate sweep.
+    """
+    admin = make_user("admin")
+    retired = make_fuel_type("RETIRED_FUEL", is_active=False)
+    before = _audit_count(engine, table_name="fuel_prices")
+
+    response = await client.post(
+        "/api/v1/fuel-prices",
+        headers=auth_headers(admin),
+        json={
+            "fuel_type_id": str(retired),
+            "rate_per_unit": "104.21",
+            "effective_from": _FUTURE,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "FUEL_TYPE_NOT_FOUND"
+    assert _audit_count(engine, table_name="fuel_prices") == before
+
+
+async def test_a_margin_for_a_deactivated_fuel_is_refused_and_writes_no_audit_row(
+    client, make_user, auth_headers, engine, make_fuel_type
+) -> None:
+    """The `fuel_margins` half of the branch above. The two routers are structurally
+    identical (§4.6), and a guard present in one and missing in the other is precisely what
+    parallel code invites."""
+    admin = make_user("admin")
+    retired = make_fuel_type("RETIRED_MARGIN", is_active=False)
+    before = _audit_count(engine, table_name="fuel_margins")
+
+    response = await client.post(
+        "/api/v1/fuel-margins",
+        headers=auth_headers(admin),
+        json={
+            "fuel_type_id": str(retired),
+            "margin_per_unit": "2.28",
+            "effective_from": _FUTURE,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "FUEL_TYPE_NOT_FOUND"
+    assert _audit_count(engine, table_name="fuel_margins") == before
+
+
+# --- expense_categories (§5.1, §6.11) -----------------------------------------
+#
+# The table §11's original wording did not know about, because Phase 8 had not happened yet.
+# `requires_receipt` is §6.11's editable knob, and §6.11 snapshots its answer onto every
+# expense at insert *because* it is editable -- so flipping it never rewrites whether history
+# complied. That is right, and it left the flip itself invisible: the system recorded what the
+# rule was on the day, and not who changed the rule.
+
+
+async def test_creating_an_expense_category_records_one_insert(
+    client, make_user, auth_headers, engine, clean_expense_categories
+) -> None:
+    """The `TEA` case from §5.1 -- adding a category you already spend on is data entry."""
+    admin = make_user("admin")
+
+    response = await client.post(
+        "/api/v1/expense-categories",
+        headers=auth_headers(admin),
+        json={"code": "TEA", "display_name": "Tea", "requires_receipt": False},
+    )
+
+    assert response.status_code == 201
+    rows = _audit_rows(
+        engine, table_name="expense_categories", record_id=response.json()["id"]
+    )
+    assert len(rows) == 1
+    assert rows[0]["action"] == "insert"
+    assert rows[0]["old_values"] is None
+    assert rows[0]["new_values"]["code"] == "TEA"
+    assert rows[0]["new_values"]["requires_receipt"] is False
+
+
+async def test_flipping_requires_receipt_records_both_sides(
+    client, make_user, auth_headers, engine, make_expense_category
+) -> None:
+    """The assertion this table was added to the phase for.
+
+    §6.11 is explicit that flipping this flag must not retroactively declare historical
+    expenses non-compliant, and it does not -- `expenses.receipt_required` is the snapshot
+    taken at insert. The consequence is that after the flip, nothing anywhere said who
+    loosened or tightened the control. Now the trail does.
+    """
+    admin = make_user("admin")
+    category_id = make_expense_category("AUDITRCPT", requires_receipt=False)
+
+    response = await client.patch(
+        f"/api/v1/expense-categories/{category_id}",
+        headers=auth_headers(admin),
+        json={"requires_receipt": True},
+    )
+
+    assert response.status_code == 200
+    rows = _audit_rows(
+        engine, table_name="expense_categories", record_id=category_id
+    )
+    assert len(rows) == 1
+    assert rows[0]["action"] == "update"
+    assert rows[0]["old_values"]["requires_receipt"] is False
+    assert rows[0]["new_values"]["requires_receipt"] is True
+    assert rows[0]["changed_by"] == admin
+
+
+async def test_a_refused_category_code_change_writes_no_audit_row(
+    client, make_user, auth_headers, engine, make_expense_category
+) -> None:
+    """§5.1 freezes `code` because changing it would retroactively relabel every expense ever
+    filed under it, and §6.7's per-category aggregate would then be grouping on a label that
+    means something different. A phantom audit row for that refusal would be a record of the
+    single most misleading edit available in this table."""
+    admin = make_user("admin")
+    category_id = make_expense_category("AUDITFROZEN")
+
+    response = await client.patch(
+        f"/api/v1/expense-categories/{category_id}",
+        headers=auth_headers(admin),
+        json={"code": "SOMETHINGELSE"},
+    )
+
+    assert response.status_code == 422
+    assert _audit_rows(engine, table_name="expense_categories", record_id=category_id) == []
+
+
+async def test_a_non_admin_creating_a_category_writes_no_audit_row(
+    client, make_user, auth_headers, engine, clean_expense_categories
+) -> None:
+    """§8: every role may *list* categories to fill a dropdown; only an admin may manage
+    them."""
+    before = _audit_count(engine, table_name="expense_categories")
+
+    response = await client.post(
+        "/api/v1/expense-categories",
+        headers=auth_headers(make_user("manager")),
+        json={"code": "SNEAKY", "display_name": "Sneaky", "requires_receipt": False},
+    )
+
+    assert response.status_code == 403
+    assert _audit_count(engine, table_name="expense_categories") == before
+
+
+# --- credit_customers (§5.1, §6.6) --------------------------------------------
+#
+# §6.6 insists that an admin *override* of a credit limit is stored on the row AND
+# audit-logged, because letting a sale past the limit is a decision somebody answers for.
+# Quietly **raising the limit** reaches the same outcome for every future sale, and recorded
+# nothing at all until Phase 11.
+
+
+async def test_creating_a_credit_customer_records_one_insert(
+    client, make_user, auth_headers, engine, clean_credit
+) -> None:
+    admin = make_user("admin")
+
+    response = await client.post(
+        "/api/v1/credit-customers",
+        headers=auth_headers(admin),
+        json={
+            "name": "Ramesh Transport",
+            "phone": "9876500011",
+            "credit_limit": "5000.00",
+        },
+    )
+
+    assert response.status_code == 201
+    rows = _audit_rows(
+        engine, table_name="credit_customers", record_id=response.json()["id"]
+    )
+    assert len(rows) == 1
+    assert rows[0]["action"] == "insert"
+    # Money as a string, to the paisa (§3 rule 1).
+    assert rows[0]["new_values"]["credit_limit"] == "5000.00"
+    assert rows[0]["new_values"]["phone"] == "9876500011"
+
+
+async def test_raising_a_credit_limit_records_both_figures(
+    client, make_user, auth_headers, engine, make_credit_customer, clean_credit
+) -> None:
+    """The single most consequential edit in this table, and the reason it is in this phase.
+
+    §6.6 refuses a sale when `outstanding + amount > credit_limit`. Raising the limit is how
+    that refusal stops happening, permanently and for every future sale -- a quieter route to
+    the same place as the override §6.6 already demands a stored reason for.
+    """
+    admin = make_user("admin")
+    customer_id = make_credit_customer(name="Ramesh", credit_limit="5000.00")
+
+    response = await client.patch(
+        f"/api/v1/credit-customers/{customer_id}",
+        headers=auth_headers(admin),
+        json={"credit_limit": "50000.00"},
+    )
+
+    assert response.status_code == 200
+    rows = _audit_rows(engine, table_name="credit_customers", record_id=customer_id)
+    assert len(rows) == 1
+    assert rows[0]["action"] == "update"
+    assert rows[0]["old_values"]["credit_limit"] == "5000.00"
+    assert rows[0]["new_values"]["credit_limit"] == "50000.00"
+    assert Decimal(rows[0]["new_values"]["credit_limit"]) == Decimal("50000.00")
+
+
+async def test_removing_a_credit_limit_records_null_not_zero(
+    client, make_user, auth_headers, engine, make_credit_customer, clean_credit
+) -> None:
+    """§6.6 and §14: `credit_limit IS NULL` means **no limit**, and coercing it to `0` would
+    refuse every sale to the customers who are trusted most.
+
+    The two are opposite facts, and the trail has to keep them apart -- a `0` here would read
+    as somebody having cut a customer off, when what happened is the reverse.
+    """
+    admin = make_user("admin")
+    customer_id = make_credit_customer(name="Trusted", credit_limit="5000.00")
+
+    response = await client.patch(
+        f"/api/v1/credit-customers/{customer_id}",
+        headers=auth_headers(admin),
+        json={"credit_limit": None},
+    )
+
+    assert response.status_code == 200
+    rows = _audit_rows(engine, table_name="credit_customers", record_id=customer_id)
+    assert rows[0]["old_values"]["credit_limit"] == "5000.00"
+    assert rows[0]["new_values"]["credit_limit"] is None
+    assert rows[0]["new_values"]["credit_limit"] != 0
+
+
+async def test_deactivating_a_customer_is_an_update(
+    client, make_user, auth_headers, engine, make_credit_customer, clean_credit
+) -> None:
+    """§5.1's asymmetric retirement: a deactivated customer refuses new udhaar but still
+    accepts repayments -- you retire somebody precisely to stop the debt growing while they
+    pay it off. Squarely an ordinary field change, not a lifecycle move."""
+    admin = make_user("admin")
+    customer_id = make_credit_customer(name="Leaving")
+
+    response = await client.patch(
+        f"/api/v1/credit-customers/{customer_id}",
+        headers=auth_headers(admin),
+        json={"is_active": False},
+    )
+
+    assert response.status_code == 200
+    rows = _audit_rows(engine, table_name="credit_customers", record_id=customer_id)
+    assert rows[0]["action"] == "update"
+    assert rows[0]["old_values"]["is_active"] is True
+    assert rows[0]["new_values"]["is_active"] is False
+
+
+async def test_a_duplicate_customer_phone_writes_no_audit_row(
+    client, make_user, auth_headers, engine, make_credit_customer, clean_credit
+) -> None:
+    """§5.1 makes the phone the natural key: two rows for one person split one real balance
+    across two ledgers, and §6.6's limit then never fires against either."""
+    admin = make_user("admin")
+    make_credit_customer(name="First", phone="9876500022")
+    before = _audit_count(engine, table_name="credit_customers")
+
+    response = await client.post(
+        "/api/v1/credit-customers",
+        headers=auth_headers(admin),
+        json={"name": "Second", "phone": "9876500022"},
+    )
+
+    assert response.status_code == 409
+    assert _audit_count(engine, table_name="credit_customers") == before
+
+
+# --- outlet_shift_templates (§5.1, §6.3) --------------------------------------
+#
+# §5.1 is careful that editing a template must not revalue a shift that already traded, and it
+# does not -- `started_at` is materialised onto the shift row at creation. But the edit still
+# moves the valuation instant for every shift opened *afterwards*: §6.3 prices a whole shift
+# at the rate effective at its `started_at`, and §4.1 puts a revision at 06:00 IST.
+
+
+async def test_creating_a_shift_template_records_one_insert(
+    client, make_user, auth_headers, engine
+) -> None:
+    admin = make_user("admin")
+
+    response = await client.post(
+        "/api/v1/shift-templates",
+        headers=auth_headers(admin),
+        json={
+            "sequence": 7,
+            "label": "Audit Night",
+            "starts_at_local": "22:00:00",
+            "ends_at_local": "06:00:00",
+        },
+    )
+    try:
+        assert response.status_code == 201
+        rows = _audit_rows(
+            engine,
+            table_name="outlet_shift_templates",
+            record_id=response.json()["id"],
+        )
+        assert len(rows) == 1
+        assert rows[0]["action"] == "insert"
+        assert rows[0]["new_values"]["sequence"] == 7
+        assert rows[0]["new_values"]["starts_at_local"] == "22:00:00"
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM outlet_shift_templates WHERE sequence = 7")
+            )
+
+
+async def test_moving_a_templates_start_time_records_both_sides(
+    client, make_user, auth_headers, engine
+) -> None:
+    """The edit that quietly moves §6.3's valuation instant.
+
+    This outlet's seeded template starts at 06:00 IST, which §6.3 notes is the revision moment
+    itself -- so one rate covers the whole day with nothing to apportion. Moving the start to
+    05:30 puts every future shift on the *previous* day's rate for its entire length, and
+    §6.3's mid-shift approximation starts applying where it did not before. Nothing else in
+    the schema records that somebody did this.
+    """
+    admin = make_user("admin")
+
+    created = await client.post(
+        "/api/v1/shift-templates",
+        headers=auth_headers(admin),
+        json={
+            "sequence": 8,
+            "label": "Audit Day",
+            "starts_at_local": "06:00:00",
+            "ends_at_local": "22:00:00",
+        },
+    )
+    try:
+        assert created.status_code == 201
+        template_id = created.json()["id"]
+
+        response = await client.patch(
+            f"/api/v1/shift-templates/{template_id}",
+            headers=auth_headers(admin),
+            json={"starts_at_local": "05:30:00"},
+        )
+
+        assert response.status_code == 200
+        rows = _audit_rows(
+            engine, table_name="outlet_shift_templates", record_id=template_id
+        )
+        # The insert, then the update.
+        assert [row["action"] for row in rows] == ["insert", "update"]
+        assert rows[1]["old_values"]["starts_at_local"] == "06:00:00"
+        assert rows[1]["new_values"]["starts_at_local"] == "05:30:00"
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM outlet_shift_templates WHERE sequence = 8")
+            )
+
+
+async def test_a_zero_length_template_edit_writes_no_audit_row(
+    client, make_user, auth_headers, engine
+) -> None:
+    """The ordering test for this router specifically.
+
+    `update_shift_template` is the one endpoint in the retrofit whose validation runs *after*
+    the mutation -- the zero-length check reads the already-updated object. Staging the audit
+    row before that check would describe a change the request then refused: §5.3's "log that
+    lies", reached by ordering rather than by a stray commit.
+    """
+    admin = make_user("admin")
+
+    created = await client.post(
+        "/api/v1/shift-templates",
+        headers=auth_headers(admin),
+        json={
+            "sequence": 9,
+            "label": "Audit Zero",
+            "starts_at_local": "06:00:00",
+            "ends_at_local": "22:00:00",
+        },
+    )
+    try:
+        assert created.status_code == 201
+        template_id = created.json()["id"]
+
+        response = await client.patch(
+            f"/api/v1/shift-templates/{template_id}",
+            headers=auth_headers(admin),
+            # Collapses the template onto its own end time.
+            json={"starts_at_local": "22:00:00"},
+        )
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "SHIFT_TEMPLATE_ZERO_LENGTH"
+
+        rows = _audit_rows(
+            engine, table_name="outlet_shift_templates", record_id=template_id
+        )
+        # The create's insert row, and nothing for the refused edit.
+        assert [row["action"] for row in rows] == ["insert"]
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM outlet_shift_templates WHERE sequence = 9")
+            )

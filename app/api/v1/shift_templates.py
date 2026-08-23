@@ -27,9 +27,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import Actor, get_default_outlet_id, require_role
+from app.core.audit import AuditAction
 from app.core.errors import AppError
 from app.core.roles import Role
 from app.db.session import get_db
+from app.services import audit
 from app.models.shift import OutletShiftTemplate
 
 logger = logging.getLogger(__name__)
@@ -98,6 +100,25 @@ class ShiftTemplateUpdate(BaseModel):
     starts_at_local: time | None = None
     ends_at_local: time | None = None
     is_active: bool | None = None
+
+
+def _audit_snapshot(template: OutletShiftTemplate) -> dict[str, object]:
+    """What §5.3's trail keeps about a shift template.
+
+    The times are the point. §5.1 is careful that editing a template must not revalue a shift
+    that already happened -- and it does not, because `started_at` is materialised onto the
+    shift row at creation. But the edit still moves the valuation instant for every shift
+    opened *afterwards*: §6.3 prices a whole shift at the rate effective at its `started_at`,
+    and §4.1 puts a revision at 06:00 IST. Moving a template's start from 06:00 to 05:30 puts
+    every future shift on the *previous* day's rate, and nothing else records who did it.
+    """
+    return {
+        "sequence": template.sequence,
+        "label": template.label,
+        "starts_at_local": template.starts_at_local,
+        "ends_at_local": template.ends_at_local,
+        "is_active": template.is_active,
+    }
 
 
 def _to_response(template: OutletShiftTemplate) -> ShiftTemplateResponse:
@@ -176,6 +197,18 @@ def create_shift_template(
         created_by=actor.user.id,
     )
     db.add(template)
+    # flush so the id exists for the audit row; one transaction carries both (§5.3).
+    db.flush()
+
+    audit.record(
+        db,
+        outlet_id=actor.outlet_id,
+        table_name="outlet_shift_templates",
+        record_id=template.id,
+        action=AuditAction.insert,
+        changed_by=actor.user.id,
+        new_values=_audit_snapshot(template),
+    )
     db.commit()
     db.refresh(template)
 
@@ -211,6 +244,9 @@ def update_shift_template(
             detail="Provide at least one field to change.",
         )
 
+    # Before the mutation, or old_values records the new state and the change is unreadable.
+    before = _audit_snapshot(template)
+
     for field, value in changes.items():
         if value is None:
             continue
@@ -223,6 +259,20 @@ def update_shift_template(
             detail="A shift template must start and end at different times.",
         )
 
+    # Deliberately *after* the zero-length check above, which is the one validation in this
+    # router that runs post-mutation. Staging the audit row before it would describe a change
+    # the request then refused -- the "log that lies" §5.3 warns about, reached by ordering
+    # rather than by a stray commit.
+    audit.record(
+        db,
+        outlet_id=actor.outlet_id,
+        table_name="outlet_shift_templates",
+        record_id=template.id,
+        action=AuditAction.update,
+        changed_by=actor.user.id,
+        old_values=before,
+        new_values=_audit_snapshot(template),
+    )
     db.commit()
     db.refresh(template)
 
