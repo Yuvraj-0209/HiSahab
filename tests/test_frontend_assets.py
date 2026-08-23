@@ -93,6 +93,38 @@ def test_every_module_parses(path: pathlib.Path) -> None:
     assert result.returncode == 0, f"{path.name} does not parse:\n{result.stderr}"
 
 
+def test_every_module_is_reachable_from_the_entry_point() -> None:
+    """No orphans: a module nobody imports is dead code that still has to be maintained.
+
+    Walks the import graph from js/main.js the way the browser does, following relative
+    specifiers. Anything under js/ that the walk never reaches is either unused or was meant
+    to be wired up and was forgotten -- and the second case is a feature that silently does
+    not exist.
+    """
+    entry = _STATIC / "js" / "main.js"
+    assert entry.exists()
+
+    seen: set[pathlib.Path] = set()
+    queue = [entry]
+    pattern = re.compile(r"""(?:import|export)[^'"]*?from\s+['"]([^'"]+)['"]""")
+
+    while queue:
+        current = queue.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        for specifier in pattern.findall(current.read_text()):
+            if not specifier.startswith("."):
+                continue  # bare specifiers cannot occur -- see the CDN test below
+            target = (current.parent / specifier).resolve()
+            if target.exists():
+                queue.append(target)
+
+    orphans = sorted(path.name for path in set(_js_modules()) - seen)
+
+    assert orphans == [], f"modules nothing imports: {orphans}"
+
+
 def test_no_module_imports_from_outside_this_origin() -> None:
     """§14 forbids the npm dependency; a bare or absolute specifier is one by another route.
 
