@@ -743,6 +743,105 @@ select.field-input {
 }
 
 /* ==========================================================================
+   9b. Charts (Phase 13)
+   ==========================================================================
+
+   Hand-written, because §14 forbids the npm dependency. Every rule here uses tokens rather
+   than literal colours, which is what gets the three accessibility media queries in §11 for
+   free -- a hardcoded #ff0000 here would survive `prefers-contrast: more` unchanged and be
+   the one element on the page that ignores the setting.
+
+   The bar HEIGHT is never set here. It arrives from the server as a CSS percentage string
+   (§14: `value / max` is arithmetic on money, and JS has no decimal type), so the stylesheet
+   owns everything about a bar except how tall it is. */
+
+.chart {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-2);
+  min-height: 8rem;
+}
+
+.chart-col {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-1);
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.chart-col:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The track is the full-height ground the bar grows inside, so a short bar still has a
+   target big enough to tap -- the column is the control, not the bar. */
+.chart-track {
+  display: flex;
+  align-items: flex-end;
+  height: 7rem;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.chart-bar {
+  width: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  transition: opacity var(--t-base) var(--ease-out);
+}
+
+/* A day whose figures could not be calculated. Hatched rather than absent, so the column
+   still occupies its place in the week -- a missing bar reads as "sold nothing". */
+.chart-bar-absent {
+  background: var(--surface-high);
+}
+
+.chart-col-alert .chart-bar {
+  background: var(--warning);
+}
+
+.chart-col-label {
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+.variance-strip {
+  width: 100%;
+  height: 4rem;
+  margin-top: var(--sp-3);
+}
+
+.variance-baseline {
+  stroke: var(--hairline-strong);
+  stroke-width: 1;
+}
+
+.variance-mark {
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+/* §6.4's sign convention, and the only place in the app where a colour carries it alone --
+   which is why every figure is also in the table below (see ui/chart.js). */
+.variance-short {
+  stroke: var(--short);
+}
+
+.variance-surplus {
+  stroke: var(--surplus);
+}
+
+/* ==========================================================================
    10. Utility
    ========================================================================== */
 

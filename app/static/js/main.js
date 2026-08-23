@@ -47,6 +47,7 @@ import { renderBankDeposits } from "./screens/bank_deposits.js";
 import { renderCash } from "./screens/cash.js";
 import { renderCashPosition } from "./screens/cash_position.js";
 import { renderDailySummaries, renderDailySummary } from "./screens/daily_summaries.js";
+import { renderAlerts, renderDailyReport, renderReports } from "./screens/reports.js";
 import {
   renderAdmin,
   renderCategories,
@@ -257,6 +258,33 @@ function registerRoutes() {
     "/daily-summaries/:businessDate",
     (params) =>
       renderDailySummary(session.shell.screen, {
+        session,
+        navigate,
+        businessDate: params.businessDate,
+      }),
+    { tab: "cash", role: "manager" },
+  );
+
+  // Phase 13. **"/reports/alerts" is registered before "/reports/:businessDate"**, and the
+  // order is load-bearing: router.js's resolve() walks `routes` in registration order and
+  // takes the first regex that matches, so the parameterised pattern would otherwise swallow
+  // "alerts" as a business date. The screen would then request
+  // GET /reports/daily/alerts and show a 422 instead of the alerts list -- the same
+  // static-before-parameterised hazard app/api/v1/router.py calls out on the server side.
+  route(
+    "/reports",
+    (_params, query) => renderReports(session.shell.screen, { session, navigate }, query),
+    { tab: "cash", role: "manager" },
+  );
+  route(
+    "/reports/alerts",
+    (_params, query) => renderAlerts(session.shell.screen, { session, navigate }, query),
+    { tab: "cash", role: "manager" },
+  );
+  route(
+    "/reports/:businessDate",
+    (params) =>
+      renderDailyReport(session.shell.screen, {
         session,
         navigate,
         businessDate: params.businessDate,

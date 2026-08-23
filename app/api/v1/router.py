@@ -29,6 +29,7 @@ from app.api.v1 import (
     non_fuel_sales,
     nozzles,
     readings,
+    reports,
     shift_templates,
     shifts,
     shortfalls,
@@ -115,6 +116,17 @@ api_router.include_router(shortfalls.router)
 # static-before-parameterised hazard does not apply -- 'outstanding' would never parse
 # as a date either way. Its two action routes are one segment deeper than the resource.
 api_router.include_router(daily_summaries.router)
+
+# Phase 13 -- reporting. Three read routes under /reports/, which collides with nothing above.
+# Within the module the two static paths (/reports/range, /reports/variance-alerts) are
+# declared before /reports/daily/{business_date}. That one is a segment deeper behind a static
+# "daily" segment, so the hazard fuel_prices.py's "/current" carries does not actually arise
+# here -- but keeping one ordering rule is easier than remembering which routers need it.
+#
+# Deliberately NOT folded into daily_summaries.py, which serves the stored record and is
+# pinned by a test asserting its read routes never recompute (§5.2, §13.20). These routes
+# compute, for the days that have no record. Two contracts, two modules.
+api_router.include_router(reports.router)
 
 # Phase 11 -- reading the audit trail. A single static path, /audit-logs, which collides with
 # nothing above and has no parameterised sibling, so the static-before-parameterised hazard

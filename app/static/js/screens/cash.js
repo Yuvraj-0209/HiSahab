@@ -136,6 +136,21 @@ export async function renderCash(container, { session, navigate }) {
             on: { click: () => navigate("#/expenses/flagged") },
           })
         : null,
+
+      // Phase 13. Deliberately the *last* two, below the per-shift and per-day controls:
+      // this hub is for doing the reconciliation, and reporting is for looking back at it.
+      el("button", {
+        className: "btn btn-block",
+        text: "Reports — this week",
+        attrs: { type: "button" },
+        on: { click: () => navigate("#/reports") },
+      }),
+      el("button", {
+        className: "btn btn-block",
+        text: "Alerts",
+        attrs: { type: "button" },
+        on: { click: () => navigate("#/reports/alerts") },
+      }),
     ]),
   );
 }

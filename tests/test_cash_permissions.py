@@ -26,8 +26,12 @@ _ROUTERS = (
     "app/api/v1/cash_position.py",
     "app/api/v1/daily_summaries.py",
     "app/api/v1/shortfalls.py",
+    # Phase 13. Outlet-and-date scoped like daily_summaries.py, so it belongs here and NOT in
+    # _SHIFT_SCOPED below -- it has no shift-scoped dependency to reimplement.
+    "app/api/v1/reports.py",
 )
 _MONEY_PATH = _ROUTERS + (
+    "app/services/reporting.py",
     "app/services/cash.py",
     "app/services/shortfalls.py",
     "app/models/cash.py",

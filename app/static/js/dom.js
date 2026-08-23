@@ -56,6 +56,55 @@ export function el(tag, options = {}, children = []) {
   return node;
 }
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+/**
+ * The SVG twin of `el`, and it has to exist separately rather than being a flag on it.
+ *
+ * `document.createElement("rect")` does not fail -- it silently returns an *HTML* unknown
+ * element, which lays out as nothing inside an `<svg>` and renders a blank box with no error
+ * anywhere. That is the same shape of failure §13.18 says the frontend is most exposed to:
+ * invisible in the test suite, total on screen.
+ *
+ * Deliberately no `text` shortcut and no `innerHTML`. Chart labels go through `textContent`
+ * like everything else, so the rule in `test_no_module_builds_markup_from_a_string` holds in
+ * the one module most likely to reach for markup (Phase 13).
+ *
+ * @param {string} tag             e.g. "svg", "g", "rect", "line", "text"
+ * @param {object} [options.attrs] null/undefined skipped, same semantics as `el`
+ */
+export function svgEl(tag, options = {}, children = []) {
+  const { className, text, attrs, on, style } = options;
+  const node = document.createElementNS(SVG_NS, tag);
+
+  // `className` on an SVG element is a read-only SVGAnimatedString, so it must be set as an
+  // attribute. Assigning it the way `el` does silently does nothing.
+  if (className) node.setAttribute("class", className);
+  if (text !== undefined && text !== null) node.textContent = String(text);
+
+  if (attrs) {
+    for (const [key, value] of Object.entries(attrs)) {
+      if (value === undefined || value === null || value === false) continue;
+      node.setAttribute(key, value === true ? "" : String(value));
+    }
+  }
+
+  if (on) {
+    for (const [event, handler] of Object.entries(on)) {
+      if (handler) node.addEventListener(event, handler);
+    }
+  }
+
+  if (style) Object.assign(node.style, style);
+
+  for (const child of children) {
+    if (!child) continue;
+    node.appendChild(child);
+  }
+
+  return node;
+}
+
 /** Replace a container's children. */
 export function render(container, ...nodes) {
   container.replaceChildren(...nodes.filter(Boolean));
