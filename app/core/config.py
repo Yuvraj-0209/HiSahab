@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     # verifying tokens, which uses the JWT secret alone.
     SUPABASE_URL: str | None = None
     SUPABASE_SERVICE_KEY: str | None = None
+    # Phase 12. PUBLIC BY DESIGN, and the only Supabase secret-shaped value in this class
+    # that is meant to leave the server: GET /api/v1/auth-config serves it unauthenticated
+    # so a browser can reach Supabase Auth to log in at all (§7 of the Phase 12 plan).
+    #
+    # Note how differently it reads from SUPABASE_SERVICE_KEY two lines up, which grants
+    # full database access and must never reach a client. Same provider, same shape,
+    # opposite rule -- which is exactly why the distinction is written here rather than
+    # left to whoever next copies a value out of the Supabase dashboard.
+    SUPABASE_ANON_KEY: str | None = None
     SUPABASE_JWT_SECRET: str | None = None
     SUPABASE_STORAGE_BUCKET: str = "receipts"
 
@@ -108,13 +117,20 @@ class Settings(BaseSettings):
 
         SUPABASE_URL is required alongside it because it supplies the expected `iss` claim;
         without it, a token minted by any other Supabase project would pass.
+
+        SUPABASE_ANON_KEY joins them in Phase 12, for the same "fail at startup" reason one
+        step earlier in the flow. The frontend is served by this application, and its login
+        screen reaches Supabase Auth with that key; without it nobody can obtain a token at
+        all. The failure would otherwise surface as a login page that simply does not work
+        in production, which is a far more expensive way to learn about a missing variable
+        than refusing to boot.
         """
         if self.ENV != "prod":
             return self
 
         missing = [
             name
-            for name in ("SUPABASE_JWT_SECRET", "SUPABASE_URL")
+            for name in ("SUPABASE_JWT_SECRET", "SUPABASE_URL", "SUPABASE_ANON_KEY")
             if not (getattr(self, name) or "").strip()
         ]
         if missing:

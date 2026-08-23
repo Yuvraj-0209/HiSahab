@@ -32,7 +32,22 @@ from app.main import create_app
 _FRAMEWORK_PATHS = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
 
 # Public by design. Unprefixed, because that is what APIRoute.path holds.
-_UNAUTHENTICATED_PATHS = {"/health"}
+#
+# Adding to this set is a deliberate, reviewed act -- test_the_health_check_is_the_only_
+# unauthenticated_route below exists to make that true, and it asserts equality rather than
+# containment so a forgotten role dependency cannot hide here.
+#
+# "/health":       an operator needs liveness without credentials, and it exposes only
+#                  whether Postgres answers.
+# "/auth-config":  Phase 12. A login screen cannot authenticate, so requiring a token to
+#                  learn how to obtain a token cannot work. It returns SUPABASE_URL and
+#                  SUPABASE_ANON_KEY -- both public by design; the anon key is *meant* to
+#                  ship in a browser, unlike SUPABASE_SERVICE_KEY, which this route must
+#                  never return and which tests/test_client_config.py asserts by name.
+#
+# Note that /client-config is deliberately NOT here: thresholds and the outlet name sit at
+# the attendant floor. The split between the two routes is exactly this boundary.
+_UNAUTHENTICATED_PATHS = {"/health", "/auth-config"}
 
 
 def _iter_api_routes(node: Any) -> Iterator[APIRoute]:
@@ -113,8 +128,20 @@ def test_every_route_is_authenticated_unless_explicitly_exempt() -> None:
     assert unguarded == [], f"routes with no authentication: {unguarded}"
 
 
-def test_the_health_check_is_the_only_unauthenticated_route() -> None:
-    """Keeps the exempt list honest: adding to it should be a deliberate, reviewed act."""
+def test_only_the_explicitly_exempt_routes_are_unauthenticated() -> None:
+    """Keeps the exempt list honest: adding to it should be a deliberate, reviewed act.
+
+    Equality, not containment, and that asymmetry is the whole value of this test. A
+    containment check (`public <= _UNAUTHENTICATED_PATHS`) would catch a new public route but
+    would silently pass if `/health` quietly acquired a role dependency; equality fails in
+    both directions, so the set stays an exact description of the public surface rather than
+    an upper bound nobody revisits.
+
+    Renamed in Phase 12, when `/auth-config` became the second member. The old name --
+    `test_the_health_check_is_the_only_unauthenticated_route` -- had become a false statement
+    that still passed, which is the shape of comment §14 warns about elsewhere: documentation
+    that has drifted from the thing it documents is worse than none, because it is believed.
+    """
     app = create_app()
 
     public = {

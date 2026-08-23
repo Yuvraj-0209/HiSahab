@@ -97,14 +97,49 @@ def test_prod_requires_the_supabase_url(monkeypatch: pytest.MonkeyPatch) -> None
         _settings(ENV="prod", SUPABASE_JWT_SECRET="a-secret-of-at-least-32-bytes-here")
 
 
+def test_prod_requires_the_anon_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phase 12: the frontend is served by this app, and its login screen needs the key.
+
+    Without it a production deployment starts happily and presents a login page that
+    cannot reach Supabase at all -- a far more expensive way to discover a missing
+    environment variable than refusing to boot. Same argument as the JWT secret above,
+    one step earlier in the flow.
+    """
+    monkeypatch.delenv("SUPABASE_ANON_KEY", raising=False)
+
+    with pytest.raises(ValidationError, match="SUPABASE_ANON_KEY"):
+        _settings(
+            ENV="prod",
+            SUPABASE_URL="https://project.supabase.co",
+            SUPABASE_JWT_SECRET="a-secret-of-at-least-32-bytes-here",
+        )
+
+
 def test_prod_boots_when_supabase_is_fully_configured() -> None:
+    """"Fully configured" gained a third value in Phase 12."""
     settings = _settings(
         ENV="prod",
         SUPABASE_URL="https://project.supabase.co",
         SUPABASE_JWT_SECRET="a-secret-of-at-least-32-bytes-here",
+        SUPABASE_ANON_KEY="a-public-anon-key",
     )
 
     assert settings.ENV == "prod"
+
+
+def test_the_anon_key_and_the_service_key_are_separate_settings() -> None:
+    """The distinction this project cannot afford to blur (§16).
+
+    Both are long opaque strings from the same Supabase dashboard; one is designed to ship
+    in a browser and the other grants full database access. A refactor that collapsed them
+    into one field would pass every other test in this file.
+    """
+    settings = _settings(
+        SUPABASE_ANON_KEY="public-anon", SUPABASE_SERVICE_KEY="secret-service"
+    )
+
+    assert settings.SUPABASE_ANON_KEY == "public-anon"
+    assert settings.SUPABASE_SERVICE_KEY == "secret-service"
 
 
 def test_dev_does_not_require_supabase_config(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -13,6 +13,7 @@ from app.api.v1 import (
     audit_logs,
     bank_deposits,
     cash_position,
+    client_config,
     collections,
     credit_customers,
     credit_repayments,
@@ -37,6 +38,12 @@ from app.api.v1 import (
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health.router)
 api_router.include_router(me.router)
+
+# Phase 12 -- the two config reads a browser makes before it can render anything.
+# /auth-config is the only unauthenticated route besides /health, which is why
+# tests/test_routes.py names both in an explicit exemption list. Two static paths that
+# collide with nothing above and have no parameterised siblings.
+api_router.include_router(client_config.router)
 
 # Phase 3 -- reference data. Order of inclusion does not matter here because no two of
 # these declare overlapping paths; the ordering that *does* matter is within
