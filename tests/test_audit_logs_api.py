@@ -128,6 +128,45 @@ async def test_an_attendant_cannot_read_the_trail(
     assert response.status_code == 403
 
 
+async def test_an_admin_at_another_outlet_is_refused(
+    client, make_user, auth_headers, engine
+) -> None:
+    """§8: the check is "does this user hold role R **at the outlet that owns this row**",
+    never "is this user an admin".
+
+    Pinned as a test rather than left to the dependency, because Phase 9's D8 settled the
+    posture deliberately -- 403 `NOT_A_MEMBER`, not §7.3's 404 -- and a change to it should be
+    a decision somebody makes on purpose rather than a side effect.
+    """
+    other_outlet = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO outlets (id, name, is_active) "
+                "VALUES (:id, 'Elsewhere', true)"
+            ).bindparams(id=other_outlet)
+        )
+    try:
+        outsider = make_user("admin", outlet_id=other_outlet)
+
+        response = await client.get(
+            "/api/v1/audit-logs", headers=auth_headers(outsider)
+        )
+
+        assert response.status_code == 403
+        assert response.json()["code"] == "NOT_A_MEMBER"
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM outlet_memberships WHERE outlet_id = :id").bindparams(
+                    id=other_outlet
+                )
+            )
+            connection.execute(
+                text("DELETE FROM outlets WHERE id = :id").bindparams(id=other_outlet)
+            )
+
+
 async def test_the_trail_is_scoped_to_the_callers_outlet(
     client, make_user, auth_headers, engine, clean_audit_logs
 ) -> None:

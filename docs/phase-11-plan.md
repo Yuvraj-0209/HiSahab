@@ -328,10 +328,10 @@ cannot FK-error either.
 
 So the work is **verification, not construction**:
 
-- [ ] Confirm the `changed_by` sweep covers every path, including tests that create a fuel type
+- [x] Confirm the `changed_by` sweep covers every path, including tests that create a fuel type
       via the API and tear it down in a `finally` block.
-- [ ] Confirm no reference-data test authenticates as a user created outside `make_user`.
-- [ ] Run the suite **twice back to back** — a leaked audit row is exactly what that catches.
+- [x] Confirm no reference-data test authenticates as a user created outside `make_user`.
+- [x] Run the suite **twice back to back** — a leaked audit row is exactly what that catches.
 
 ---
 
@@ -362,97 +362,102 @@ an order of magnitude for a control nobody asked for); the frontend (Phase 12); 
 
 ### A — suite and migration health
 
-- [ ] `docker compose up -d db`, then **full** `pytest` green — not `-k audit`. Total
+- [x] `docker compose up -d db`, then **full** `pytest` green — not `-k audit`. Total
       ≥ 1,135 + the new files' count, with **no test deleted or weakened** to get there.
-- [ ] Suite run **twice back to back against the same database** — the leaked-audit-row check.
-- [ ] `alembic upgrade head` → `0014`; `alembic check` reports no new operations.
-- [ ] `alembic downgrade base && alembic upgrade head` round-trips; `0014`'s `downgrade()`
+- [x] Suite run **twice back to back against the same database** — the leaked-audit-row check.
+- [x] `alembic upgrade head` → `0014`; `alembic check` reports no new operations.
+- [x] `alembic downgrade base && alembic upgrade head` round-trips; `0014`'s `downgrade()`
       drops the index and leaves nothing in `pg_indexes`.
-- [ ] `tests/test_migrations.py::test_migration_is_reversible` still passes — it downgrades
+- [x] `tests/test_migrations.py::test_migration_is_reversible` still passes — it downgrades
       mid-suite, so any new session-scoped fixture breaks it.
-- [ ] `tests/test_migrations.py` gains a name-level assertion for
+- [x] `tests/test_migrations.py` gains a name-level assertion for
       `ix_audit_logs_outlet_changed_at`.
-- [ ] 100% coverage on `app/api/v1/audit_logs.py`, **and on all four Phase 3 routers** —
+- [x] 100% coverage on `app/api/v1/audit_logs.py`, **and on all four Phase 3 routers** —
       Step 0's ten lines closed, taking the whole app to 100%.
-- [ ] `tests/test_routes.py` passes — the new route is under `/api/v1`.
-- [ ] `tests/test_errors.py`'s two structural constraint tests pass **unmodified**.
+- [x] `tests/test_routes.py` passes — the new route is under `/api/v1`.
+- [x] `tests/test_errors.py`'s two structural constraint tests pass **unmodified**.
 
 ### B — the structural guarantee (D4)
 
-- [ ] `tests/test_audit_coverage.py` exists and **parses with `ast`**, not `grep`.
-- [ ] It walks **every** module in `app/api/v1/`, discovered by directory listing, not a
+- [x] `tests/test_audit_coverage.py` exists and **parses with `ast`**, not `grep`.
+- [x] It walks **every** module in `app/api/v1/`, discovered by directory listing, not a
       hardcoded list — a new router must be picked up without editing the test.
-- [ ] It finds every `@router.post` / `@router.patch` function and asserts an `audit.record`
+- [x] It finds every `@router.post` / `@router.patch` function and asserts an `audit.record`
       call in the body.
-- [ ] **Deliberately break it**: comment out one `audit.record` call and confirm the test fails
+- [x] **Deliberately break it**: comment out one `audit.record` call and confirm the test fails
       naming that endpoint. A structural test never run red is a test that passes for unknown
       reasons.
-- [ ] The exemption list has exactly one entry (`uploads.py::upload_receipt`) with M4's reason
+- [x] The exemption list has exactly one entry (`uploads.py::upload_receipt`) with M4's reason
       in the test's docstring.
-- [ ] It asserts a **floor on the number of audited write endpoints**, so a router silently
+- [x] It asserts a **floor on the number of audited write endpoints**, so a router silently
       dropped from discovery fails rather than passing vacuously.
 
 ### C — the twelve retrofits
 
-- [ ] **Each of the twelve writes exactly one audit row on success**, asserted per endpoint
+- [x] **Each of the twelve writes exactly one audit row on success**, asserted per endpoint
       (`SELECT count(*) FROM audit_logs WHERE table_name = :t AND record_id = :id` → 1). Twelve
       assertions, not one loop — a loop that silently skips is the failure mode.
-- [ ] `table_name` matches the real table for each (`fuel_types`, `nozzles`, `fuel_prices`,
+- [x] `table_name` matches the real table for each (`fuel_types`, `nozzles`, `fuel_prices`,
       `fuel_margins`, `expense_categories`, `credit_customers`, `outlet_shift_templates`).
-- [ ] Creates record `action = insert`, `new_values` set, `old_values` **NULL**.
-- [ ] `PATCH`es record `action = update` with **both** sides populated and genuinely different —
+- [x] Creates record `action = insert`, `new_values` set, `old_values` **NULL**.
+- [x] `PATCH`es record `action = update` with **both** sides populated and genuinely different —
       assert `old_values != new_values`, which a mis-ordered snapshot (M3) would fail.
-- [ ] **No endpoint records `status_change`** (D3) — asserted across all seven `table_name`s.
-- [ ] **A refused write records nothing.** Per router: a 409 duplicate, a 422 immutable field
+- [x] **No endpoint records `status_change`** (D3) — asserted across all seven `table_name`s.
+- [x] **A refused write records nothing.** Per router: a 409 duplicate, a 422 immutable field
       (`fuel_types.code`, `expense_categories.code`, `nozzles.fuel_type_id`,
       `shift_templates.sequence`), and a 403 non-admin → `count(*) == 0` on `audit_logs`. This
       is `tests/test_audit.py::test_a_refused_transition_writes_no_audit_row`'s shape, and it is
       what proves M1's single-transaction contract.
-- [ ] **`changed_by` is the acting admin**, not the row's `created_by` — they differ when an
+- [x] **`changed_by` is the acting admin**, not the row's `created_by` — they differ when an
       admin edits a row another admin created; test that case explicitly.
-- [ ] **`outlet_id` on a `fuel_types` audit row is the acting admin's outlet** (D2), with the
+- [x] **`outlet_id` on a `fuel_types` audit row is the acting admin's outlet** (D2), with the
       semantics in a comment at the call site.
-- [ ] `request_id` round-trips an inbound `X-Request-ID` header — `test_audit.py`'s pattern,
+- [x] `request_id` round-trips an inbound `X-Request-ID` header — `test_audit.py`'s pattern,
       applied to one reference-data endpoint.
-- [ ] **Money survives as a string.** `credit_customers.credit_limit` and
+- [x] **Money survives as a string.** `credit_customers.credit_limit` and
       `fuel_prices.rate_per_unit` appear in `new_values` as `"1000.00"`, not `1000.0` — asserted
       end to end through the API, not at the helper.
-- [ ] A `credit_limit` of `None` (unlimited, §6.6) survives as JSON `null` and is **not**
+- [x] A `credit_limit` of `None` (unlimited, §6.6) survives as JSON `null` and is **not**
       coerced to `0` anywhere in the snapshot.
 
 ### D — `GET /audit-logs` (D5)
 
-- [ ] Admin → 200; **manager → 403**; attendant → 403.
-- [ ] Admin at **another outlet** → 403 `NOT_A_MEMBER` (Phase 9's D8 posture).
-- [ ] Results are **outlet-scoped**: a row written at another outlet is absent, asserted by
+- [x] Admin → 200; **manager → 403**; attendant → 403.
+- [x] Admin at **another outlet** → 403 `NOT_A_MEMBER` (Phase 9's D8 posture).
+- [x] Results are **outlet-scoped**: a row written at another outlet is absent, asserted by
       inserting one directly rather than inferring from an empty page.
-- [ ] `?table_name=`, `?record_id=`, `?changed_by=`, `?action=` each filter correctly and
+- [x] `?table_name=`, `?record_id=`, `?changed_by=`, `?action=` each filter correctly and
       **combine** — at least one two-filter case.
-- [ ] An unknown `record_id` returns an **empty page**, not 404 (§5.3's non-FK consequence).
-- [ ] An invalid `action` → **422**, not an empty page (M9).
-- [ ] Cursor pagination: page through more rows than `limit`; assert **no duplicate and no
+- [x] An unknown `record_id` returns an **empty page**, not 404 (§5.3's non-FK consequence).
+- [x] An invalid `action` → **422**, not an empty page (M9).
+- [x] Cursor pagination: page through more rows than `limit`; assert **no duplicate and no
       skipped id** across pages, and `next_cursor is None` on the last page.
-- [ ] **Insert a row mid-walk and confirm the reader neither repeats nor skips** — the failure
+- [x] **Insert a row mid-walk and confirm the reader neither repeats nor skips** — the failure
       §9 forbids `OFFSET` for, and the only test that proves the keyset is real.
-- [ ] Rows come back **newest first**.
-- [ ] A malformed cursor → 422 `INVALID_CURSOR`, from `decode_cursor` unchanged.
-- [ ] `limit` above `MAX_LIMIT` → 422; at `MAX_LIMIT` → 200.
-- [ ] `old_values` / `new_values` come back as objects with money as **strings** (M6).
-- [ ] **No `@router.post`, `@router.patch` or `@router.delete` on this router** — the read
+- [x] Rows come back **newest first**.
+- [x] A malformed cursor → **400** `INVALID_CURSOR` (the plan said 422; `decode_cursor`
+      returns 400 by design -- a cursor is a token this API issued, not a field a caller can
+      correct).
+- [x] `limit` above `MAX_LIMIT` → 422; at `MAX_LIMIT` → 200.
+- [x] `old_values` / `new_values` come back as objects with money as **strings** (M6).
+- [x] **No `@router.post`, `@router.patch` or `@router.delete` on this router** — the read
       endpoint must not become a way to write the append-only table.
 
 ### E — structural assertions no value test makes
 
-- [ ] `float(` / `sa.Float` / `Float(` → zero matches in `app/api/v1/audit_logs.py`.
-- [ ] `.offset(` → zero (§14).
-- [ ] No `relationship()` anywhere new.
-- [ ] `app/api/cursor.py` **unmodified** — D5 reuses the existing pair, and a third encoder
+- [x] `float(` / `sa.Float` / `Float(` → zero matches in `app/api/v1/audit_logs.py`.
+- [x] `.offset(` → zero (§14).
+- [x] No `relationship()` anywhere new.
+- [x] `app/api/cursor.py` **unmodified** — D5 reuses the existing pair, and a third encoder
       would be the drift that module exists to prevent.
-- [ ] `app/core/audit.py` **unmodified** — D3 means no new enum label, so no enum migration.
-- [ ] `app/services/audit.py` **unmodified** — the helper was correct; only its callers were
+- [x] `app/core/audit.py` **unmodified** — D3 means no new enum label, so no enum migration.
+- [x] `app/services/audit.py` **unmodified** — the helper was correct; only its callers were
       missing.
-- [ ] `DEFAULT_OUTLET_ID` appears nowhere in `audit_logs.py` — the outlet comes from `actor`.
-- [ ] All seven routers import `audit` from `app.services`, not a local copy.
+- [~] `DEFAULT_OUTLET_ID` appears **once** in `audit_logs.py`, in a comment reading *"Never
+      `DEFAULT_OUTLET_ID` -- the outlet comes from the actor"*. The code uses `actor.outlet_id`.
+      A text-search checklist item tripping on the prose documenting its own rule -- see the
+      notes, §5.
+- [x] All seven routers import `audit` from `app.services`, not a local copy.
 
 ### F — the checks no test replaces
 
@@ -473,7 +478,48 @@ an order of magnitude for a control nobody asked for); the frontend (Phase 12); 
 
 ## 8. What actually shipped
 
-*(Filled in as the phase lands, including where it differs from this document and why.)*
+**1,213 tests, up from 1,135.** 78 new across three files, plus Step 0's coverage tests folded
+into the four Phase 3 test modules. **100% coverage on all eight touched routers** and on the
+new `audit_logs.py`. `alembic` at `0014`, `check` clean, `downgrade base` / `upgrade head`
+round-trips, suite green twice back to back against the same database.
+
+| Step | Commit |
+|---|---|
+| 0 | *(no commit -- the Phase 10 audit found no defect; see §1)* |
+| 1 | `Spec: what the audit retrofit actually covers, before Phase 11` |
+| 2 | `Phase 11 Step 2: an index for the audit read path` |
+| 3 | `Phase 11 Step 3: audit writes on fuel types and nozzles` |
+| 4 | `Phase 11 Step 4: audit writes on the append-only price and margin tables` |
+| 5 | `Phase 11 Step 5: audit writes on the reference data §11 forgot` |
+| 6 | `Phase 11 Step 6: GET /audit-logs -- the trail becomes readable` |
+| 7 | `Phase 11 Step 7: a new admin write endpoint without an audit row fails the suite` |
+| 8 | this file and `docs/phase-11-notes.md` |
+
+**Where it differs from the plan above.**
+
+* **D6's index is ASC, not DESC.** A btree scans backwards as cheaply as forwards, so DESC only
+  earns its keep for a *mixed* ordering. Expressing it would need `sa.text("changed_at DESC")`
+  in the model, turning a plain column index into an expression index that autogenerate cannot
+  compare -- `alembic check` would report phantom drift on every future phase. Verified clean as
+  built, and pinned by a test that fails if somebody changes it back.
+* **`INVALID_CURSOR` is 400, not 422**, as §5 assumed. `decode_cursor` has always returned 400,
+  deliberately: a cursor is a token this API issued, not a field a caller can correct.
+* **Step 0 produced no commit.** The plan budgeted for a defect; the Phase 10 audit found none.
+  What it did find was ten uncovered lines in the four Phase 3 routers -- missing coverage, not
+  wrong behaviour -- so the tests landed in Steps 3 and 4 alongside the files they cover. Two of
+  those branches were on the critical path anyway, being refusal paths the checklist required.
+* **`is_backdated` is folded into the audit snapshot**, which the plan did not specify. It is
+  the fact that separates setting tomorrow's rate from revaluing last week's closed shifts, and
+  §6.3's read-time recomputation means nothing else records it. Same shape `shifts.py` uses for
+  a reopen reason.
+* **`shift_templates` needed an ordering exception.** Its `PATCH` is the only endpoint in the
+  retrofit whose validation runs *after* the mutation -- the zero-length check reads the
+  already-updated object -- so the audit call goes after it. Staging the row earlier would
+  describe a change the request then refused: §5.3's "log that lies", reached by ordering rather
+  than by a stray commit. Pinned by its own test.
+* **The first draft of the read endpoint's no-write test passed vacuously.**
+  `app.routes` does not contain included routers, which `tests/test_routes.py`'s own docstring
+  documents. Rewritten against `app.openapi()["paths"]`.
 
 ---
 
