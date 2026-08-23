@@ -36,6 +36,7 @@ import { notify } from "./ui/toast.js";
 import { setZone } from "./time.js";
 import { renderLogin } from "./screens/login.js";
 import { renderToday } from "./screens/today.js";
+import { renderReadings } from "./screens/readings.js";
 
 const APP = document.getElementById("app");
 
@@ -176,6 +177,17 @@ function registerRoutes() {
     "Readings, collections, expenses, credit sales and repayments for the open shift.",
     "entry",
   ), { tab: "entry", role: "attendant" });
+
+  route(
+    "/shifts/:shiftId/readings",
+    (params) =>
+      renderReadings(session.shell.screen, {
+        session,
+        navigate,
+        shiftId: params.shiftId,
+      }),
+    { tab: "entry", role: "attendant" },
+  );
 
   route("/cash", placeholder(
     "Cash",
