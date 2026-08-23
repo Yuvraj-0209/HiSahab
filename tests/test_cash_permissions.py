@@ -189,6 +189,141 @@ def test_the_daily_summary_is_never_recomputed_on_read() -> None:
         assert "expected_closing=" not in body, name
 
 
+# --- Phase 13: the reporting layer ---------------------------------------------
+#
+# The sibling of `test_the_daily_summary_is_never_recomputed_on_read` above, and it exists
+# because Phase 13 introduced a module that DOES recompute -- deliberately, for the days that
+# have no stored record (§13.20). That makes "which branch is allowed to compute" a rule that
+# can now be broken by a one-line edit, where before it was structural.
+
+
+def test_the_snapshot_branch_of_a_report_never_recomputes() -> None:
+    """§13.20's whole guarantee, as source.
+
+    `_from_snapshot` turns a stored `daily_cash_summaries` row into a response. Every figure
+    in it must be a column read. The moment it calls `day_totals`, or `expected_closing`, or
+    does arithmetic over the components, it has stopped reporting what the manager was told
+    and started offering a second opinion wearing the record's clothes -- and §6.5 chains
+    days, so the difference would propagate into every opening balance after it.
+
+    The behavioural test (`test_a_snapshot_is_read_verbatim_even_after_a_price_revision`)
+    proves it for one scenario. This proves it for every scenario, including the ones nobody
+    wrote a fixture for.
+
+    **The docstring is stripped before scanning**, and that is not a detail. On its first run
+    this test failed against `_from_snapshot`'s own docstring, which says the function must
+    not call `day_totals` -- the prose explaining the rule tripped the check enforcing it.
+    That is the fourth time this codebase has hit that shape: Phase 10 and Phase 11 each
+    recorded a version, and Phase 12's notes record the worse variant where a comment
+    *silently satisfied* a search instead of breaking it.
+
+    The lesson those three arrived at is the one applied here: the rule's prose lives in
+    THIS docstring, in the test, and the scanner reads only executable source. Otherwise the
+    fix a future reader reaches for is deleting the explanation.
+    """
+    source = Path("app/services/reporting.py").read_text()
+    tree = ast.parse(source)
+    functions = {
+        node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+    }
+
+    target = functions["_from_snapshot"]
+    statements = target.body
+    if (
+        statements
+        and isinstance(statements[0], ast.Expr)
+        and isinstance(statements[0].value, ast.Constant)
+        and isinstance(statements[0].value.value, str)
+    ):
+        statements = statements[1:]
+
+    body = "\n".join(
+        ast.get_source_segment(source, statement) or "" for statement in statements
+    )
+
+    assert "day_totals" not in body
+    assert "expected_closing(" not in body
+    assert "shift_sales" not in body
+    # No arithmetic at all: every value is `summary.<column>`. A `+` here would mean a figure
+    # is being derived rather than read, which is the same defect one operator smaller.
+    assert not any(
+        isinstance(node, ast.BinOp)
+        for node in ast.walk(functions["_from_snapshot"])
+    ), "_from_snapshot must read columns, never compute them"
+
+
+@pytest.mark.parametrize(
+    "path", ["app/api/v1/reports.py", "app/services/reporting.py"]
+)
+def test_the_reporting_layer_writes_nothing(path: str) -> None:
+    """"It is a report" as a structural fact rather than an intention.
+
+    The specific hazard is that a `computed` day looks exactly like a `daily_cash_summaries`
+    row somebody could helpfully persist -- and doing so would silently promote an estimate
+    into the record §5.2 says must never be recomputed, with §6.5 then chaining it forward.
+
+    `audit.record` is included because a write that audits itself is still a write, and its
+    absence here is also what keeps `test_audit_coverage.py` correctly silent about this
+    router rather than accidentally so.
+    """
+    source = Path(path).read_text()
+
+    for forbidden in ("db.add", "db.commit", "db.flush", "db.delete", "audit.record"):
+        assert forbidden not in source, f"{path} must not write ({forbidden})"
+
+
+def test_the_reports_router_has_no_write_verbs() -> None:
+    """Read-only by declaration, not just by current contents.
+
+    `test_audit_coverage.py` walks every `@router.post`/`@router.patch` demanding an
+    `audit.record` call. This router has none, so that test is silent -- and this is what
+    makes the silence deliberate: adding a write verb here fails HERE with a reason, rather
+    than failing over there with a message about audit rows that would send somebody to add
+    one instead of asking whether the endpoint should exist.
+    """
+    source = Path("app/api/v1/reports.py").read_text()
+
+    for verb in ("@router.post", "@router.patch", "@router.put", "@router.delete"):
+        assert verb not in source
+
+
+def test_the_margin_catch_is_narrow_in_source_as_well_as_behaviour() -> None:
+    """§13.21's `except` must test the code before swallowing.
+
+    A bare `except AppError: pass`-shaped catch would report a genuine failure as "no
+    commission entered" -- a lie that looks like a configuration note, and one nobody would
+    investigate because the screen would be saying something entirely plausible.
+
+    Asserted structurally because the behavioural version can only prove it for the one
+    error code a test thought to raise.
+    """
+    source = Path("app/services/reporting.py").read_text()
+    tree = ast.parse(source)
+
+    handlers = [node for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)]
+    assert handlers, "reporting.py should catch the two reference-data gaps"
+
+    for handler in handlers:
+        segment = ast.get_source_segment(source, handler)
+        assert "exc.code" in segment, (
+            "every except in reporting.py must inspect the error code and re-raise what it "
+            f"does not recognise; this one does not:\n{segment}"
+        )
+        assert "raise" in segment, segment
+
+
+def test_every_reporting_endpoint_is_reached_by_the_reports_screen() -> None:
+    """`test_frontend_assets.py` only proves that the string "/reports" appears somewhere.
+
+    That is the right check for *router* coverage and too weak for this phase: it would pass
+    with two of the three endpoints unbuilt. Each path is asserted by name here instead.
+    """
+    source = Path("app/static/js/screens/reports.js").read_text()
+
+    for path in ("/reports/range", "/reports/variance-alerts", "/reports/daily/"):
+        assert path in source, f"no screen calls {path}"
+
+
 def test_the_shortfall_never_reaches_a_credit_table() -> None:
     """§13.14 and §14, structurally. Staff debt in a customer's ledger means "what does this
     customer owe me" -- the figure §14 says the owner checks first -- stops having an
