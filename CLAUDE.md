@@ -337,24 +337,61 @@ denormalises the value while making drift structurally impossible. Not built in 
 
 **`user_profiles`**
 Supabase Auth owns `auth.users`. This table holds application concerns.
-- `id` — UUID, matches `auth.users.id`
+- `id` — UUID, matches `auth.users.id`. **Immutable, and never generated here** — see below
 - `full_name` — text
-- `is_active` — boolean, default true
+- `is_active` — boolean, default true. **Written only by `provision_user.py`** — see
+  `outlet_memberships` below for why the API does not touch it
 - `phone` — text, nullable
 - **No `role` and no `outlet_id`** — a user's role is per-outlet, held in
   `outlet_memberships`. See §5.0.
+- **No `email` and no password.** Supabase owns the credential and this table deliberately
+  does not mirror it — one source of truth. **Phase 14 amendment:** this is why
+  `POST /users` cannot pre-check a duplicate the way every other create does, and why an
+  email can never be changed through this API
+
+> **`id` is immutable for the reason `fuel_types.code` is, and then one reason more.**
+> §5.1 already refuses to let a code change because it "relabels every expense ever filed
+> under it"; here roughly fifteen tables hold a foreign key to this column — `created_by`,
+> `entered_by`, `reviewed_by`, `attendant_id`, `closed_by`, `locked_by`, `uploaded_by`,
+> `changed_by`, `salesman_id`, `finalised_by` — and none of them cascade. But the sharper
+> reason is that this value *is* the JWT's `sub` claim. Change it and the person
+> authenticates successfully and is refused forever with `PROFILE_NOT_PROVISIONED`, which
+> is the exact failure `app/jobs/provision_user.py` warns about when it says the command
+> "cannot invent it".
+>
+> **`created_by` distinguishes the two ways a user arrives.** `NULL` means the CLI
+> provisioned them — a system action, and for the very first admin there is no user to
+> credit. A populated value means an admin created them through `POST /users`, by name.
+> **Phase 14 amendment**; before it, every row was NULL because the CLI was the only path.
 
 **`outlet_memberships`** — which users may act at which outlet, and in what capacity
 - `user_id` — FK to user_profiles
 - `outlet_id` — FK to outlets
 - `role` — enum: `admin` | `manager` | `attendant`
-- `is_active` — boolean, default true
+- `is_active` — boolean, default true. **This is how a person is retired** — see below
 - Unique constraint on `(user_id, outlet_id)`
 
 > Role lives here rather than on `user_profiles` because someone can legitimately be
 > a manager at one outlet and an attendant at another. Putting `outlet_id` directly
 > on `user_profiles` would hardcode one-user-one-outlet — the same retrofit this
 > section exists to avoid, merely moved to a different table.
+
+> **Retirement is a membership act, not a profile act. Phase 14 amendment.** There are two
+> `is_active` flags and they mean different things, which `app/api/deps.py` already makes
+> visible by giving them different error codes: a false membership flag is 403
+> `MEMBERSHIP_INACTIVE`, *"Your access to this outlet has been revoked"*; a false profile
+> flag is 403 `PROFILE_INACTIVE`, *"This account has been deactivated."*
+>
+> The API writes **only the membership flag**. In V1 that is already a complete lockout,
+> because every protected route resolves through `require_role` and therefore through the
+> membership. `user_profiles.is_active` means "gone from every outlet" — a sentence V1 has
+> no way to mean, since there is one outlet — so exposing both would be two switches doing
+> one job today and diverging confusingly the day there are two. It keeps its single
+> writer, `provision_user.py`.
+>
+> **There is no delete, and could not be.** §3 rule 6 forbids it as policy; the fifteen
+> non-cascading foreign keys above forbid it as physics. A user who has done anything is
+> undeletable twice over.
 
 **`fuel_types`** — global reference data, **admin-managed**
 - `code` — text unique (`PETROL`, `DIESEL`, `PREMIUM_PETROL`, `CBG`)
@@ -1515,6 +1552,8 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | List expense categories (to fill a dropdown) | ✅ | ✅ | ✅ |
 | List credit customers (to fill a dropdown — **name and vehicles only**, §9) | ✅ | ✅ | ✅ |
 | Read one customer's detail, outstanding balance, or ledger | ❌ | ✅ | ✅ |
+| List the outlet roster (to fill a picker — **name and role only**, §13.26) | ❌ | ✅ | ✅ |
+| Read one user's detail, including their phone | ❌ | ❌ | ✅ |
 | Close a shift | ❌ | ✅ | ✅ |
 | Record bank deposits | ❌ | ✅ | ✅ |
 | Review flagged expenses | ❌ | ✅ | ✅ |
@@ -1556,6 +1595,18 @@ Write a permission test for the attendant-touching-another-shift case specifical
 > manager-and-above only for the customer's *own* detail route. A manager floor here would
 > expose one table's restricted columns through a different endpoint, so admin-only is what
 > keeps §8 and §9 consistent rather than merely cautious.
+
+> **Why the roster sits at the manager floor and not the attendant floor.** Phase 14
+> amendment. It reads like an inconsistency next to the credit-customer dropdown one row
+> above, which every role may list — but the two dropdowns have different callers.
+>
+> An attendant has **nothing to pick a colleague for**. They cannot read another attendant's
+> shift (`NOT_YOUR_SHIFT`), so no name ever needs resolving on their screen, and
+> `POST /shifts` refuses them a foreign `attendant_id` outright, so the picker would offer
+> them a list of choices the server would reject. The only caller who needs the roster is
+> the manager opening a shift in a salesman's name. Nobody below that floor has a use for
+> it, and staff detail defaults above the attendant floor for the same reason the
+> customer's phone does.
 
 ---
 
@@ -1871,6 +1922,45 @@ ahead — no empty modules for later phases.
     Two read-only screens' worth of hand-written SVG lands here, and §14 gains a guardrail
     about it: **the server sends bar heights as CSS percentage strings**, because
     `value / max` is arithmetic on money and §3 rule 1 does not stop at the API boundary.
+14. **Users** — `POST`/`GET`/`PATCH` under `/api/v1/users`, an admin Users screen, and the
+    roster picker two existing screens have been missing. **No migration and no new table**,
+    like Phase 13: `user_profiles` and `outlet_memberships` have existed since migration
+    `0002` and this phase is about *reaching* them.
+
+    §8's permission table has said *"Manage users, nozzles, customers — admin only"* since
+    Phase 2. Nozzles landed a router in Phase 3 and customers in Phase 9; **users never did.**
+    Adding a manager or an attendant still means creating them by hand in the Supabase
+    dashboard, copying the UUID, and running `app/jobs/provision_user.py` from a shell.
+
+    **The command stays**, and its own reasoning says why: *"the very first admin has no admin
+    to create them. A command breaks that cycle, because anyone with shell access to the
+    server is already more privileged than any API role."* That argument covers the bootstrap
+    and nothing beyond it. Every *subsequent* user going through the same three-system dance
+    is the gap, and it costs exactly what that file warns about — *"a mismatch produces a user
+    who authenticates successfully and is then refused with `PROFILE_NOT_PROVISIONED`
+    forever."*
+
+    **(a) A user is created in two systems, and Supabase is written first**, because
+    `user_profiles.id` must equal `auth.users.id` and only Supabase can say what that is. The
+    identity provider therefore arrives as an `AuthBackend` protocol with a `SupabaseAuth`
+    implementation and a `LocalAuth` double, structurally identical to §7.1's
+    `StorageBackend` and hand-rolled for the same reason §16 gives — *"three REST calls behind
+    a small interface is more boring and more testable than a client library"*. The window
+    between the two writes is not transactional; §13.25 is what this phase does about it.
+
+    **(b) The last active admin cannot be demoted or deactivated** (§13.27). The CLI guards
+    this with `--force`; an HTTP endpoint has no `--force` because there is no caller left who
+    could send it, so it refuses outright and names the CLI as the repair.
+
+    **(c) Two screens stop lying.** `today.js` renders the literal string *"another
+    attendant"* because nothing could turn a `user_id` into a name, and the shift-open sheet
+    offers no attendant picker even though `POST /shifts` has accepted `attendant_id` since
+    Phase 4 — so through the app, a manager cannot open a shift in a salesman's name at all.
+    Both are consequences of the missing router rather than separate bugs, and both are fixed
+    by the roster read the same endpoint provides.
+
+    This is **not** the bank/IOCL module. §12 scopes that as one post-V1 module built together,
+    after V1 is hand-tested and deployed.
 
 ---
 
@@ -1898,6 +1988,13 @@ and ask.
   The **schema** is already outlet-ready; see §5.0. Do not build the features, and
   do not remove the `outlet_id` columns.
 - Mobile app (the API must *permit* one; V1 does not *build* one)
+- **Credential management of any kind: password reset, email change, invite emails, SMTP,
+  login history, session listing.** Phase 14 clarification. Supabase owns the credential
+  (§5.1) and V1 does not build a second place to manage it — an admin uses the Supabase
+  dashboard. Phase 14 builds *authorisation* (who may act, and as what), which is this
+  application's business, and deliberately stops at the boundary. Note the one deliberate
+  exception: `POST /users` *sets* an initial password, because it must supply one to create
+  the account at all, and it never reads one back
 - Real-time updates, websockets, push notifications
 - Per-transaction (per-fill) data capture
 - Role-based UI theming, **a dark/light mode toggle**, i18n. **Phase 12 clarification:** all
@@ -2105,6 +2202,62 @@ future reader must be able to tell the difference.
     name the cost and revisit it with a real query count rather than optimise on a guess —
     the same reasoning §13.17 applies to audit-log growth. §6.4, §6.5
 
+25. **Creating a user writes two systems, and the window between them is not transactional.**
+    Phase 14. Supabase Auth is written first — it has to be, because `user_profiles.id` must
+    equal `auth.users.id` and only Supabase can say what that is — and the two database rows
+    follow inside one transaction. If that transaction fails, the endpoint issues a
+    **best-effort compensating delete** against the auth user and re-raises.
+
+    Everything before that is ordinary. What must be written down is the case where the
+    compensation *also* fails: an auth user then exists with no profile behind it. **That fails
+    closed** — they can obtain a valid token and are refused at every endpoint with 403
+    `PROFILE_NOT_PROVISIONED`, which is exactly the state §5.1 describes and `deps.py` already
+    handles. It is logged at `error` with the id, and the repair is `provision_user.py`, whose
+    entire purpose is "an auth user exists, give it a profile here".
+
+    Two alternatives were rejected. Generating the UUID locally and passing it to Supabase
+    would let the database be written first and make the whole thing rollback-safe — but it
+    depends on the GoTrue admin API accepting a caller-supplied `id`, which is version-specific,
+    and a silent change there would put us back here without a test failing. A two-phase
+    "reserve then confirm" protocol is a distributed transaction for a form an admin fills in
+    once a month. The honest move is one ordered pair of writes, a compensation, and this
+    paragraph. §5.1, §7.1
+
+26. **Email and password are not in this database, and cannot be read, changed or reset
+    through this API.** Phase 14, and it is a restatement of §5.1 rather than a new rule —
+    but it is the first phase where the consequences are user-visible, so they belong here.
+
+    Three of them. **The Users screen cannot show an email**, so an admin identifies people by
+    name and phone and goes to the Supabase dashboard when they need the address. **There is no
+    password reset**, and a person who forgets theirs needs an admin in that dashboard or
+    Supabase's own recovery flow — this application has nowhere to put the operation.
+    And **`POST /users` cannot pre-check a duplicate**, unlike every other create in this
+    codebase, which pre-checks its unique key and raises a specific 409 before inserting. The
+    unique key here is the email, Supabase is its only authority, and so a duplicate surfaces
+    as 409 `AUTH_USER_EXISTS` *from the provider* — whose detail names `provision_user.py`,
+    because an admin who hits it is otherwise stuck with a real account they cannot attach.
+
+    Mirroring the email locally would fix all three and is refused: §5.1's "one source of truth
+    for a credential" is worth more than the convenience, and a mirrored email is wrong from
+    the first time somebody changes it in the dashboard. §5.1, §8
+
+27. **The last active admin at an outlet cannot be demoted or deactivated through the API.**
+    Phase 14. `app/jobs/provision_user.py` already guards this for the CLI and states the
+    stake: *"a careless re-run with the wrong `--role` would otherwise silently demote the only
+    admin and lock everyone out of §8's admin-only actions."* There it is recoverable, because
+    `--force` exists and a shell operator is more privileged than any API role.
+
+    **An HTTP endpoint has no `--force`, because there is no caller left who could send it.**
+    So it refuses with 409 `LAST_ADMIN_AT_OUTLET` and the detail names the command that can
+    undo it. The count joins `user_profiles.is_active` as well as the membership flag — an
+    admin who cannot sign in is not a second admin, and counting them would strand the outlet
+    on the strength of an entirely correct query.
+
+    **Self-demotion is allowed when another admin exists**, and takes effect on the caller's
+    very next request. That is startling and it is correct: the rule protects the outlet from
+    having no admin, not an individual from their own decision, and a second rule guarding the
+    second case would be guarding nothing this one does not already cover. §5.1, §8
+
 ---
 
 ## 14. Guardrails for Claude Code
@@ -2273,6 +2426,30 @@ to occur on this specific project.
   pixel rather than a rupee. The server computes bar heights in `Decimal` and sends a CSS
   percentage string the client can only assign — which also makes the chart provably consistent
   with the table beneath it, since both come from one pass (§3 rule 1, §13.18)
+- **Accept `user_profiles.id` from a client, or generate one.** It must equal `auth.users.id`
+  — it *is* the JWT's `sub` claim — so it is copied from whatever the identity provider
+  returned, never invented. A wrong value produces a person who authenticates successfully and
+  is refused forever with `PROFILE_NOT_PROVISIONED`, which looks like a permissions bug and is
+  not (§5.1, §13.26)
+- **Store, log, or audit an email or a password.** Neither is a column in this database and
+  neither may become one: §5.1 refuses to mirror the credential, and one source of truth is the
+  whole point. `_audit_snapshot` covers real columns only, so nothing from the create payload
+  can reach `audit_logs` by accident — keep it that way (§5.1, §13.26)
+- **Let the API demote or deactivate the last active admin at an outlet.** There is no
+  privileged caller left to undo it, so this is a one-way door into an outlet nobody can
+  administer. Refuse with 409 and name `provision_user.py --force`, which is the only tool that
+  can still get in. Count only admins who could actually sign in — join `user_profiles.is_active`
+  as well as the membership flag (§13.27)
+- **Take `outlet_id` from a user-management payload.** It comes from `actor.outlet_id`, like
+  every other create. A client-supplied outlet is how somebody grants themselves a role at a
+  pump they do not work at (§5.0, §8)
+- **Retire a person by writing `user_profiles.is_active` from the API.** That flag means "gone
+  from every outlet" and V1 has no way to mean it. Deactivate the *membership* — different
+  flag, different error code, and the one §8's checks actually resolve against (§5.1, §13.26)
+- **Treat the Supabase-then-database create as atomic, or pretend it is.** Two systems, one
+  ordered pair of writes, a best-effort compensating delete, and a loud log if that fails. An
+  orphaned auth user fails closed and is repaired with the CLI; a comment claiming the pair is
+  transactional is worse than the orphan, because it stops the next person looking (§13.25)
 - "Improve" the schema mid-implementation without flagging it first
 
 **Do:**
@@ -2349,6 +2526,16 @@ to occur on this specific project.
   system already stores, so adding or removing one is cheap — but a list that reports things
   the owner does not act on is a list that gets ignored, and then the ones that matter are
   ignored with it.
+- **Who actually works at this pump, and in what capacity?** Phase 14 makes staff data entry
+  rather than a shell command, which means the real list can be typed in before the first day
+  of trading is entered — the same argument this section already makes about the real expense
+  category list. Until it is, `shifts.attendant_id` carries one name (the owner's) on every
+  shift, and §5.2's *"exactly one name carries the drawer"* is technically satisfied and
+  practically meaningless.
+- **Should an admin be able to see a person's email inside the app?** Today they cannot, by
+  design (§5.1, §13.26) — identification is by name and phone, and the email lives in the
+  Supabase dashboard. That is correct and mildly inconvenient, and it is worth confirming the
+  inconvenience is acceptable before somebody proposes mirroring the column to fix it.
 
 ---
 
@@ -2382,7 +2569,14 @@ python -m app.jobs.cleanup_attachments
 ```
 DATABASE_URL
 SUPABASE_URL
-SUPABASE_SERVICE_KEY          # server-side only, never exposed to frontend
+SUPABASE_SERVICE_KEY          # server-side only, never exposed to frontend. Phase 14:
+                              # REQUIRED when ENV=prod, which it was not before. Two callers
+                              # now -- Storage (§7.1) and Auth admin (§11 phase 14) -- and its
+                              # absence used to be silent: build_storage() falls back to a
+                              # local temp directory, so a misconfigured production wrote
+                              # receipts to /tmp with nothing complaining. Failing at startup
+                              # is the only safe direction, as it already is for the three
+                              # keys below.
 SUPABASE_ANON_KEY             # Phase 12. PUBLIC BY DESIGN -- it is meant to ship in a
                               # browser, and GET /api/v1/auth-config serves it unauthenticated
                               # so the login screen can reach Supabase at all. Note the
