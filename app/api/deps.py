@@ -59,6 +59,7 @@ from app.db.session import get_db
 from app.models.attachment import Attachment
 from app.models.shift import Shift
 from app.services.storage import StorageBackend, build_storage
+from app.services.supabase_auth import AuthBackend, build_auth
 from app.models.user import OutletMembership, UserProfile
 
 logger = logging.getLogger(__name__)
@@ -176,6 +177,20 @@ def get_storage(settings: Settings = Depends(get_settings)) -> StorageBackend:
     same posture `SUPABASE_JWT_SECRET` already takes for auth.
     """
     return build_storage(settings)
+
+
+def get_auth(settings: Settings = Depends(get_settings)) -> AuthBackend:
+    """The Phase 14 counterpart to `get_storage`: the one place a router asks for the
+    identity provider, so `app/api/v1/users.py` never imports `SupabaseAuth`/`LocalAuth`
+    directly. Tests override this dependency to inject a `LocalAuth`, so the suite never
+    reaches a real Supabase project.
+
+    Note what this is *not*. Token **verification** needs no provider at all -- it is pure
+    local computation over the token and the JWT secret (`app/core/security.py`), plus a
+    cached JWKS fetch. This dependency exists only for the one thing verification cannot do:
+    bring a new account into existence (§13.25).
+    """
+    return build_auth(settings)
 
 
 def require_role(

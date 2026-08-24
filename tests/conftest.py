@@ -86,15 +86,25 @@ async def client(tmp_path) -> AsyncIterator[AsyncClient]:
     URL` is set above but `SUPABASE_SERVICE_KEY` deliberately is not, so `build_storage`
     would already choose `LocalStorage` even without this override -- this makes that
     choice explicit and per-test instead of incidental.
+
+    `get_auth` is overridden the same way and for the same reason (Phase 14). A **fresh**
+    `LocalAuth` per test matters more than a fresh `LocalStorage` does: it holds the
+    email -> id map that makes a duplicate a 409, so a session-wide instance would let one
+    test's `ramesh@example.com` fail the next test that used the same address -- on a
+    constraint rather than on its own assertion, pointing at the wrong test entirely. That
+    is `clean_credit`'s lesson, arriving in a fixture instead of a table.
     """
-    from app.api.deps import get_storage
+    from app.api.deps import get_auth, get_storage
     from app.main import create_app
     from app.services.storage import LocalStorage
+    from app.services.supabase_auth import LocalAuth
 
     app = create_app()
     app.dependency_overrides[get_storage] = lambda: LocalStorage(
         root=tmp_path / "storage"
     )
+    auth = LocalAuth()
+    app.dependency_overrides[get_auth] = lambda: auth
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac

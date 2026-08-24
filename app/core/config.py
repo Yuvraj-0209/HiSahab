@@ -35,8 +35,11 @@ class Settings(BaseSettings):
     # (tests mint their own tokens). Made mandatory in production by
     # _supabase_auth_must_be_configured_in_prod below.
     #
-    # SUPABASE_SERVICE_KEY is still unread: it is needed for Storage in Phase 8, not for
-    # verifying tokens, which uses the JWT secret alone.
+    # SUPABASE_SERVICE_KEY has two consumers and neither is token verification, which uses
+    # the JWT secret alone: Storage since Phase 8 (app/services/storage.py) and the Auth
+    # admin API since Phase 14 (app/services/supabase_auth.py). Both fall back to an offline
+    # double when it is absent, which is right for dev and silently wrong for production --
+    # hence its promotion into the prod validator below.
     SUPABASE_URL: str | None = None
     SUPABASE_SERVICE_KEY: str | None = None
     # Phase 12. PUBLIC BY DESIGN, and the only Supabase secret-shaped value in this class
@@ -148,13 +151,27 @@ class Settings(BaseSettings):
         all. The failure would otherwise surface as a login page that simply does not work
         in production, which is a far more expensive way to learn about a missing variable
         than refusing to boot.
+
+        SUPABASE_SERVICE_KEY joins them in Phase 14, and it closes a hole rather than adding
+        a requirement. It has had a consumer since Phase 8 -- `build_storage` -- which
+        **falls back to a local temp directory when it is absent**, so a production that
+        forgot it has been writing receipts to /tmp with nothing complaining, and every
+        signed URL it issued was a `file://` URI. Phase 14 adds a second consumer,
+        `build_auth`, whose fallback cannot create a real account at all. Two silent
+        degradations is one more than this deserved; the rule above -- fail at startup --
+        was always the right one for this key too.
         """
         if self.ENV != "prod":
             return self
 
         missing = [
             name
-            for name in ("SUPABASE_JWT_SECRET", "SUPABASE_URL", "SUPABASE_ANON_KEY")
+            for name in (
+                "SUPABASE_JWT_SECRET",
+                "SUPABASE_URL",
+                "SUPABASE_ANON_KEY",
+                "SUPABASE_SERVICE_KEY",
+            )
             if not (getattr(self, name) or "").strip()
         ]
         if missing:

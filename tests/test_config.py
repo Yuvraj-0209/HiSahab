@@ -176,13 +176,39 @@ def test_prod_requires_the_anon_key(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
 
+def test_prod_requires_the_service_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phase 14, and this one closes a hole rather than adding a requirement.
+
+    The key has had a consumer since Phase 8 -- `build_storage` -- and its absence has
+    always been **silent**: the factory falls back to `LocalStorage`, so a production that
+    forgot it wrote every receipt to a machine-local temp directory and handed out
+    `file://` URIs as signed URLs, with nothing anywhere complaining. Phase 14 adds a second
+    consumer whose fallback cannot mint a real account at all.
+
+    Two silent degradations is one more than this deserved, and the rule the three tests
+    above apply -- refuse to boot -- was always the right one for this key too. Note the
+    consequence for an existing deployment: it is a **new** required variable, not merely a
+    documented one.
+    """
+    monkeypatch.delenv("SUPABASE_SERVICE_KEY", raising=False)
+
+    with pytest.raises(ValidationError, match="SUPABASE_SERVICE_KEY"):
+        _settings(
+            ENV="prod",
+            SUPABASE_URL="https://project.supabase.co",
+            SUPABASE_JWT_SECRET="a-secret-of-at-least-32-bytes-here",
+            SUPABASE_ANON_KEY="a-public-anon-key",
+        )
+
+
 def test_prod_boots_when_supabase_is_fully_configured() -> None:
-    """"Fully configured" gained a third value in Phase 12."""
+    """"Fully configured" gained a third value in Phase 12 and a fourth in Phase 14."""
     settings = _settings(
         ENV="prod",
         SUPABASE_URL="https://project.supabase.co",
         SUPABASE_JWT_SECRET="a-secret-of-at-least-32-bytes-here",
         SUPABASE_ANON_KEY="a-public-anon-key",
+        SUPABASE_SERVICE_KEY="a-service-key-that-never-leaves-the-server",
     )
 
     assert settings.ENV == "prod"
