@@ -190,6 +190,16 @@ _CONSTRAINT_ERRORS: dict[str, tuple[int, str, str]] = {
         "SUMMARY_ALREADY_EXISTS",
         "A cash summary already exists for that business date at this outlet.",
     ),
+    # Phase 14, and it arrives by *deletion* rather than addition: this constraint sat in
+    # `tests/test_errors.py`'s exclusion list until now, on the grounds that it was "only
+    # reachable from app/jobs/provision_user.py, a CLI command run by one operator" and that
+    # mapping it would be an entry no request could produce. `app/api/v1/users.py` makes
+    # every word of that false. The exclusion is gone and this is what replaces it.
+    "uq_outlet_memberships_user_outlet": (
+        409,
+        "MEMBERSHIP_EXISTS",
+        "That user already has a role at this outlet.",
+    ),
 }
 
 

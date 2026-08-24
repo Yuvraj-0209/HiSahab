@@ -34,11 +34,19 @@ from app.api.v1 import (
     shifts,
     shortfalls,
     uploads,
+    users,
 )
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health.router)
 api_router.include_router(me.router)
+
+# Phase 14 -- who may sign in, and what they may do. Sits beside `me` deliberately: it
+# answers about other people the question `/me` answers about you, and shares its
+# `identity` tag. No collision hazard -- "/users" and "/users/{user_id}" have no static
+# sibling under the parameterised segment, so there is nothing here of the
+# "/fuel-prices/current" shape that has to be declared first.
+api_router.include_router(users.router)
 
 # Phase 12 -- the two config reads a browser makes before it can render anything.
 # /auth-config is the only unauthenticated route besides /health, which is why

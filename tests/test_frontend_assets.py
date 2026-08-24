@@ -306,6 +306,7 @@ def test_every_router_is_reachable_from_a_screen() -> None:
         "daily_summaries": "/daily-summaries",
         "audit_logs": "/audit-logs",
         "reports": "/reports",
+        "users": "/users",
     }
 
     unmapped = routers - prefixes.keys()

@@ -58,6 +58,7 @@ import {
 import { renderPricing } from "./screens/admin_pricing.js";
 import { renderCustomerLedger, renderCustomers } from "./screens/admin_customers.js";
 import { renderAuditLogs } from "./screens/audit_logs.js";
+import { renderUsers } from "./screens/admin_users.js";
 import { renderShortfallLedger } from "./screens/shortfalls.js";
 import { renderFlaggedExpenses } from "./screens/flagged_expenses.js";
 
@@ -316,6 +317,7 @@ function registerRoutes() {
     tab: "admin",
     role: "admin",
   });
+  route("/admin/users", adminScreen(renderUsers), { tab: "admin", role: "admin" });
   route("/admin/audit", adminScreen(renderAuditLogs), { tab: "admin", role: "admin" });
 
   // The two links the Cash hub was already offering, which reached the not-found route

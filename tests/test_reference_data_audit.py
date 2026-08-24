@@ -24,10 +24,12 @@ because nothing failed when it was missing.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
+from httpx import ASGITransport, AsyncClient as _AsyncClient
 from sqlalchemy import text
 
 
@@ -1098,3 +1100,273 @@ async def test_a_zero_length_template_edit_writes_no_audit_row(
             connection.execute(
                 text("DELETE FROM outlet_shift_templates WHERE sequence = 9")
             )
+
+
+# --- user_profiles and outlet_memberships (§5.1, §13.25-27) --------------------
+#
+# Phase 14, and the only section in this file where **one endpoint writes two tables**.
+# That makes "did the audit row land on the right one" a real question rather than a
+# formality: `audit_logs.record_id` points at a row in a *named* table, so "who made Ramesh
+# a manager" is only ever answerable under `outlet_memberships`. An implementation that
+# recorded both changes against `user_profiles` would pass every other assertion in this
+# file and lose that question forever.
+#
+# The other thing worth pinning here is the negative: a `PATCH` of only `full_name` must
+# record **nothing** on `outlet_memberships`. An audit log padded with no-op rows saying a
+# role did not change is one nobody reads, which is the failure mode §5.2 names for a flag
+# nobody can clear.
+
+
+def _user_payload(**overrides) -> dict:
+    body = {
+        "email": "audit-subject@example.com",
+        "password": "hunter22-long-enough",
+        "full_name": "Ramesh Kumar",
+        "role": "attendant",
+    }
+    body.update(overrides)
+    return body
+
+
+async def test_creating_a_user_records_one_row_per_table(client, make_user, auth_headers, engine) -> None:
+    admin = make_user("admin")
+
+    created = (
+        await client.post(
+            "/api/v1/users", json=_user_payload(phone="+919812345678"),
+            headers=auth_headers(admin),
+        )
+    ).json()
+
+    profile_rows = _audit_rows(
+        engine, table_name="user_profiles", record_id=created["id"]
+    )
+    assert [row["action"] for row in profile_rows] == ["insert"]
+    assert profile_rows[0]["old_values"] is None
+    assert profile_rows[0]["new_values"]["full_name"] == "Ramesh Kumar"
+    # `changed_by` is the ACTING admin, never the row's own id -- the case where the two
+    # differ is every case here, which is exactly why it is worth asserting.
+    assert profile_rows[0]["changed_by"] == admin
+
+    with engine.connect() as connection:
+        membership_id = connection.execute(
+            text("SELECT id FROM outlet_memberships WHERE user_id = :id").bindparams(
+                id=UUID(created["id"])
+            )
+        ).scalar_one()
+
+    membership_rows = _audit_rows(
+        engine, table_name="outlet_memberships", record_id=membership_id
+    )
+    assert [row["action"] for row in membership_rows] == ["insert"]
+    assert membership_rows[0]["new_values"] == {"role": "attendant", "is_active": True}
+
+
+async def test_no_password_or_email_reaches_the_audit_log(client, make_user, auth_headers, engine) -> None:
+    """§14, and the reason `_profile_snapshot` is a plain column list rather than a
+    `model_dump`. Neither value is a column here, so neither can be recorded -- but a
+    snapshot built from the payload instead of the row would leak both, and would look
+    entirely reasonable in review."""
+    admin = make_user("admin")
+
+    created = (
+        await client.post(
+            "/api/v1/users",
+            json=_user_payload(password="a-very-secret-password"),
+            headers=auth_headers(admin),
+        )
+    ).json()
+
+    rows = _audit_rows(engine, table_name="user_profiles", record_id=created["id"])
+    serialised = json.dumps(rows[0]["new_values"])
+
+    assert "a-very-secret-password" not in serialised
+    assert "audit-subject@example.com" not in serialised
+    assert set(rows[0]["new_values"]) == {"full_name", "phone", "is_active"}
+
+
+async def test_editing_a_name_records_only_the_profile(client, make_user, auth_headers, engine) -> None:
+    admin = make_user("admin")
+    subject = make_user("attendant", full_name="Old Name")
+
+    with engine.connect() as connection:
+        membership_id = connection.execute(
+            text("SELECT id FROM outlet_memberships WHERE user_id = :id").bindparams(
+                id=subject
+            )
+        ).scalar_one()
+
+    response = await client.patch(
+        f"/api/v1/users/{subject}",
+        json={"full_name": "New Name"},
+        headers=auth_headers(admin),
+    )
+    assert response.status_code == 200
+
+    profile_rows = _audit_rows(engine, table_name="user_profiles", record_id=subject)
+    assert [row["action"] for row in profile_rows] == ["update"]
+    # Both sides populated and genuinely different -- which fails if the snapshot is taken
+    # after the mutation instead of before.
+    assert profile_rows[0]["old_values"]["full_name"] == "Old Name"
+    assert profile_rows[0]["new_values"]["full_name"] == "New Name"
+
+    assert _audit_rows(
+        engine, table_name="outlet_memberships", record_id=membership_id
+    ) == []
+
+
+async def test_editing_a_role_records_only_the_membership(client, make_user, auth_headers, engine) -> None:
+    admin = make_user("admin")
+    subject = make_user("attendant")
+
+    with engine.connect() as connection:
+        membership_id = connection.execute(
+            text("SELECT id FROM outlet_memberships WHERE user_id = :id").bindparams(
+                id=subject
+            )
+        ).scalar_one()
+
+    await client.patch(
+        f"/api/v1/users/{subject}", json={"role": "manager"}, headers=auth_headers(admin)
+    )
+
+    rows = _audit_rows(engine, table_name="outlet_memberships", record_id=membership_id)
+    assert [row["action"] for row in rows] == ["update"]
+    assert rows[0]["old_values"]["role"] == "attendant"
+    assert rows[0]["new_values"]["role"] == "manager"
+
+    assert _audit_rows(engine, table_name="user_profiles", record_id=subject) == []
+
+
+async def test_editing_both_records_both(client, make_user, auth_headers, engine) -> None:
+    admin = make_user("admin")
+    subject = make_user("attendant", full_name="Old Name")
+
+    with engine.connect() as connection:
+        membership_id = connection.execute(
+            text("SELECT id FROM outlet_memberships WHERE user_id = :id").bindparams(
+                id=subject
+            )
+        ).scalar_one()
+
+    await client.patch(
+        f"/api/v1/users/{subject}",
+        json={"full_name": "New Name", "role": "manager"},
+        headers=auth_headers(admin),
+    )
+
+    assert len(_audit_rows(engine, table_name="user_profiles", record_id=subject)) == 1
+    assert (
+        len(_audit_rows(engine, table_name="outlet_memberships", record_id=membership_id))
+        == 1
+    )
+
+
+async def test_a_deactivation_is_an_update_not_a_status_change(client, make_user, auth_headers, engine) -> None:
+    """§14: `status_change` means a *shift* lifecycle move. Because §3 rule 6 forbids hard
+    deletes, `is_active` is how every reference table retires a row -- so admitting those
+    would make the label mean "a shift moved, or anything at all was deactivated", and
+    nobody could query for lifecycle events again."""
+    admin = make_user("admin")
+    subject = make_user("manager")
+
+    with engine.connect() as connection:
+        membership_id = connection.execute(
+            text("SELECT id FROM outlet_memberships WHERE user_id = :id").bindparams(
+                id=subject
+            )
+        ).scalar_one()
+
+    await client.patch(
+        f"/api/v1/users/{subject}", json={"is_active": False}, headers=auth_headers(admin)
+    )
+
+    rows = _audit_rows(engine, table_name="outlet_memberships", record_id=membership_id)
+    assert [row["action"] for row in rows] == ["update"]
+    assert rows[0]["old_values"]["is_active"] is True
+    assert rows[0]["new_values"]["is_active"] is False
+
+
+async def test_a_refused_last_admin_demotion_writes_no_audit_row(client, make_user, auth_headers, engine) -> None:
+    """The assertion that proves the audit row and the change share one transaction."""
+    admin = make_user("admin")
+
+    with engine.connect() as connection:
+        membership_id = connection.execute(
+            text("SELECT id FROM outlet_memberships WHERE user_id = :id").bindparams(
+                id=admin
+            )
+        ).scalar_one()
+
+    response = await client.patch(
+        f"/api/v1/users/{admin}", json={"role": "manager"}, headers=auth_headers(admin)
+    )
+
+    assert response.status_code == 409
+    assert _audit_rows(
+        engine, table_name="outlet_memberships", record_id=membership_id
+    ) == []
+
+
+async def test_a_refused_immutable_field_writes_no_audit_row(client, make_user, auth_headers, engine) -> None:
+    admin = make_user("admin")
+    subject = make_user("attendant")
+
+    response = await client.patch(
+        f"/api/v1/users/{subject}",
+        json={"email": "new@example.com"},
+        headers=auth_headers(admin),
+    )
+
+    assert response.status_code == 422
+    assert _audit_rows(engine, table_name="user_profiles", record_id=subject) == []
+
+
+async def test_a_non_admin_create_writes_no_audit_row(client, make_user, auth_headers, engine) -> None:
+    manager = make_user("manager")
+    before = _audit_count(engine, table_name="user_profiles")
+
+    response = await client.post(
+        "/api/v1/users", json=_user_payload(), headers=auth_headers(manager)
+    )
+
+    assert response.status_code == 403
+    assert _audit_count(engine, table_name="user_profiles") == before
+
+
+async def test_a_failed_create_leaves_no_audit_row_behind(make_user, auth_headers, engine) -> None:
+    """§13.25's rollback, from the audit log's side.
+
+    `audit.record` only stages the row -- the caller commits -- so a rolled-back create must
+    leave nothing. This is the assertion that would fail if somebody "helpfully" committed
+    the audit row separately, which §14 forbids by name: a separately committed audit row
+    can describe a change that was then rolled back, and that is worse than no log at all.
+    """
+    from app.api.deps import get_auth, get_storage
+    from app.main import create_app
+    from app.services.storage import LocalStorage
+
+    admin = make_user("admin")
+    occupied = make_user("attendant")
+
+    class _CollidingAuth:
+        def create_user(self, *, email: str, password: str) -> UUID:
+            return occupied
+
+        def delete_user(self, *, user_id: UUID) -> None:
+            pass
+
+    app = create_app()
+    app.dependency_overrides[get_auth] = lambda: _CollidingAuth()
+    app.dependency_overrides[get_storage] = lambda: LocalStorage(root="/tmp/hisahab-test")
+
+    before = _audit_count(engine, table_name="user_profiles")
+
+    async with _AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as local:
+        await local.post(
+            "/api/v1/users", json=_user_payload(), headers=auth_headers(admin)
+        )
+
+    assert _audit_count(engine, table_name="user_profiles") == before

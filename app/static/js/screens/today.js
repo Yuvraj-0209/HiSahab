@@ -68,10 +68,20 @@ export async function renderToday(container, { session, navigate }) {
     `${businessDateWeekday(shift.business_date)} ${businessDate(shift.business_date)} · shift ${shift.sequence}`,
   );
 
-  // Sales are a manager-floor read (§8: a report, not a data-entry sheet), so an attendant
-  // simply does not see this card rather than seeing an error where a figure should be.
+  // Both of these are manager-floor reads, so an attendant simply does not make them --
+  // §8 for sales (a report, not a data-entry sheet) and for the roster (an attendant has
+  // no foreign name to resolve, because they cannot read anybody else's shift).
   let sales = null;
+  const roster = new Map();
   if (satisfies(me.role, "manager")) {
+    try {
+      for (const person of await api.get("/users", { include_inactive: true })) {
+        roster.set(person.id, person.full_name);
+      }
+    } catch {
+      // Left empty on purpose. `shiftCard` falls back to the pre-Phase-14 wording rather
+      // than failing the screen over a label.
+    }
     try {
       sales = await api.get(`/shifts/${shift.id}/sales`);
     } catch (error) {
@@ -88,7 +98,7 @@ export async function renderToday(container, { session, navigate }) {
       // A grid rather than a column: on a laptop these three read as a dashboard, and on a
       // phone auto-fit collapses them back to one column with no breakpoint to maintain.
       el("div", { className: "grid" }, [
-        shiftCard(shift, me),
+        shiftCard(shift, me, roster),
         sales ? salesCard(sales) : null,
         actionsCard(shift, { session, container, navigate }),
       ]),
@@ -130,7 +140,17 @@ function linkRow(label, hint, onClick) {
   );
 }
 
-function shiftCard(shift, me) {
+function shiftCard(shift, me, roster) {
+  // Phase 14. This row used to read "another attendant" for anybody but the caller, because
+  // nothing in the app could turn a user id into a person. `roster` is a Map, empty for an
+  // attendant (who never sees a foreign shift anyway) and empty if the fetch failed -- in
+  // both cases the old string is still the fallback, because a roster that will not load
+  // must not blank the card.
+  const attendant =
+    shift.attendant_id === me.id
+      ? `${me.full_name} (you)`
+      : (roster.get(shift.attendant_id) ?? "another attendant");
+
   return el("div", { className: "card stack" }, [
     el("div", { className: "row-between" }, [
       el("div", {}, [
@@ -145,10 +165,7 @@ function shiftCard(shift, me) {
     el("div", { className: "list" }, [
       row("Started", timeOnly(shift.started_at)),
       row("Ends", timeOnly(shift.ended_at, { absent: "not set" })),
-      row(
-        "Attendant",
-        shift.attendant_id === me.id ? `${me.full_name} (you)` : "another attendant",
-      ),
+      row("Attendant", attendant),
     ]),
   ]);
 }
@@ -354,14 +371,26 @@ function renderNoShift(container, context) {
           className: "btn btn-primary btn-block",
           text: "Open a shift",
           attrs: { type: "button" },
-          on: { click: () => openShiftSheet(context) },
+          // `container` is passed explicitly rather than read off `context`, and that is a
+          // bug fix rather than a style preference. This function used to call
+          // `openShiftSheet(context)`, and `renderNoShift` is invoked with
+          // `{ session, navigate }` -- no `container` key -- so the refresh after a
+          // successful POST reached `render(undefined, ...)` and threw. The shift was
+          // created and the screen never showed it.
+          //
+          // Found in Phase 14 while adding the attendant picker below. §13.18 names this
+          // exact class: everything below the browser is tested to 100% and a broken form
+          // fails no suite. A positional argument is the version that cannot be forgotten.
+          on: { click: () => openShiftSheet(container, context) },
         }),
       ]),
     ]),
   );
 }
 
-async function openShiftSheet(context) {
+async function openShiftSheet(container, context) {
+  const { me } = context.session;
+
   // Defaults come from the outlet's shift template (§5.1), which is exactly what it is for:
   // "nobody should retype 06:00 and 22:00 every morning". The values are materialised onto
   // the shift row by the server -- the template is never read back afterwards (§14).
@@ -371,6 +400,26 @@ async function openShiftSheet(context) {
   } catch {
     // Not fatal: started_at is optional and the server falls back to the template itself.
     templates = [];
+  }
+
+  // Phase 14. A manager may open a shift in a salesman's name -- `POST /shifts` has
+  // accepted `attendant_id` since Phase 4 -- but until the roster endpoint existed there
+  // was no way to offer the choice, so through the app it was impossible.
+  //
+  // Gated on the manager floor for two reasons that agree: `GET /users` refuses an
+  // attendant (§8), and `POST /shifts` refuses an attendant a foreign `attendant_id` with
+  // 403 NOT_YOUR_SHIFT anyway -- so a picker shown to one would offer choices the server
+  // would reject. Not hidden as a permission control (§8: hiding a button is UX); the
+  // server enforces both halves regardless.
+  let roster = [];
+  if (satisfies(me.role, "manager")) {
+    try {
+      roster = await api.get("/users");
+    } catch {
+      // Not fatal either: with no roster the field is simply absent and the server
+      // defaults `attendant_id` to the caller, which is the pre-Phase-14 behaviour.
+      roster = [];
+    }
   }
 
   const businessDateField = field({
@@ -399,6 +448,19 @@ async function openShiftSheet(context) {
     });
   }
 
+  if (roster.length) {
+    fields.attendant_id = select({
+      name: "attendant_id",
+      label: "Attendant",
+      value: me.id,
+      options: roster.map((person) => ({
+        value: person.id,
+        label: person.id === me.id ? `${person.full_name} (you)` : person.full_name,
+      })),
+      hint: "The one person accountable for this shift's cash. A shortfall is booked against this name.",
+    });
+  }
+
   const form = new Form(fields);
 
   const submit = el("button", {
@@ -413,10 +475,17 @@ async function openShiftSheet(context) {
     try {
       // `sequence` is deliberately never sent: it is server-assigned, and ShiftCreate's
       // extra="forbid" makes sending it a 422 (§14).
-      await api.post("/shifts", { business_date: form.values().business_date });
+      const values = form.values();
+      const body = { business_date: values.business_date };
+      // Omitted entirely rather than sent as the caller's own id, so an attendant's request
+      // is byte-identical to what it was before Phase 14 and the server's own default
+      // (`payload.attendant_id or actor.user.id`) stays the single place that decision is
+      // made.
+      if (values.attendant_id) body.attendant_id = values.attendant_id;
+      await api.post("/shifts", body);
       sheet.close();
       notify.success("Shift opened.");
-      renderToday(context.container, context);
+      renderToday(container, context);
     } catch (error) {
       submit.disabled = false;
       const unmatched = error.isValidation ? form.showErrors(error.detail) : [];

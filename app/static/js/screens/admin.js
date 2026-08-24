@@ -46,6 +46,7 @@ const SECTIONS = [
   { label: "Expense categories", hint: "What an expense can be filed under, and which need a receipt", route: "#/admin/categories" },
   { label: "Credit customers", hint: "Who may take udhaar, and their limit", route: "#/admin/customers" },
   { label: "Shift templates", hint: "The hours this outlet usually trades", route: "#/admin/shift-templates" },
+  { label: "Users", hint: "Who may sign in, and what they may do", route: "#/admin/users" },
   { label: "Audit log", hint: "Who changed what, and what it was before", route: "#/admin/audit" },
 ];
 
@@ -99,7 +100,7 @@ export function renderAdmin(container, { session, navigate }) {
  * ends up looking like an ordinary boolean.
  */
 
-async function loadInto(container, { title, session, navigate, fetch, build, action }) {
+export async function loadInto(container, { title, session, navigate, fetch, build, action }) {
   const { shell } = session;
   shell.setTab("admin");
   shell.setTitle(title);
@@ -120,12 +121,12 @@ async function loadInto(container, { title, session, navigate, fetch, build, act
   }
 }
 
-function activePill(row) {
+export function activePill(row) {
   return row.is_active ? pill("active", "open") : pill("inactive", "neutral");
 }
 
 /** The submit handler every sheet below shares. */
-function wireSubmit(submit, form, { run, onDone, sheet }) {
+export function wireSubmit(submit, form, { run, onDone, sheet }) {
   submit.addEventListener("click", async () => {
     form.clearErrors();
     submit.disabled = true;
@@ -144,7 +145,7 @@ function wireSubmit(submit, form, { run, onDone, sheet }) {
   });
 }
 
-function sheetFooter(submit) {
+export function sheetFooter(submit) {
   return el("div", { style: { padding: "0 1rem 1rem" } }, [submit]);
 }
 
@@ -308,7 +309,10 @@ export function renderNozzles(container, context) {
       className: "btn btn-primary",
       text: "Add",
       attrs: { type: "button" },
-      on: { click: () => nozzleSheet(null, null, reload) },
+      // The action button is wired up before `fetch()` below has run, so the fuel types
+      // loaded for the Edit sheet aren't in scope here yet — fetch them again on click
+      // rather than opening the sheet with nothing to choose from.
+      on: { click: async () => nozzleSheet(null, await api.get("/fuel-types"), reload) },
     }),
     build: ({ nozzles, fuelTypes }) =>
       el("div", { className: "stack" }, [

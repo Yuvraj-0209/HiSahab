@@ -180,11 +180,15 @@ _NOT_REACHED_BY_THE_ERROR_HANDLER = {
     # REQUEST_IN_PROGRESS / a replay. This race is not a bug being tolerated -- it is the
     # entire mechanism §6.10 relies on, and it never reaches `integrity_error_handler`.
     "uq_idempotency_keys_key_endpoint_user",
-    # Only reachable from `app/jobs/provision_user.py`, a CLI command run by one operator.
-    # A traceback in that operator's terminal is a fine outcome; there is no HTTP caller to
-    # hand a 500 to, and mapping it would be an entry no request can ever produce (§14's
-    # rule against dead code).
-    "uq_outlet_memberships_user_outlet",
+    # `uq_outlet_memberships_user_outlet` used to sit here, excluded because it was "only
+    # reachable from app/jobs/provision_user.py, a CLI command run by one operator". Phase 14
+    # built `app/api/v1/users.py` and made that false, so the exclusion was deleted and the
+    # constraint now has a real entry in `_CONSTRAINT_ERRORS` (409 MEMBERSHIP_EXISTS).
+    #
+    # Left as a comment rather than removed silently, because the *shape* is the lesson: an
+    # exclusion here is a claim about the world, not a permanent property of the constraint,
+    # and the claim expires the day somebody builds the endpoint it said did not exist. The
+    # test above is what noticed.
 }
 
 

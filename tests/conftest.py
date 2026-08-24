@@ -205,6 +205,34 @@ def make_user(engine: Engine) -> Iterator[Callable[..., UUID]]:
 
     if created:
         with engine.begin() as connection:
+            # Phase 14: adopt anybody an API call created during this test, BEFORE any of
+            # the cleanup below runs, so every delete that follows covers them too.
+            #
+            # `POST /api/v1/users` is the first thing in the codebase that inserts a
+            # `user_profiles` row over HTTP, and it stamps `created_by` with the acting
+            # admin -- who is one of `created`. So the profile delete at the bottom of this
+            # block would hit that foreign key and fail. `created_by IS NOT NULL` is an
+            # exact marker for "made through the API": this fixture leaves it NULL and so
+            # does `app/jobs/provision_user.py`, both because a system action has nobody to
+            # credit.
+            #
+            # Extending `created` rather than adding two deletes further down is what makes
+            # this robust: a shift opened for an API-created attendant, an expense they
+            # filed, an audit row naming them -- all of it is already handled by the
+            # existing cascade, and stays handled when somebody adds a seventh level.
+            #
+            # A separate `clean_users` fixture was the obvious shape and does not work, for
+            # the reason spelled out immediately below: declared with `usefixtures` it is
+            # set up first, torn down last, and by then this block has already blown up.
+            created.extend(
+                row[0]
+                for row in connection.execute(
+                    text(
+                        "SELECT id FROM user_profiles WHERE created_by = ANY(:ids)"
+                    ).bindparams(ids=created)
+                )
+            )
+
             # Children first -- nothing here has ON DELETE CASCADE, deliberately. Same
             # rule `make_fuel_type` follows.
             #

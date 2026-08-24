@@ -287,6 +287,12 @@ const FRIENDLY = {
   NOT_YOUR_SHIFT: "This shift belongs to another attendant.",
   PROFILE_NOT_PROVISIONED: "Your sign-in worked, but you have no profile at this outlet yet. An admin needs to add you.",
   MEMBERSHIP_INACTIVE: "Your access to this outlet has been switched off.",
+  // Phase 14. The server's own detail names the exact CLI command to run, which is right
+  // for a log and far too much for a toast -- this is one of the few codes where the
+  // shorter sentence is genuinely the more useful one.
+  LAST_ADMIN_AT_OUTLET:
+    "This is the only admin who can still sign in here. Make somebody else an admin first.",
+  AUTH_PROVIDER_UNAVAILABLE: "Could not reach the sign-in service. Nothing was created — try again.",
   CREDIT_LIMIT_EXCEEDED: "This sale would put the customer over their credit limit. An admin can override it with a reason.",
   EXPENSE_REQUIRES_RECEIPT: "This expense needs a receipt — either its category requires one, or the amount is over the threshold.",
   UNREVIEWED_EXPENSES_EXIST: "This shift has flagged expenses nobody has reviewed yet.",
