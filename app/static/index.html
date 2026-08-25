@@ -50,6 +50,41 @@
     <meta name="referrer" content="same-origin" />
 
     <title>HiSahab</title>
+
+    <!--
+      The wordmark face, preloaded because it is discovered late: the browser only
+      finds an @font-face URL after parsing app.css and matching a rule, by which
+      point the login header has already painted in the fallback and will reflow.
+
+      Self-hosted, never a CDN. §14 forbids the dependency and §13.19 makes any
+      third-party asset able to read the session token; `font-src 'self'` above is
+      what permits this file and refuses Google's. Licence: /fonts/OFL.txt.
+
+      crossorigin is REQUIRED even same-origin -- fonts are always fetched in CORS
+      mode, and without it the preload is discarded and the file fetched twice.
+    -->
+    <link
+      rel="preload"
+      href="/fonts/InstrumentSerif-Regular.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+
+    <!--
+      The login backdrop, preloaded for the same reason and one step worse: it is
+      the largest contentful paint on the first screen, and it is discovered only
+      after app.css parses AND js/backdrop/skyline.js runs. imagesrcset mirrors
+      the <img> exactly so a phone still fetches the 1280 file, not the 2560 one.
+      Licence and provenance: /img/CREDITS.txt.
+    -->
+    <link
+      rel="preload"
+      as="image"
+      href="/img/city-1280.webp"
+      imagesrcset="/img/city-1280.webp 1280w, /img/city-2560.webp 2560w"
+      imagesizes="100vw"
+    />
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
@@ -62,6 +97,19 @@
       textContent -- §14 forbids innerHTML on server-derived values, because with a readable
       token (§13.19) an injected <img onerror> is a session theft, not a cosmetic bug.
     -->
+    <!--
+      The login backdrop mounts here (js/backdrop/skyline.js) and nothing else ever does.
+
+      It is a SIBLING of #app rather than a child, and that is load-bearing rather than
+      tidy: js/main.js replaces the whole of #app when a session starts, so a canvas living
+      inside it would be torn down mid-frame while its animation loop kept running against
+      a node no longer in the document.
+
+      aria-hidden because it is decoration, not content, and pointer-events:none (app.css)
+      because a fixed, full-viewport layer must never sit between a finger and the form.
+    -->
+    <div id="backdrop" aria-hidden="true"></div>
+
     <div id="app">
       <noscript>
         <div class="screen">

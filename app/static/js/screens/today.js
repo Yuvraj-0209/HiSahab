@@ -29,17 +29,15 @@
 
 import { el, empty, pill, render, row } from "../dom.js";
 import { api, explain, ApiError } from "../api.js";
-import { format, quantity } from "../money.js";
-import { businessDate, businessDateWeekday, timeOnly, todayAtOutlet } from "../time.js";
+import { format, isNegative, isZero, quantity, reading } from "../money.js";
+import { businessDate, businessDateWeekday, todayAtOutlet } from "../time.js";
 import { field, Form, select } from "../ui/field.js";
 import { openSheet } from "../ui/sheet.js";
 import { notify } from "../ui/toast.js";
 import { satisfies } from "../ui/nav.js";
 
-const STATUS_PILL = { open: "open", closed: "closed", locked: "locked" };
-
 export async function renderToday(container, { session, navigate }) {
-  const { shell, me } = session;
+  const { shell } = session;
   shell.setTab("today");
   shell.setTitle("Today");
   shell.setActions();
@@ -63,25 +61,62 @@ export async function renderToday(container, { session, navigate }) {
     return;
   }
 
+  await renderShiftDetail(container, shift, { session, navigate });
+}
+
+// A shift stops being reachable through `renderToday` the moment it is no longer open --
+// `/shifts/current` 404s, and there was previously no other route to it at all, so a
+// `closed` shift waiting to be locked (or reviewed, or reopened) had no page. This is that
+// page: fetch by id, works for a shift in any status, wired to `#/shifts/:shiftId`.
+export async function renderShiftById(container, { session, navigate, shiftId }) {
+  const { shell } = session;
+  shell.setTab("today");
+  shell.setTitle("Today", "Loading…");
+  render(container, el("div", { className: "t-caption", text: "Loading…" }));
+
+  let shift;
+  try {
+    shift = await api.get(`/shifts/${shiftId}`);
+  } catch (error) {
+    render(
+      container,
+      errorCard(error, () => renderShiftById(container, { session, navigate, shiftId })),
+    );
+    return;
+  }
+
+  await renderShiftDetail(container, shift, { session, navigate });
+}
+
+// Shared by `renderToday` (which fetches `/shifts/current`, the *open* shift only) and the
+// close/lock/reopen handlers below, which already hold the server's updated shift straight
+// from the PATCH response. That sharing matters: `/shifts/current` 404s the instant a shift
+// is no longer open, so re-fetching it right after Close would strand an admin on "no open
+// shift" with no way back to the very shift that still needs locking. Passing the response
+// body through directly is the fix, not another round trip.
+async function renderShiftDetail(container, shift, { session, navigate }) {
+  const { shell, me } = session;
+  shell.setTab("today");
   shell.setTitle(
     "Today",
     `${businessDateWeekday(shift.business_date)} ${businessDate(shift.business_date)} · shift ${shift.sequence}`,
   );
+  shell.setActions();
 
-  // Both of these are manager-floor reads, so an attendant simply does not make them --
-  // §8 for sales (a report, not a data-entry sheet) and for the roster (an attendant has
-  // no foreign name to resolve, because they cannot read anybody else's shift).
+  // All manager-floor reads, so an attendant simply does not make them -- §8 for sales
+  // (a report, not a data-entry sheet), and the same reasoning covers reading
+  // collections/expenses/credit/deposits/day-cash/readings for a shift that is not the
+  // caller's own.
   let sales = null;
-  const roster = new Map();
+  let collectionsPage = null;
+  let expensesPage = null;
+  let creditSalesPage = null;
+  let creditRepaymentsPage = null;
+  let bankDepositsPage = null;
+  let dayCash = null;
+  let readingsWorksheet = null;
+  const customersById = new Map();
   if (satisfies(me.role, "manager")) {
-    try {
-      for (const person of await api.get("/users", { include_inactive: true })) {
-        roster.set(person.id, person.full_name);
-      }
-    } catch {
-      // Left empty on purpose. `shiftCard` falls back to the pre-Phase-14 wording rather
-      // than failing the screen over a label.
-    }
     try {
       sales = await api.get(`/shifts/${shift.id}/sales`);
     } catch (error) {
@@ -90,35 +125,446 @@ export async function renderToday(container, { session, navigate }) {
       // note on the card rather than as a failure of the whole screen.
       sales = { error };
     }
+    // Each of these is independently caught, the same way `sales` is above -- one section
+    // failing to load (a network blip, a stale permission) must not blank the whole page.
+    try {
+      collectionsPage = await api.get(`/shifts/${shift.id}/collections`);
+    } catch {
+      collectionsPage = null;
+    }
+    try {
+      expensesPage = await api.get(`/shifts/${shift.id}/expenses`);
+    } catch {
+      expensesPage = null;
+    }
+    try {
+      creditSalesPage = await api.get(`/shifts/${shift.id}/credit-sales`);
+      creditRepaymentsPage = await api.get(`/shifts/${shift.id}/credit-repayments`);
+      for (const customer of await api.get("/credit-customers", { include_inactive: true })) {
+        customersById.set(customer.id, customer);
+      }
+    } catch {
+      creditSalesPage = null;
+      creditRepaymentsPage = null;
+    }
+    try {
+      bankDepositsPage = await api.get(`/shifts/${shift.id}/bank-deposits`);
+    } catch {
+      bankDepositsPage = null;
+    }
+    try {
+      // Never /daily-summaries/{date} -- that 404s until someone has created a summary.
+      // /reports/daily/{date} always answers, live-computing when nothing is stored yet
+      // (§13.20's `source` field says which), which is what makes it safe to call for any
+      // shift regardless of whether its day has ever been reconciled.
+      const report = await api.get(`/reports/daily/${shift.business_date}`);
+      dayCash = report.cash;
+    } catch {
+      dayCash = null;
+    }
+    try {
+      // Read-only use of the same worksheet `readings.js` edits -- surfaced here as the
+      // Metered sales card's "Details" popout instead of a separate link-out row. The
+      // editable worksheet, with its confirm/mismatch entry actions, stays exclusively at
+      // #/shifts/{id}/readings (reached from the Entry tab).
+      readingsWorksheet = await api.get(`/shifts/${shift.id}/readings`);
+    } catch {
+      readingsWorksheet = null;
+    }
   }
+
+  const unreviewed = expensesUnreviewedCount(expensesPage);
 
   render(
     container,
     el("div", { className: "stack" }, [
-      // A grid rather than a column: on a laptop these three read as a dashboard, and on a
-      // phone auto-fit collapses them back to one column with no breakpoint to maintain.
+      actionsCard(shift, { session, container, navigate }),
+
+      // One card per domain, in the app's standard `.grid` of `.card stack` -- the same shape
+      // `admin_customers.js::customerCard` uses, and for the same reason: a title and status in
+      // the header, the figures in a grouped `.list`, actions in a row at the foot. "Details"
+      // opens the full list in this app's existing grabbable, spring-animated bottom sheet
+      // (ui/sheet.js). Nothing on this screen is a data-entry surface.
       el("div", { className: "grid" }, [
-        shiftCard(shift, me, roster),
-        sales ? salesCard(sales) : null,
-        actionsCard(shift, { session, container, navigate }),
-      ]),
-      el("div", { className: "section-label t-micro", text: "Entry" }),
-      el("div", { className: "list" }, [
-        linkRow("Nozzle readings", "Meters, testing, and the carried opening", () =>
-          navigate(`#/shifts/${shift.id}/readings`),
-        ),
-        linkRow("Collections", "Cash, card, UPI and wallet", () =>
-          navigate(`#/shifts/${shift.id}/collections`),
-        ),
-        linkRow("Expenses", "What was paid out of the drawer", () =>
-          navigate(`#/shifts/${shift.id}/expenses`),
-        ),
-        linkRow("Credit & repayments", "Udhaar issued and settled", () =>
-          navigate(`#/shifts/${shift.id}/credit`),
-        ),
+        domainCard({
+          title: "Metered sales",
+          subtitle: sales?.error ? "not valued" : format(sales?.total_sale_value),
+          rows: salesRows(sales),
+          sheetTitle: "Metered sales",
+          onDetails: () => openSalesSheet(sales, readingsWorksheet),
+        }),
+        domainCard({
+          title: "Collections",
+          subtitle: "What was taken, and how",
+          rows: collectionsRows(collectionsPage),
+          sheetTitle: "Collections",
+        }),
+        domainCard({
+          title: "Expenses",
+          subtitle: countLabel(expensesPage?.items.length, "item"),
+          badge: unreviewed ? pill(`${unreviewed} needs review`, "review") : null,
+          rows: expensesRows(expensesPage),
+          sheetTitle: "Expenses",
+        }),
+        domainCard({
+          title: "Credit",
+          subtitle: `${countLabel(creditSalesPage?.items.length, "sale")} · ${countLabel(creditRepaymentsPage?.items.length, "repayment")}`,
+          rows: creditSummaryRows(creditSalesPage, creditRepaymentsPage),
+          sheetTitle: "Credit",
+          onDetails: () => openCreditSheet(creditSalesPage, creditRepaymentsPage, customersById),
+        }),
+        domainCard({
+          title: "Bank deposits",
+          subtitle: countLabel(bankDepositsPage?.items.length, "deposit"),
+          rows: bankDepositsRows(bankDepositsPage),
+          sheetTitle: "Bank deposits",
+        }),
+        domainCard({
+          title: "Day cash",
+          subtitle: businessDate(shift.business_date),
+          badge: dayCash ? pill(DAY_SOURCE_PILL[dayCash.source] ?? dayCash.source, dayCash.source === "snapshot" ? "locked" : "neutral") : null,
+          rows: dayCashRows(dayCash),
+          sheetTitle: `Day cash — ${businessDate(shift.business_date)}`,
+        }),
       ]),
     ]),
   );
+}
+
+/** One domain's card, in the shape `admin_customers.js::customerCard` established: a header
+ * carrying the title, a secondary line and an optional status pill; a grouped `.list` of the
+ * figures; an action row at the foot.
+ *
+ * A `div` rather than a `<button>`, deliberately -- the action lives on a real button *inside*
+ * the card (as the reference's Edit/Ledger row does), and a button nested inside a button is
+ * invalid HTML.
+ *
+ * Shows up to `PREVIEW_CAP` `{label, value}` rows. `{note}` entries -- §13.7's margin
+ * disclaimer, an empty-state sentence -- are sheet-only: they are explanations, not figures,
+ * and a card face is the wrong place to read one. */
+const PREVIEW_CAP = 4;
+
+function domainCard({ title, subtitle, badge = null, rows, sheetTitle, onDetails }) {
+  const values = rows.filter((item) => "value" in item);
+  const shown = values.slice(0, PREVIEW_CAP);
+  const hidden = values.length - shown.length;
+  // Most cards open the generic flat-list sheet; a card whose detail view needs its own
+  // shape (Credit's Issued/Repaid split, Metered sales' nozzle-readings section) passes
+  // `onDetails` instead.
+  const openDetails = onDetails ?? (() => openDetailSheet(sheetTitle, rows));
+
+  return el("div", { className: "card stack" }, [
+    el("div", { className: "row-between" }, [
+      el("div", { className: "grow" }, [
+        el("div", { className: "t-headline", text: title }),
+        subtitle ? el("div", { className: "t-caption", text: subtitle }) : null,
+      ]),
+      badge,
+    ]),
+
+    shown.length
+      ? el(
+          "div",
+          { className: "list" },
+          shown.map((item) => row(item.label, item.value, { valueClass: item.valueClass ?? "" })),
+        )
+      : null,
+
+    // `card-footer` pins this row to the card's bottom edge (margin-top: auto) so every
+    // card's action lines up regardless of how many rows sit above it -- what makes the
+    // `.grid`'s stretch-to-equal-height cards actually look equal, not just measure equal.
+    el("div", { className: "row card-footer" }, [
+      el("button", {
+        className: "btn grow",
+        text: hidden > 0 ? `View all (${values.length})` : "Details",
+        attrs: { type: "button" },
+        on: { click: openDetails },
+      }),
+    ]),
+  ]);
+}
+
+/** "4 sales", "1 deposit", or "none" -- the secondary identity line under a card's title, the
+ * way the reference card puts a phone number under a customer's name. */
+function countLabel(count, noun) {
+  if (count === undefined || count === null) return "unavailable";
+  if (count === 0) return `no ${noun}s`;
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/** Every card's "Details" opens the same way: a view-only sheet, no footer. `{label, value}`
+ * becomes a list row; `{note}` becomes a plain explanatory line -- the same distinction
+ * `domainCard` uses to decide what belongs on a card face and what does not. */
+function openDetailSheet(title, items) {
+  const rows = items.map((item) =>
+    "note" in item
+      ? el("p", { className: "t-caption list-row", text: item.note })
+      : row(item.label, item.value, { valueClass: item.valueClass ?? "" }),
+  );
+  openSheet({ title, body: el("div", { className: "list" }, rows) });
+}
+
+function expensesUnreviewedCount(page) {
+  return page ? page.items.filter((e) => e.requires_review && !e.reviewed_at).length : 0;
+}
+
+function salesRows(sales) {
+  if (!sales) return [{ label: "Metered sales", value: "—" }];
+  if (sales.error) {
+    return [
+      { note: explain(sales.error) },
+      {
+        note: "Sales cannot be valued until a price exists for every fuel sold. Nothing is wrong with the readings.",
+      },
+    ];
+  }
+
+  const quantities = Object.entries(sales.quantity_by_unit ?? {});
+  return [
+    { label: "Total", value: format(sales.total_sale_value), valueClass: "list-row-value-strong" },
+    ...quantities.map(([unit, amount]) => ({ label: unit, value: quantity(amount, unit) })),
+    {
+      label: "Gross fuel margin",
+      value: format(sales.total_gross_fuel_margin, { absent: "no margin entered" }),
+    },
+    // §13.7, and this label is not optional.
+    { note: "Gross fuel margin on quantity sold — not business profit. It excludes stock revaluation." },
+    sales.incomplete
+      ? { note: "Some nozzles have no closing reading yet, so this total is partial." }
+      : null,
+  ].filter(Boolean);
+}
+
+/** Metered sales' "Details" -- the sales summary above, and every nozzle's readings below
+ * it, so the box that reports the total is also where the meters behind it can be checked.
+ * Read-only: no confirm/mismatch controls, no entry. The editable worksheet stays exclusively
+ * at #/shifts/{id}/readings (reached from the Entry tab), per §4.7's confirm-don't-assume
+ * rule -- this sheet cannot be where an opening gets confirmed. */
+function openSalesSheet(sales, worksheet) {
+  const salesSection = el(
+    "div",
+    { className: "list" },
+    salesRows(sales).map((item) =>
+      "note" in item
+        ? el("p", { className: "t-caption list-row", text: item.note })
+        : row(item.label, item.value, { valueClass: item.valueClass ?? "" }),
+    ),
+  );
+
+  const readingsSection = worksheet?.lines.length
+    ? el("div", { className: "stack" }, [
+        el("div", { className: "section-label t-micro", text: "Nozzle readings" }),
+        ...worksheet.lines.map(nozzleReadingRows),
+      ])
+    : el("p", { className: "t-caption", text: "Nozzle readings unavailable." });
+
+  openSheet({
+    title: "Metered sales",
+    body: el("div", { className: "stack" }, [salesSection, readingsSection]),
+  });
+}
+
+/** One nozzle's readings, read-only. Mirrors `readings.js::savedBody`'s figures without its
+ * entry controls -- opening, closing, testing and quantity sold, the four numbers §4.2 and
+ * §6.2 exist to get right. */
+function nozzleReadingRows(line) {
+  const saved = line.reading;
+  return el("div", { className: "list" }, [
+    el("div", { className: "list-row" }, [
+      el("div", { className: "list-row-main" }, [
+        el("span", { className: "t-body", text: line.nozzle_label }),
+        el("div", { className: "t-caption", text: `${line.dispenser_label} · ${line.fuel_type_code}` }),
+      ]),
+    ]),
+    saved
+      ? row("Opening", reading(saved.opening_reading))
+      : row("Reading", "not recorded"),
+    saved ? row("Closing", reading(saved.closing_reading, { absent: "not entered" })) : null,
+    saved ? row("Testing", quantity(saved.testing_quantity, line.unit_of_measure)) : null,
+    saved
+      ? row("Sold", quantity(saved.quantity_sold, line.unit_of_measure, { absent: "awaiting closing" }))
+      : null,
+  ].filter(Boolean));
+}
+
+const COLLECTION_MODES = [
+  { value: "card", label: "Card" },
+  { value: "upi", label: "UPI" },
+  { value: "wallet", label: "Wallet" },
+];
+
+function collectionsRows(page) {
+  if (!page) return [{ label: "Collections", value: "—" }];
+  // Live rows only -- a reversed row and the reversal that cancels it are history, not the
+  // current declaration (same filter `collections.js` uses for its per-mode view).
+  const live = page.items.filter((item) => !item.reverses_id && !item.is_reversed);
+  const byMode = new Map(live.map((item) => [item.mode, item]));
+
+  return [
+    // "not declared" and ₹0.00 are different facts (§6.8) -- never coalesced.
+    { label: "Cash declared", value: format(page.declared_cash, { absent: "not declared" }) },
+    ...COLLECTION_MODES.map((mode) => ({
+      label: mode.label,
+      value: format(byMode.get(mode.value)?.amount),
+    })),
+  ];
+}
+
+function expensesRows(page) {
+  if (!page) return [{ label: "Expenses", value: "—" }];
+  // `total` is server-computed (§14 forbids summing money in JS) -- see ExpensePage.total.
+  const total = { label: "Total", value: format(page.total), valueClass: "list-row-value-strong" };
+  const totals = Object.entries(page.totals_by_category ?? {}).map(([code, amount]) => ({
+    label: code,
+    value: format(amount),
+  }));
+
+  const items = page.items.length
+    ? page.items.map((expense) => {
+        const flagged = expense.requires_review && !expense.reviewed_at;
+        return {
+          label: `${expense.description} · ${expense.category_code}${flagged ? " ⚑" : ""}`,
+          value: format(expense.amount),
+        };
+      })
+    : [{ note: "No expenses recorded for this shift." }];
+
+  return [
+    total,
+    ...totals,
+    ...items,
+    page.truncated ? { note: "This shift has more expenses than shown here." } : null,
+  ].filter(Boolean);
+}
+
+/** The server-computed total first -- it is the figure the card is read for -- then a line per
+ * customer. `totalLabel` differs by direction ("Issued" vs "Repaid") because "Total" on two
+ * adjacent cards showing opposite movements of money is the kind of ambiguity this project
+ * spends its whole spec avoiding. */
+function creditTotalRows(page, customersById, totalLabel) {
+  if (!page) return [{ label: totalLabel, value: "—" }];
+
+  const rows = [{ label: totalLabel, value: format(page.total) }];
+  // Repayments carry a second server-computed figure: only the cash half reaches the drawer
+  // (§6.4), so a card that showed the gross total alone would overstate what the locker got.
+  if (page.cash_total !== undefined) {
+    rows.push({ label: "Of which cash", value: format(page.cash_total) });
+  }
+  if (!page.items.length) return [...rows, { note: "Nothing recorded this shift." }];
+
+  return [
+    ...rows,
+    ...page.items.map((entry) => ({
+      label: customersById.get(entry.credit_customer_id)?.name ?? "Unknown customer",
+      value: format(entry.amount),
+    })),
+  ];
+}
+
+/** The merged Credit card's face: udhaar issued and repaid are opposite movements of the
+ * same money, so both totals sit on one card rather than two (§6.6's ledger, read together
+ * the way a manager actually thinks about it). "Issued" is bolded -- it's the figure that
+ * grows what a customer owes, the one a manager scans for first. */
+function creditSummaryRows(salesPage, repayPage) {
+  return [
+    { label: "Issued", value: salesPage ? format(salesPage.total) : "—", valueClass: "list-row-value-strong" },
+    { label: "Repaid", value: repayPage ? format(repayPage.total) : "—" },
+    repayPage?.cash_total !== undefined
+      ? { label: "Of which cash", value: format(repayPage.cash_total) }
+      : null,
+  ].filter(Boolean);
+}
+
+/** Credit's "Details": two labelled sections, Issued then Repaid, each in the same
+ * `creditTotalRows` shape the two former separate cards used -- so nothing about the
+ * per-customer breakdown is lost by merging the cards, only the second card face. */
+function openCreditSheet(salesPage, repayPage, customersById) {
+  const section = (label, rows) =>
+    el("div", { className: "stack" }, [
+      el("div", { className: "section-label t-micro", text: label }),
+      el(
+        "div",
+        { className: "list" },
+        rows.map((item) =>
+          "note" in item
+            ? el("p", { className: "t-caption list-row", text: item.note })
+            : row(item.label, item.value, { valueClass: item.valueClass ?? "" }),
+        ),
+      ),
+    ]);
+
+  openSheet({
+    title: "Credit",
+    body: el("div", { className: "stack" }, [
+      section("Issued", creditTotalRows(salesPage, customersById, "Issued")),
+      section("Repaid", creditTotalRows(repayPage, customersById, "Repaid")),
+    ]),
+  });
+}
+
+function bankDepositsRows(page) {
+  if (!page) return [{ label: "Deposited", value: "—" }];
+
+  const total = { label: "Deposited", value: format(page.total) };
+  if (!page.items.length) return [total, { note: "No deposits recorded for this shift." }];
+
+  const rows = [
+    total,
+    ...page.items.map((deposit) => ({
+      label: deposit.bank_reference ?? "Deposit",
+      value: format(deposit.amount),
+    })),
+  ];
+  return page.truncated
+    ? [...rows, { note: "This shift has more deposits than shown here." }]
+    : rows;
+}
+
+/* §13.20's provenance, in the two registers this screen needs it: a short pill for the card
+ * header, and a full sentence for the sheet. A snapshot is a record of what a manager was
+ * shown; a computed figure is an estimate of a day still in motion. Reading them as the same
+ * number is the mistake `source` exists to prevent, so neither register hides which it is. */
+const DAY_SOURCE_PILL = {
+  snapshot: "finalised",
+  computed: "live",
+  no_trading: "no trading",
+  unavailable: "unavailable",
+};
+
+const DAY_SOURCE_LABEL = {
+  snapshot: "Finalised — these are the figures as they were recorded on the day.",
+  computed: "Live estimate — this day has not been reconciled, so these are derived now.",
+  no_trading: "No trading recorded for this date.",
+  unavailable: "Not available.",
+};
+
+/** `daily_cash_summaries.variance` is a generated column, `actual_counted − expected_closing`
+ * (app/models/cash.py:217) -- so a NEGATIVE variance is a shortage and a positive one is a
+ * surplus.
+ *
+ * That is the exact opposite of `cash_position`'s `gap`, which is `accountable_cash −
+ * declared_cash` and whose own docstring says "positive means short". `money.js::gapLabel` is
+ * written for the latter, so reusing it here would print "surplus" across a shortage -- a
+ * plausible, confident, wrong label on the one figure a day is judged by. Hence a separate
+ * function, and this comment, rather than the tempting import. */
+function varianceLabel(value) {
+  if (value === null || value === undefined) return { text: "not counted", className: "t-absent" };
+  if (isZero(value)) return { text: `${format(value)} · balanced`, className: "" };
+  if (isNegative(value)) return { text: `${format(value)} · short`, className: "text-short" };
+  return { text: `${format(value)} · surplus`, className: "text-surplus" };
+}
+
+function dayCashRows(dayCash) {
+  if (!dayCash) return [{ label: "Day cash", value: "—" }];
+  const variance = varianceLabel(dayCash.variance);
+  return [
+    { label: "Opening balance", value: format(dayCash.opening_balance) },
+    { label: "Expected closing", value: format(dayCash.expected_closing) },
+    { label: "Actual counted", value: format(dayCash.actual_counted, { absent: "not counted" }) },
+    { label: "Variance", value: variance.text, valueClass: variance.className },
+    { note: DAY_SOURCE_LABEL[dayCash.source] ?? dayCash.source },
+    dayCash.unavailable_reason ? { note: dayCash.unavailable_reason } : null,
+  ].filter(Boolean);
 }
 
 function linkRow(label, hint, onClick) {
@@ -138,92 +584,6 @@ function linkRow(label, hint, onClick) {
       el("div", { className: "t-body", text: "›", attrs: { "aria-hidden": "true" } }),
     ],
   );
-}
-
-function shiftCard(shift, me, roster) {
-  // Phase 14. This row used to read "another attendant" for anybody but the caller, because
-  // nothing in the app could turn a user id into a person. `roster` is a Map, empty for an
-  // attendant (who never sees a foreign shift anyway) and empty if the fetch failed -- in
-  // both cases the old string is still the fallback, because a roster that will not load
-  // must not blank the card.
-  const attendant =
-    shift.attendant_id === me.id
-      ? `${me.full_name} (you)`
-      : (roster.get(shift.attendant_id) ?? "another attendant");
-
-  return el("div", { className: "card stack" }, [
-    el("div", { className: "row-between" }, [
-      el("div", {}, [
-        el("div", { className: "t-micro", text: "Shift" }),
-        el("div", {
-          className: "t-title",
-          text: `${businessDate(shift.business_date)} · ${shift.sequence}`,
-        }),
-      ]),
-      pill(shift.status, STATUS_PILL[shift.status] ?? "neutral"),
-    ]),
-    el("div", { className: "list" }, [
-      row("Started", timeOnly(shift.started_at)),
-      row("Ends", timeOnly(shift.ended_at, { absent: "not set" })),
-      row("Attendant", attendant),
-    ]),
-  ]);
-}
-
-function salesCard(sales) {
-  if (sales.error) {
-    return el("div", { className: "card stack" }, [
-      el("div", { className: "t-micro", text: "Metered sales" }),
-      el("p", { className: "t-body", text: explain(sales.error) }),
-      el("p", {
-        className: "t-caption",
-        text: "Sales cannot be valued until a price exists for every fuel sold. Nothing is wrong with the readings.",
-      }),
-    ]);
-  }
-
-  const quantities = Object.entries(sales.quantity_by_unit ?? {});
-
-  return el("div", { className: "card stack" }, [
-    el("div", { className: "t-micro", text: "Metered sales" }),
-    el("div", { className: "t-amount", text: format(sales.total_sale_value) }),
-
-    // §4.5: quantities are keyed by unit and NEVER summed across them. A litre of petrol and
-    // a kilogram of CBG are not addable, and one "total quantity" would be a number with no
-    // meaning. Rendered as separate figures for the same reason the API returns them that way.
-    quantities.length
-      ? el(
-          "div",
-          { className: "row" },
-          quantities.map(([unit, amount]) =>
-            el("span", {
-              className: "pill pill-neutral t-numeric",
-              text: quantity(amount, unit),
-            }),
-          ),
-        )
-      : null,
-
-    el("div", { className: "list" }, [
-      row("Gross fuel margin", format(sales.total_gross_fuel_margin, { absent: "no margin entered" })),
-    ]),
-
-    // §13.7, and this label is not optional. Petrol and diesel margins have never been
-    // entered at this outlet (§14's open questions), so this figure covers CBG alone today.
-    el("p", {
-      className: "t-caption",
-      text:
-        "Gross fuel margin on quantity sold — not business profit. It excludes stock revaluation, " +
-        "so a price move against fuel already in the tank is invisible here.",
-    }),
-
-    sales.incomplete
-      ? el("p", {
-          className: "t-caption",
-          text: "Some nozzles have no closing reading yet, so this total is partial.",
-        })
-      : null,
-  ]);
 }
 
 function actionsCard(shift, { session, container, navigate }) {
@@ -280,9 +640,12 @@ async function closeShift(shift, context) {
   // gap is the variance, and refusing to close on it leaves the salesman in front of a form
   // with one freely adjustable field. The server decides; we report.
   try {
-    await api.patch(`/shifts/${shift.id}/close`, {});
+    const updated = await api.patch(`/shifts/${shift.id}/close`, {});
     notify.success("Shift closed.");
-    renderToday(context.container, context);
+    // Not renderToday(): that re-fetches /shifts/current, which 404s the instant this shift
+    // stops being open and would drop the admin straight onto "no open shift" -- with the
+    // Lock button nowhere reachable. The PATCH response already is the closed shift.
+    renderShiftDetail(context.container, updated, context);
   } catch (error) {
     notify.error(explain(error), { requestId: error.requestId });
   }
@@ -290,9 +653,9 @@ async function closeShift(shift, context) {
 
 async function lockShift(shift, context) {
   try {
-    await api.patch(`/shifts/${shift.id}/lock`, {});
+    const updated = await api.patch(`/shifts/${shift.id}/lock`, {});
     notify.success("Shift locked.");
-    renderToday(context.container, context);
+    renderShiftDetail(context.container, updated, context);
   } catch (error) {
     notify.error(explain(error), { requestId: error.requestId });
   }
@@ -320,7 +683,9 @@ function reopenShift(shift, context) {
     form.clearErrors();
     submit.disabled = true;
     try {
-      await api.patch(`/shifts/${shift.id}/reopen`, { reason: form.values().reason });
+      const updated = await api.patch(`/shifts/${shift.id}/reopen`, {
+        reason: form.values().reason,
+      });
       sheet.close();
       notify.success("Shift reopened.");
       // §13.10: a mid-chain reopen FLAGS the next shift's reading for review rather than
@@ -329,7 +694,7 @@ function reopenShift(shift, context) {
       notify.info(
         "Any following shift's opening reading is now flagged for review. Nothing was recomputed.",
       );
-      renderToday(context.container, context);
+      renderShiftDetail(context.container, updated, context);
     } catch (error) {
       submit.disabled = false;
       const unmatched = error.isValidation ? form.showErrors(error.detail) : [];
@@ -354,9 +719,23 @@ function reopenShift(shift, context) {
 
 /* --- no open shift ----------------------------------------------------------- */
 
-function renderNoShift(container, context) {
-  const { session } = context;
+async function renderNoShift(container, context) {
+  const { session, navigate } = context;
   session.shell.setTitle("Today", "No open shift");
+
+  // A closed-but-not-yet-locked shift has no other page pointing at it -- `/shifts/current`
+  // only ever answers with the open one. Manager+ gets a way back in, the same floor
+  // `GET /shifts` already reads at server-side (§8: "Read all shifts" is manager+, an
+  // attendant reads only their own and has nothing here to act on anyway).
+  let recent = [];
+  if (satisfies(session.me.role, "manager")) {
+    try {
+      recent = (await api.get("/shifts", { limit: 8 })).items;
+    } catch {
+      // Not fatal -- the "open a shift" action below still works without this list.
+      recent = [];
+    }
+  }
 
   render(
     container,
@@ -384,6 +763,24 @@ function renderNoShift(container, context) {
           on: { click: () => openShiftSheet(container, context) },
         }),
       ]),
+      recent.length
+        ? el("div", { className: "stack" }, [
+            el("div", { className: "section-label t-micro", text: "Recent shifts" }),
+            el(
+              "div",
+              { className: "list" },
+              recent.map((shift) =>
+                linkRow(
+                  `${businessDate(shift.business_date)} · shift ${shift.sequence}`,
+                  shift.status === "closed"
+                    ? "Closed — needs locking or review"
+                    : shift.status[0].toUpperCase() + shift.status.slice(1),
+                  () => navigate(`#/shifts/${shift.id}`),
+                ),
+              ),
+            ),
+          ])
+        : null,
     ]),
   );
 }

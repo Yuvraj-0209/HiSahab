@@ -1,0 +1,42 @@
+HiSahab login backdrop
+======================
+
+city-2560.webp, city-1280.webp
+
+  Source      Adobe Stock asset 396892454
+              "Aerial view of south west London, blue hour just after sunset,
+               orange yellow street lights starting to glow"
+  Original    3976 x 2526 JPEG
+  Licence     Adobe Stock free-tier, licensed 2026-08-25 to the owner's Adobe
+              account. Licensed -- not a watermarked comp. Re-licensing the same
+              asset id refreshes the download URL without consuming a second
+              licence.
+
+Why the file is here rather than on a CDN
+-----------------------------------------
+CLAUDE.md 13.28. An asset from an external host is the npm dependency in another
+costume, and 13.19 makes any third-party asset able to read the session token.
+The CSP in index.html permits `img-src 'self'` and refuses everything else, and
+tests/test_static_mount.py::test_no_asset_references_an_external_host refuses it
+at commit time too.
+
+Regenerating the variants
+-------------------------
+Pillow is deliberately NOT a project dependency -- this is a one-time asset
+conversion, not a runtime need, and CLAUDE.md 14 says to ask before adding one.
+`uv run --with` installs it ephemerally instead:
+
+  uv run --with pillow python -c "
+  from PIL import Image
+  im = Image.open('AdobeStock_396892454.jpeg').convert('RGB')
+  for w in (2560, 1280):
+      im.resize((w, round(im.height*w/im.width)), Image.LANCZOS).save(
+          f'city-{w}.webp', 'WEBP', quality=72, method=6)
+  "
+
+macOS `sips` cannot be used: it reads WebP but cannot write it.
+
+The image is stored UNGRADED. The darkening, cool tint and vignette are stacked
+CSS gradients on `.backdrop-grade` (app.css 11), so the grade is tunable without
+re-exporting -- and, per 13.29, so that no CSS `filter` ever sits on an element
+carrying an animated transform.

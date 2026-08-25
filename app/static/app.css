@@ -9,8 +9,14 @@
  * prefers-reduced-motion, prefers-reduced-transparency, prefers-contrast. Refusing those
  * would be a bug, not scope discipline.
  *
- * No webfont, no CDN, no @import off-origin. §14 forbids the dependency and §13.19 makes any
- * third-party asset able to read the session token; the CSP in index.html refuses it too.
+ * NO ASSET FROM AN EXTERNAL HOST -- no CDN, no @import off-origin, no Google Fonts. §14
+ * forbids the dependency and §13.19 makes any third-party asset able to read the session
+ * token; the CSP in index.html refuses it too.
+ *
+ * Self-hosted assets ARE permitted, and §13.28 narrowed the older "no webfont" phrasing to
+ * say so: one display face and the login photograph are served from this origin, under
+ * `font-src 'self'` and `img-src 'self'`. The face dresses the wordmark and the two scroll
+ * headlines and nothing else -- every other surface keeps the system stack.
  */
 
 /* ==========================================================================
@@ -298,7 +304,29 @@ body {
   display: grid;
   gap: var(--sp-3);
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
-  align-items: start;
+  /* `stretch`, not `start`: every card in the same grid row is stretched to the tallest
+   * card in that row, so a page of domain cards with differing row counts still reads as
+   * one even grid rather than a ragged one. `.grid > .card`'s flex column (below) is what
+   * turns the extra height into blank space above the footer button instead of stretching
+   * the whole card body oddly. */
+  align-items: stretch;
+}
+
+/* Paired with the grid's `align-items: stretch` above: a stretched card needs somewhere for
+ * the extra height to go. `.card-footer` (on the "Details" button row) then pins itself to
+ * the bottom with `margin-top: auto`, so every card's footer lines up regardless of how many
+ * rows of figures sit above it. */
+.grid > .card {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Compound selector, deliberately: `.stack > * + *` (below, §5) sets `margin-top` on every
+ * non-first child at equal specificity, and it appears later in this file, so a bare
+ * `.card-footer { margin-top: auto }` would lose that cascade fight regardless of which is
+ * "more correct". Two classes on the element (`row card-footer`) beats one either way. */
+.card-footer.row {
+  margin-top: auto;
 }
 
 /* A card that should keep the full width inside a grid -- a worked equation reads badly in
@@ -408,6 +436,15 @@ body {
   margin-left: auto;
   text-align: right;
   white-space: nowrap;
+}
+
+/* The one figure per card worth reading first -- metered sales' total, expenses' total,
+ * credit's issued total. Louder than the default `.t-body` row value, quieter than
+ * `.t-amount`'s full hero size, which this app reserves for a screen's single headline
+ * number rather than one row among several. */
+.list-row-value-strong {
+  font-size: 1.25rem;
+  font-weight: 750;
 }
 
 /* Section heading above a group. */
@@ -924,7 +961,267 @@ select.field-input {
 }
 
 /* ==========================================================================
-   11. Accessibility preferences
+   11. Login: the photographic backdrop and the three scroll states
+   --------------------------------------------------------------------------
+   The one screen in the app with no data on it, which is exactly why it can
+   carry a full-bleed drawing: there is no figure for it to sit behind.
+
+   EVERYTHING THAT MOVES CONTINUOUSLY IN HERE MOVES UNDER `transform` OR
+   `opacity`, AND NOTHING IS REDRAWN TO SAY SO. That is not a style note, it is
+   the fix for a real stutter: the first version of this screen repainted a
+   full-viewport canvas every frame under a `backdrop-filter`, and the browser
+   spent its entire frame budget re-running a gaussian blur over changing pixels.
+   See js/backdrop/skyline.js for the post-mortem.
+   ========================================================================== */
+
+/* The one webfont in the application, and a deliberate, scoped exception to the
+ * system-stack rule (CLAUDE.md M5). It dresses the wordmark and the two scroll
+ * headlines and NOTHING else -- every other surface keeps the system face, so
+ * the exception cannot spread by habit.
+ *
+ * Self-hosted, never a CDN: §14 forbids the dependency and §13.19 makes any
+ * third-party asset able to read the session token. `font-src 'self'` in the
+ * CSP is what permits this file and refuses Google's. Licence in fonts/OFL.txt. */
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("/fonts/InstrumentSerif-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  /* swap, not block: the system fallback renders immediately and the wordmark
+   * reflows once. A blocking face means a blank header on a slow connection. */
+  font-display: swap;
+}
+
+/* --- the backdrop ---------------------------------------------------------- */
+
+/* pointer-events:none is not decoration -- a fixed, full-viewport element that
+ * accepted a click would sit between a finger and the sign-in button. */
+#backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  background: #050506;
+}
+
+#app {
+  position: relative;
+  z-index: 1;
+}
+
+
+/* The band owns translate3d (written by JS, for scroll parallax). Its <img>
+ * child owns the Ken Burns transform (animated by CSS). They are two elements
+ * because ONE `transform` property cannot be driven from both places -- whichever
+ * wrote last would win, sixty times a second.
+ *
+ * The background-image is the inlined LQIP set by skyline.js: first paint is a
+ * soft blur of the photograph rather than a black rectangle. */
+.band {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+  background-size: cover;
+  background-position: center 38%;
+}
+
+.plate {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* `cover` re-crops on resize by itself, which is why skyline.js has no resize
+   * handler. `center 38%` biases the crop upward so the horizon lands high and
+   * the dense, dark lower city sits behind the sign-in card. */
+  object-fit: cover;
+  object-position: center 38%;
+  /* Base scale is above 1 so the drift below can never expose an edge, and so the
+   * UNANIMATED state -- what `prefers-reduced-motion` freezes to -- is the
+   * intended still frame rather than a random pose. */
+  transform: scale(1.06);
+  animation: ken-burns 84s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+@keyframes ken-burns {
+  from {
+    transform: scale(1.06) translate3d(0, 0, 0);
+  }
+  to {
+    transform: scale(1.14) translate3d(-1.5%, -1%, 0);
+  }
+}
+
+/* The colour grade: three stacked gradients, and DELIBERATELY NOT a CSS filter.
+ * A filter on an element carrying an animated transform forces the filtered
+ * result to be re-rasterised every frame -- the same class of bug as the
+ * backdrop-filter that made the first version of this screen stutter (§13.29).
+ * Gradients composite for free, and they are tunable here without re-exporting
+ * the photograph, which is why app/static/img/ stores it ungraded. */
+.backdrop-grade {
+  position: absolute;
+  inset: 0;
+  background:
+    /* a cool cast, so the warm sodium street lights do not fight the blue accent */
+    linear-gradient(to bottom, rgba(10, 16, 32, 0.55) 0%, rgba(8, 10, 20, 0.4) 55%, rgba(5, 5, 8, 0.7) 100%),
+    /* top vignette: darkens the sky behind the wordmark */
+    linear-gradient(to bottom, rgba(5, 5, 8, 0.82) 0%, rgba(5, 5, 8, 0) 34%),
+    /* a contrast floor, so no part of the photograph approaches the text's value */
+    radial-gradient(120% 80% at 50% 30%, rgba(5, 5, 8, 0) 40%, rgba(5, 5, 8, 0.55) 100%);
+}
+
+/* The wash carries the photograph down into the app's own ground colour, so the
+ * sign-in card sits on solid --ground rather than on a busy lit street. The top
+ * stays clear so the skyline still reads. It is separate from .backdrop-grade
+ * because the grade is about the LOOK of the image and this is about the
+ * LEGIBILITY of what sits over it -- tuning one should not disturb the other. */
+.backdrop-wash {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(5, 5, 6, 0) 0%,
+    rgba(5, 5, 6, 0.1) 34%,
+    rgba(5, 5, 6, 0.55) 58%,
+    rgba(5, 5, 6, 0.9) 78%,
+    #050506 100%
+  );
+}
+
+/* --- brand ----------------------------------------------------------------- */
+
+/* Centred, matching the reference's centred mark, and fixed so it persists across
+ * all three scroll states as the one constant on the screen. */
+.login-brand {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--safe-top) + var(--sp-4)) var(--sp-4) var(--sp-3);
+  pointer-events: none;
+}
+
+.login-wordmark {
+  font-family: "Instrument Serif", ui-serif, Georgia, serif;
+  font-size: clamp(1.25rem, 3vw, 1.5rem);
+  font-weight: 400;
+  /* Wide tracking is what turns a word into a mark. It only works in caps and
+   * only at display size -- never copy this value onto body text. */
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  margin: 0;
+  line-height: 1;
+}
+
+/* --- the three states ------------------------------------------------------ */
+
+.login {
+  padding: 0;
+  max-width: none;
+}
+
+.login-state {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--sp-5);
+  padding: calc(var(--safe-top) + var(--sp-7)) var(--sp-4)
+    calc(var(--safe-bottom) + var(--sp-6));
+  max-width: 34rem;
+  width: 100%;
+  margin-inline: auto;
+}
+
+/* State 1 is bottom-weighted so the upper half of the first viewport is
+ * uninterrupted city. Anchoring it centrally leaves the drawing peeking around
+ * the card instead of standing behind it. */
+.login-state-signin {
+  justify-content: flex-end;
+  max-width: 27rem;
+}
+
+.t-hero {
+  font-family: "Instrument Serif", ui-serif, Georgia, serif;
+  font-size: clamp(2.75rem, 9vw, 4.5rem);
+  font-weight: 400;
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.t-lede {
+  font-size: clamp(1.125rem, 2.6vw, 1.375rem);
+  line-height: 1.65;
+  letter-spacing: 0;
+  color: var(--text-secondary);
+  margin: 0;
+  max-width: 32ch;
+}
+
+/* Enter on scroll. `transform` and `opacity` only, and the element occupies its
+ * final space from first paint -- so cumulative layout shift is zero by
+ * construction rather than by measurement. */
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 520ms var(--ease-out),
+    transform 520ms var(--ease-out);
+}
+
+.reveal[data-visible] {
+  opacity: 1;
+  transform: none;
+}
+
+/* Headline first, body a beat behind. Small enough to read as one movement. */
+.reveal-delay {
+  transition-delay: 80ms;
+}
+
+/* The card is SOLID, and that is the fix rather than a compromise. A
+ * backdrop-filter here would re-run a gaussian blur every frame for as long as
+ * the micro-zoom runs, because its backdrop never stops changing. */
+.login-card {
+  background: rgba(13, 14, 18, 0.9);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: var(--shadow-3);
+}
+
+.login-cue {
+  align-self: center;
+  background: none;
+  border: 0;
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--text-tertiary);
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-pill);
+}
+.login-cue:hover {
+  color: var(--text-secondary);
+}
+.login-cue:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.login-foot {
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--hairline);
+  color: var(--text-tertiary);
+}
+
+/* ==========================================================================
+   12. Accessibility preferences
    --------------------------------------------------------------------------
    These are the three signals §12's scope note does not cover, because they are
    not preferences about taste. See app.css's header.
@@ -943,6 +1240,22 @@ select.field-input {
   .btn:active {
     transform: none;
   }
+  /* The photograph is shown in FULL and simply stops moving. The rule above
+   * collapses the Ken Burns drift to nothing, which is why `.plate` is authored
+   * with `transform: scale(1.06)` as its base -- the frozen state is the intended
+   * still frame rather than whatever pose the keyframes happened to end on.
+   * js/backdrop/skyline.js reads the same query and never subscribes to the frame
+   * loop, so parallax never runs either. Blanking the backdrop would read this
+   * query as "dead", which the note above rejects. */
+  .plate {
+    animation: none !important;
+  }
+  /* The scroll states still arrive -- they just arrive without travelling.
+   * Opacity only: a fade is information, a slide is decoration. */
+  .reveal {
+    transform: none;
+    transition: opacity var(--t-base) var(--ease-out);
+  }
 }
 
 /* Frostier, not transparent. */
@@ -958,6 +1271,19 @@ select.field-input {
   .sheet {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
+  }
+  /* `.login-card` needs nothing here -- it carries no backdrop-filter at all
+   * any more (§11 explains why: a blur over a continuously zooming backdrop
+   * re-runs forever). What is left is the drawing itself: the wash becomes a
+   * near-solid scrim, so the city is dimmed rather than deleted. Same principle
+   * as the motion query -- quieter, not absent. */
+  .backdrop-wash {
+    background: linear-gradient(
+      to bottom,
+      rgba(5, 5, 6, 0.66) 0%,
+      rgba(5, 5, 6, 0.9) 45%,
+      #050506 78%
+    );
   }
 }
 
@@ -976,5 +1302,24 @@ select.field-input {
   .field-input {
     border-width: 1px;
     border-color: var(--hairline);
+  }
+  /* The photograph steps back so the text over it steps forward. Done by fading
+   * the image itself rather than by piling on more wash: a heavier scrim would
+   * still let the brightest street lights punch through at full value, which is
+   * exactly the contrast this query is asking us to remove. */
+  .plate {
+    opacity: 0.34;
+  }
+  .backdrop-wash {
+    background: linear-gradient(
+      to bottom,
+      rgba(5, 5, 6, 0.58) 0%,
+      rgba(5, 5, 6, 0.88) 42%,
+      #050506 74%
+    );
+  }
+  .login-card {
+    background: #101116;
+    border-color: var(--hairline-strong);
   }
 }

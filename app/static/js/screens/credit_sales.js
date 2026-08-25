@@ -240,7 +240,7 @@ function saleSheet(existing, context) {
 
   const quantityField = field({
     name: "quantity",
-    label: "Quantity",
+    label: "Quantity (optional)",
     type: "number",
     step: "0.001",
     min: "0.001",
@@ -248,7 +248,7 @@ function saleSheet(existing, context) {
     inputMode: "decimal",
     // §14 / the API: a quantity with no fuel type is refused, because a measure with no unit
     // is meaningless. Said here so it is not discovered as a 422.
-    hint: "Requires a fuel type — a quantity with no unit means nothing.",
+    hint: "Optional — leave blank if you're only recording the amount. Fill it in only if you also pick a fuel type, since a quantity needs a unit.",
   });
 
   const vehicle = field({

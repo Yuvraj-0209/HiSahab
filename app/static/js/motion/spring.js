@@ -67,6 +67,7 @@ function prefersReducedMotion() {
  * frame stay in lockstep; and the browser gets one callback to schedule instead of N.
  */
 const active = new Set();
+const subscribers = new Set();
 let frame = null;
 let lastTime = 0;
 
@@ -75,16 +76,44 @@ function tick(now) {
   lastTime = now;
 
   for (const spring of active) spring._advance(dt);
+  for (const subscriber of subscribers) subscriber(now, dt);
 
-  frame = active.size > 0 ? requestAnimationFrame(tick) : null;
+  frame = active.size + subscribers.size > 0 ? requestAnimationFrame(tick) : null;
 }
 
 function start(spring) {
   active.add(spring);
+  resume();
+}
+
+function resume() {
   if (frame === null) {
     lastTime = performance.now();
     frame = requestAnimationFrame(tick);
   }
+}
+
+/**
+ * Subscribe to the shared frame loop without owning a spring.
+ *
+ * The login backdrop (js/backdrop/skyline.js) is continuous rather than settling, so it has
+ * no target to spring towards -- but it must not open a *second* requestAnimationFrame. Two
+ * loops would each schedule a callback per frame and could drift out of phase, which is the
+ * exact thing the comment above says this Set exists to prevent.
+ *
+ * The returned function is the only way to unsubscribe, and calling it is not optional: the
+ * loop stays alive while any subscriber exists, so a leaked one keeps the tab painting
+ * forever. `js/main.js` calls it the moment the login screen is replaced by the shell.
+ *
+ * @param   {(now: number, dt: number) => void} callback  dt in seconds, clamped as above
+ * @returns {() => void} detach
+ */
+export function onFrame(callback) {
+  subscribers.add(callback);
+  resume();
+  return () => {
+    subscribers.delete(callback);
+  };
 }
 
 export class Spring {

@@ -37,14 +37,26 @@ export const TABS = [
  * Returns the pieces the router needs: a `screen` element to render into, and `setTitle` /
  * `setTab` so a screen can describe itself without knowing how the chrome is built.
  */
-export function buildShell({ role, onNavigate }) {
+export function buildShell({ role, onNavigate, onLogout }) {
   const title = el("h1", { className: "t-title truncate grow" });
   const subtitle = el("p", { className: "t-caption truncate" });
   const actions = el("div", { className: "row" });
 
+  // A sibling of `actions`, deliberately -- not routed through it. Every screen calls
+  // setActions() on render, several with no arguments just to clear the slot, so anything
+  // placed there vanishes the instant the route changes. Logging out has to survive every
+  // navigation, so it lives directly in the chrome instead.
+  const logoutButton = el("button", {
+    className: "btn btn-plain",
+    text: "Log out",
+    attrs: { type: "button" },
+    on: { click: () => onLogout() },
+  });
+
   const chrome = el("header", { className: "chrome" }, [
     el("div", { className: "grow" }, [title, subtitle]),
     actions,
+    logoutButton,
   ]);
 
   const screen = el("main", { className: "screen" });

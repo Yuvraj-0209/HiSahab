@@ -48,7 +48,21 @@ include = ["app*"]
 # Not a build step: no bundler, no transpiler, nothing generated. setuptools copies the
 # files it is told to copy (CLAUDE.md §2, §14).
 [tool.setuptools.package-data]
-app = ["static/*.html", "static/*.css", "static/js/**/*.js"]
+# Binary assets are listed explicitly rather than by a broad glob, and CLAUDE.md
+# §13.28 makes keeping this list current a rule: a wheel that silently omits them
+# serves an app that looks correct in dev (where the source tree is on disk) and
+# loses its wordmark and its backdrop in production, with nothing failing anywhere.
+# The licence files travel with the assets -- SIL OFL requires it for the font, and
+# CREDITS.txt is the Adobe Stock provenance for the photograph.
+app = [
+  "static/*.html",
+  "static/*.css",
+  "static/js/**/*.js",
+  "static/fonts/*.woff2",
+  "static/fonts/OFL.txt",
+  "static/img/*.webp",
+  "static/img/CREDITS.txt",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

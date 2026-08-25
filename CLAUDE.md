@@ -2258,6 +2258,48 @@ future reader must be able to tell the difference.
     having no admin, not an individual from their own decision, and a second rule guarding the
     second case would be guarding nothing this one does not already cover. §5.1, §8
 
+28. **The login screen ships binary assets: one self-hosted webfont and one licensed
+    photograph.** This supersedes `docs/phase-12-plan.md` M5 — *"System font stack, no
+    webfont"* — and app.css's header comment was updated to match rather than left to
+    contradict the file it heads.
+
+    **M5's reasoning was about dependencies, and it still holds.** What it forbade in
+    practice was a *CDN* font: §14 forbids the npm dependency, a CDN is the same dependency
+    with worse failure modes, and §13.19 makes any third-party asset able to read the session
+    token. **None of that applies to a file served from this origin.** The CSP already said
+    so before the font existed — `font-src 'self'` permits our file and refuses Google's —
+    and `test_no_asset_references_an_external_host` refuses the CDN at commit time.
+
+    So the rule is narrowed, not dropped: **no font, image or media may be referenced from an
+    external host; a self-hosted asset in `app/static/` is permitted.** The face is
+    Instrument Serif (SIL OFL 1.1, `app/static/fonts/OFL.txt`) and it dresses **the wordmark
+    and the two scroll headlines only** — every other surface in the application keeps the
+    system stack, so the exception cannot spread by habit. The photograph is Adobe Stock
+    free-tier, licensed to the owner's account, recorded in `app/static/img/CREDITS.txt`.
+
+    **Every such asset must be listed in `pyproject.toml`'s `package-data`.** This is the
+    failure mode worth writing down, because it is silent in the direction that matters: the
+    files sit on disk in development and the app looks correct, then a built wheel omits them
+    and production loses its wordmark and its backdrop with nothing failing. §2's
+    one-artefact rule is what makes this the only place the list can live. §7.1, §13.19, §14
+
+29. **The login backdrop is a photograph, and nothing about it is recomputed.** Two earlier
+    versions of this screen stuttered, both for the same reason, and the reason generalises
+    past this screen.
+
+    The first repainted a full-viewport canvas every frame — five `drawImage` blits, three
+    radial gradients and ~46 colour strings per tick — underneath a `backdrop-filter` on the
+    sign-in card, so the browser re-ran a 30px gaussian over changing pixels sixty times a
+    second. The second moved the drawing to CSS transforms and was smooth, but was vector
+    line art where the brief wanted photography.
+
+    What is left is one `<img>` under a CSS Ken Burns keyframe, a parallax `translate3d`
+    written once per changed scroll position, and a colour grade made of **stacked gradients
+    rather than a CSS `filter`**. The per-frame budget is one `style.transform` write.
+
+    **The rule this leaves behind:** anything that moves continuously moves under `transform`
+    or `opacity`, and is never redrawn to say so. §13.18, §14
+
 ---
 
 ## 14. Guardrails for Claude Code
@@ -2404,6 +2446,20 @@ to occur on this specific project.
 - **Treat a hidden control as a permission check.** §8 already says hiding a button is UX, not
   a control. The corollary for Phase 12: every screen still handles a 403 as a real outcome,
   and no client-side rule exists that the server does not also enforce (§8)
+- **Ship a font, image or media file without adding it to `pyproject.toml`'s
+  `package-data`.** It will work perfectly in development, where the source tree is on disk,
+  and be missing from the built wheel. Nothing fails; the wordmark and the backdrop simply do
+  not arrive in production. §2 ships one artefact precisely so there is one list to keep
+  right (§13.28)
+- **Put a CSS `filter` or `backdrop-filter` on an element that also carries an animated
+  `transform`** — or on one sitting over animating content. The filtered result has to be
+  re-rasterised every frame, and this has already cost this project one visibly janky login
+  screen. Grade with stacked gradients instead; they cost nothing and are tunable without
+  re-exporting an asset (§13.29)
+- **Redraw anything to make it move.** Continuous motion belongs to `transform` and
+  `opacity`, on the compositor. A canvas that repaints per frame to shift some rectangles is
+  the shape of the bug §13.29 records, and it looks like a slow device rather than like a
+  mistake (§13.29)
 - **Add a `<script src>`, stylesheet, or font from an external host.** §14 forbids the npm
   dependency and a CDN is the same dependency with worse failure modes — plus §13.19 makes any
   third-party script able to read the session token. The CSP refuses it and a structural test

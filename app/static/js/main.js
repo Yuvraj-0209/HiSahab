@@ -35,7 +35,7 @@ import { buildShell, satisfies } from "./ui/nav.js";
 import { notify } from "./ui/toast.js";
 import { setZone } from "./time.js";
 import { renderLogin } from "./screens/login.js";
-import { renderToday } from "./screens/today.js";
+import { renderToday, renderShiftById } from "./screens/today.js";
 import { renderReadings } from "./screens/readings.js";
 import { renderEntry } from "./screens/entry.js";
 import { renderCollections } from "./screens/collections.js";
@@ -92,10 +92,18 @@ function renderFatal(title, detail) {
   );
 }
 
+/* The login screen owns a canvas outside #app (js/backdrop/skyline.js) and a subscription to
+ * the shared frame loop. Neither is torn down by rendering over #app, so the handle it hands
+ * back is held here and called the moment a session starts. A missed call is not a visual
+ * bug -- it is a requestAnimationFrame running behind the shell for the life of the session.
+ */
+let detachLogin = null;
+
 function showLogin(outletName) {
   session.me = null;
   session.shell = null;
-  renderLogin(APP, { outletName, onSignedIn: startSession });
+  if (detachLogin) detachLogin();
+  detachLogin = renderLogin(APP, { outletName, onSignedIn: startSession }).detach;
 }
 
 /* --- the signed-in shell ----------------------------------------------------- */
@@ -139,8 +147,16 @@ async function startSession() {
   const shell = buildShell({
     role: me.role,
     onNavigate: (target) => navigate(target),
+    onLogout: () => signOut(),
   });
   session.shell = shell;
+
+  // Before the shell replaces #app, not after: the backdrop lives outside #app and would
+  // otherwise keep painting for the rest of the session.
+  if (detachLogin) {
+    detachLogin();
+    detachLogin = null;
+  }
 
   render(APP, ...shell.nodes);
 
@@ -204,6 +220,13 @@ function registerRoutes() {
 
   const shiftScreen = (fn) => (params) =>
     fn(session.shell.screen, { session, navigate, shiftId: params.shiftId });
+
+  // A shift stops being "current" the moment it closes, so this is the only page that can
+  // still reach it -- to lock it, reopen it, or just look. See today.js's renderShiftById.
+  route("/shifts/:shiftId", shiftScreen(renderShiftById), {
+    tab: "today",
+    role: "manager",
+  });
 
   route("/shifts/:shiftId/collections", shiftScreen(renderCollections), {
     tab: "entry",

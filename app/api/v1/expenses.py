@@ -108,15 +108,19 @@ class ExpenseResponse(BaseModel):
 
 
 class ExpensePage(BaseModel):
-    """A shift's expenses, with the one derived figure worth having on the page.
+    """A shift's expenses, with the derived figures worth having on the page.
 
     `totals_by_category` nets reversals into the sum, so a cancelled ₹5,000 shows as the
     reduction it is instead of vanishing -- same shape as `collections.py`'s
-    `totals_by_mode`.
+    `totals_by_mode`. `total` is the same sum collapsed across categories, computed here
+    rather than by a client: §3 rule 1 / §14 forbid summing money in JavaScript, and the
+    month-end summary route (`totals_by_category_range`, below) already computes this exact
+    shape for a date range -- this is that pattern applied to one shift.
     """
 
     items: list[ExpenseResponse]
     totals_by_category: dict[str, Decimal]
+    total: Decimal
     truncated: bool
 
 
@@ -317,6 +321,7 @@ def list_expenses(
     rows = rows[:_MAX_ROWS]
 
     codes = expense_service.category_codes(db, rows)
+    totals_by_category = expense_service.totals_by_category(db, shift_id=shift.id)
     return ExpensePage(
         items=[
             _to_response(
@@ -326,7 +331,8 @@ def list_expenses(
             )
             for row in rows
         ],
-        totals_by_category=expense_service.totals_by_category(db, shift_id=shift.id),
+        totals_by_category=totals_by_category,
+        total=sum(totals_by_category.values(), Decimal("0.00")),
         truncated=truncated,
     )
 

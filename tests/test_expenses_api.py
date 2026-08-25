@@ -126,6 +126,31 @@ async def test_several_expenses_may_share_a_category_on_one_shift(
     assert listing.json()["totals_by_category"] == {"MAINTENANCE": "500.00"}
 
 
+async def test_the_total_field_sums_every_category(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    auth_headers,
+    clean_expenses,
+) -> None:
+    """The shift-detail screen bolds a single expense total, and this project's money rule
+    forbids summing `totals_by_category` in JavaScript to get it (§14) -- so the server must
+    hand back the sum directly, the same shape the month-end summary endpoint already uses."""
+    attendant = make_user("attendant")
+    shift = make_shift(attendant, business_date=DAY, sequence=1)
+    headers = auth_headers(attendant)
+
+    first = await _post(client, shift, headers, "m1", amount="500.00", category="maintenance")
+    second = await _post(client, shift, headers, "e1", amount="300.00", category="electricity")
+    assert first.status_code == 201
+    assert second.status_code == 201
+
+    listing = await client.get(f"/api/v1/shifts/{shift}/expenses", headers=headers)
+    body = listing.json()
+    assert body["totals_by_category"] == {"MAINTENANCE": "500.00", "ELECTRICITY": "300.00"}
+    assert body["total"] == "800.00"
+
+
 async def test_a_zero_amount_is_refused(
     client: AsyncClient,
     make_user: Callable[..., UUID],
@@ -491,7 +516,11 @@ async def test_listing_nets_a_reversal_into_the_category_total(
         f"/api/v1/shifts/{shift}/expenses", headers=auth_headers(manager)
     )
 
-    assert response.json()["totals_by_category"] == {"MAINTENANCE": "0.00"}
+    body = response.json()
+    assert body["totals_by_category"] == {"MAINTENANCE": "0.00"}
+    # The reversal nets into the total exactly as it nets into the per-category figure --
+    # a cancelled ₹500 must not linger in the bolded total after it's been undone.
+    assert body["total"] == "0.00"
     items = response.json()["items"]
     assert len(items) == 2
     reversed_flags = {item["id"]: item["is_reversed"] for item in items}
@@ -693,5 +722,6 @@ async def test_listing_a_shift_with_no_expenses_returns_an_empty_page(
     assert response.status_code == 200
     body = response.json()
     assert body["items"] == []
+    assert body["total"] == "0.00"
     assert body["totals_by_category"] == {}
     assert body["truncated"] is False
