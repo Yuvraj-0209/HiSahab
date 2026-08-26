@@ -40,7 +40,7 @@ let current = null;
  * @param {Node}     options.body      built by the caller
  * @param {Node}     [options.footer]  usually the submit button
  * @param {Function} [options.onClose] called once the sheet has actually left the screen
- * @returns {{close: Function, element: HTMLElement}}
+ * @returns {{close: Function, element: HTMLElement, setBody: Function}}
  */
 export function openSheet({ title, body, footer = null, onClose = null }) {
   // Only one at a time. Closing the old one first keeps the scrim stack honest and means a
@@ -51,6 +51,9 @@ export function openSheet({ title, body, footer = null, onClose = null }) {
 
   const grip = el("div", { className: "sheet-grip" });
   const bodyNode = el("div", { className: "sheet-body" }, [body]);
+  // Wrapped the same way bodyNode wraps `body`, so setBody below can replace either without
+  // touching the sheet's own child list (grip/head/bodyNode/footerNode never change).
+  const footerNode = el("div", { className: "sheet-footer" }, [footer]);
 
   const head = el("div", { className: "sheet-head" }, [
     el("h2", { className: "sheet-title t-title", text: title }),
@@ -68,7 +71,7 @@ export function openSheet({ title, body, footer = null, onClose = null }) {
       className: "sheet",
       attrs: { role: "dialog", "aria-modal": "true", "aria-label": title },
     },
-    [grip, head, bodyNode, footer],
+    [grip, head, bodyNode, footerNode],
   );
 
   LAYERS().append(scrim, sheet);
@@ -76,7 +79,14 @@ export function openSheet({ title, body, footer = null, onClose = null }) {
   // Measured after insertion, because the sheet's height depends on its content and the
   // travel distance is that height. Using a guess here would make the dismiss threshold and
   // the projection wrong for every sheet that is not the size of the guess.
-  const height = sheet.offsetHeight;
+  //
+  // `let`, not `const`: setBody() below can swap in taller or shorter content after the sheet
+  // is already open (readings.js's entry sheet does this to move from a chooser to a form
+  // without a close-then-reopen jump-cut). Every use of `height` below reads it from this
+  // closure, so reassigning it there is all a swap needs -- but a stale height left as `const`
+  // would leave the sheet unable to fully leave the screen on close whenever the swapped-in
+  // content is taller than what was measured at open.
+  let height = sheet.offsetHeight;
 
   let closing = false;
 
@@ -178,6 +188,23 @@ export function openSheet({ title, body, footer = null, onClose = null }) {
     return (overshoot * dimension * constant) / (dimension + constant * overshoot);
   }
 
+  /**
+   * Replace the sheet's content in place -- a multi-step flow inside ONE sheet (e.g. a choice
+   * of buttons that reveals a form) rather than closing this sheet and opening another, which
+   * would jump-cut with no slide-out (see the comment on `current.close({ immediate: true })`
+   * above). The sheet stays exactly where it is; only what's inside it changes.
+   */
+  function setBody(newBody, newFooter = null) {
+    bodyNode.replaceChildren(newBody);
+    footerNode.replaceChildren(...(newFooter ? [newFooter] : []));
+    // Reading offsetHeight forces the layout this replaceChildren just invalidated, so this
+    // reflects the new content's real height, not the old one's.
+    height = sheet.offsetHeight;
+
+    const firstField = bodyNode.querySelector("input, select, textarea, button");
+    firstField?.focus({ preventScroll: true });
+  }
+
   scrim.addEventListener("click", () => close());
   document.addEventListener("keydown", handleKey);
 
@@ -190,7 +217,7 @@ export function openSheet({ title, body, footer = null, onClose = null }) {
   const firstField = bodyNode.querySelector("input, select, textarea, button");
   firstField?.focus({ preventScroll: true });
 
-  const instance = { close, element: sheet };
+  const instance = { close, element: sheet, setBody };
   current = instance;
   return instance;
 }

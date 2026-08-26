@@ -340,6 +340,48 @@ body {
   margin-top: 0;
 }
 
+/* A 2-column grid of compact per-nozzle tiles, grouped under a fuel-type .section-label
+ * (js/screens/readings.js). Unlike `.grid` above -- tuned for content-rich dashboard cards,
+ * `min(100%, 21rem)` per card -- these tiles carry only a label and a status pill, so a fixed
+ * 2-up layout fits a phone-width viewport comfortably instead of collapsing to one column. */
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--sp-2);
+}
+
+/* Same visual weight as `.confirm` below -- both are large, deliberate tap targets, just at
+ * half the width. `.flagged` (§9) is applied alongside this class unmodified: its border-left
+ * signal already survives at any width. */
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-height: 4.5rem;
+  padding: var(--sp-3);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out);
+}
+
+.tile:active {
+  transform: scale(0.985);
+}
+
+.tile-label {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tabbar {
   position: fixed;
   left: 0;

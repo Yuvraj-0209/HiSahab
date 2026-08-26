@@ -33,6 +33,18 @@
  * to diagnose", and §14 lists reading it as an omission among the failure modes. 0 is a real
  * answer -- CBG is not calibration-tested here (§4.5) -- but it has to be *an answer*. The
  * field is therefore empty until touched, with the unit named so nobody guesses litres.
+ *
+ * ## Two later additions, same rule
+ *
+ * Nozzles are grouped by fuel type into tappable tiles (a label and a status pill) rather
+ * than always-expanded cards, because a full shift's worksheet is long and scrolling it
+ * repeatedly is the thing this screen was slowest at. Tapping a tile opens the exact same
+ * sheets described above -- nothing about what gets confirmed, or how, changed.
+ *
+ * "No sale" pre-fills a guess (closing = opening, testing = 0) for a nozzle that stayed dry.
+ * It is a convenience, never a default: the sheet still opens, the attendant still sees both
+ * figures, and Save is still a tap they have to make. See the comments at buildEntryForm and
+ * closingSheet's noSaleBtn for exactly how each sheet guarantees the values are actually sent.
  */
 
 import { el, empty, pill, render } from "../dom.js";
@@ -44,13 +56,22 @@ import { notify } from "../ui/toast.js";
 import { satisfies } from "../ui/nav.js";
 import { errorCard } from "./today.js";
 
-export async function renderReadings(container, { session, navigate, shiftId }) {
+export async function renderReadings(container, { session, navigate, shiftId }, { silent = false } = {}) {
   const { shell } = session;
   shell.setTab("entry");
   shell.setTitle("Readings");
   shell.setActions();
 
-  render(container, el("div", { className: "t-caption", text: "Loading…" }));
+  // A submit handler calls this again to show fresh data. The worksheet still on screen is
+  // correct enough to look at for the half-second the request takes -- collapsing it to a
+  // one-line "Loading…" node first (as the very first mount below still does) shrinks the
+  // document just long enough for the browser to clamp window.scrollY toward 0, and nothing
+  // afterwards restores it. Skipping the skeleton on a refresh removes the clamp instead of
+  // working around it: the container goes stale-height straight to fresh-height, with no
+  // near-empty state in between for the scroll position to be clamped against.
+  if (!silent) {
+    render(container, el("div", { className: "t-caption", text: "Loading…" }));
+  }
 
   let worksheet;
   try {
@@ -64,6 +85,8 @@ export async function renderReadings(container, { session, navigate, shiftId }) 
   }
 
   const editable = worksheet.shift_status === "open";
+  const context = { session, container, navigate, shiftId, editable };
+  const groups = groupByFuelType(worksheet.lines);
 
   render(
     container,
@@ -81,76 +104,105 @@ export async function renderReadings(container, { session, navigate, shiftId }) 
         }),
       ]),
 
-      worksheet.lines.length
+      groups.length
         ? el(
             "div",
             { className: "stack" },
-            worksheet.lines.map((line) =>
-              lineCard(line, { session, container, navigate, shiftId, editable }),
-            ),
+            groups.flatMap(({ code, lines }) => [
+              el("div", { className: "section-label t-micro", text: code }),
+              el(
+                "div",
+                { className: "tile-grid" },
+                lines.map((line) => tile(line, context)),
+              ),
+            ]),
           )
         : empty("No active nozzles at this outlet."),
     ]),
   );
 }
 
-/* --- one nozzle --------------------------------------------------------------- */
+/** Groups worksheet lines by fuel_type_code, in first-seen order. fuel_type_code is
+ * admin-managed data (§5.1) with no fixed set of values -- this outlet happens to sell
+ * petrol, diesel and CBG, but the grouping is driven entirely by whatever distinct codes are
+ * actually present, never a hardcoded list. First-seen order (rather than alphabetical) is
+ * deliberate: it matches whatever order the admin entered the nozzles/dispensers in, which is
+ * more meaningful to an attendant walking the forecourt than an alphabetical accident. */
+function groupByFuelType(lines) {
+  const order = [];
+  const byCode = new Map();
+  for (const line of lines) {
+    if (!byCode.has(line.fuel_type_code)) {
+      byCode.set(line.fuel_type_code, []);
+      order.push(line.fuel_type_code);
+    }
+    byCode.get(line.fuel_type_code).push(line);
+  }
+  return order.map((code) => ({ code, lines: byCode.get(code) }));
+}
 
-function lineCard(line, context) {
+/* --- one nozzle, as a compact tile --------------------------------------------- */
+
+function tile(line, context) {
   const saved = line.reading;
   const done = saved !== null;
   const flagged = done && saved.requires_review;
+  const status = tileStatus(line, saved, done, flagged);
 
   return el(
-    "div",
-    { className: `card stack ${flagged ? "flagged" : ""}` },
-    [
-      el("div", { className: "row-between" }, [
-        el("div", {}, [
-          el("div", { className: "t-headline", text: line.nozzle_label }),
-          el("div", {
-            className: "t-caption",
-            text: `${line.dispenser_label} · ${line.fuel_type_code}`,
-          }),
-        ]),
-        done
-          ? pill(
-              saved.closing_reading === null ? "opening only" : "recorded",
-              saved.closing_reading === null ? "neutral" : "open",
-            )
-          : pill("not started", "neutral"),
-      ]),
-
-      flagged
-        ? el("p", {
-            className: "t-caption text-short",
-            text: saved.review_note
-              ? `Flagged for review: ${saved.review_note}`
-              : "Flagged for review — a human needs to reconcile this reading.",
-          })
-        : null,
-
-      done ? savedBody(line, saved, context) : unsavedBody(line, context),
-    ],
+    "button",
+    {
+      className: flagged ? "tile flagged" : "tile",
+      attrs: { type: "button" },
+      on: { click: () => openTile(line, context, { saved, done }) },
+    },
+    [el("div", { className: "tile-label t-body", text: line.nozzle_label }), pill(status.text, status.kind)],
   );
 }
 
-function savedBody(line, saved, context) {
-  const rows = el("div", { className: "list" }, [
+/** Mirrors the pill vocabulary this screen has always shown -- only where it's shown moved,
+ * from an inline card to a tile. */
+function tileStatus(line, saved, done, flagged) {
+  if (!done) {
+    return line.requires_anchor ? { text: "needs anchor", kind: "review" } : { text: "not started", kind: "neutral" };
+  }
+  if (flagged) return { text: "flagged", kind: "review" };
+  return saved.closing_reading === null ? { text: "opening only", kind: "neutral" } : { text: "recorded", kind: "open" };
+}
+
+/** Decides which sheet a tap opens. Every branch is a relocation of an existing flow, not new
+ * business logic: what happens for each state is unchanged from before tiles existed. */
+function openTile(line, context, { saved, done }) {
+  if (!context.editable) return readOnlySheet(line, saved, done);
+  if (!done) {
+    return line.requires_anchor ? anchorSheet(line, context) : entrySheet(line, context);
+  }
+  return closingSheet(line, saved, context);
+}
+
+function readOnlySheet(line, saved, done) {
+  openSheet({
+    title: line.nozzle_label,
+    body: done
+      ? savedRows(line, saved)
+      : el("p", { className: "t-caption", text: "No reading was recorded for this nozzle." }),
+  });
+}
+
+/** The read-only detail rows for a nozzle that already has a reading -- opening, closing,
+ * testing, quantity sold, and whatever exceptional flags apply. Extracted so both the closing
+ * sheet (editable) and the read-only sheet (a closed/locked shift) can show the same figures. */
+function savedRows(line, saved) {
+  return el("div", { className: "list" }, [
     labelled("Opening", formatReading(saved.opening_reading)),
     // The chain's prediction is shown beside the confirmed value whenever they differ. §5.2:
     // storing both is what makes "the meter did not say what we expected" a fact on the row
     // rather than an event nobody recorded -- so it is shown, not hidden once resolved.
-    saved.chained_opening_reading !== null &&
-    saved.chained_opening_reading !== saved.opening_reading
+    saved.chained_opening_reading !== null && saved.chained_opening_reading !== saved.opening_reading
       ? labelled("Chain predicted", formatReading(saved.chained_opening_reading), "text-short")
       : null,
-    saved.opening_variance_reason
-      ? labelled("Variance reason", saved.opening_variance_reason)
-      : null,
-    saved.chained_opening_reading === null
-      ? labelled("Chain", "anchored — no predecessor")
-      : null,
+    saved.opening_variance_reason ? labelled("Variance reason", saved.opening_variance_reason) : null,
+    saved.chained_opening_reading === null ? labelled("Chain", "anchored — no predecessor") : null,
     labelled("Closing", formatReading(saved.closing_reading, { absent: "not entered" })),
     labelled("Testing", quantity(saved.testing_quantity, line.unit_of_measure)),
     saved.rollover_occurred ? labelled("Rollover", "yes") : null,
@@ -163,52 +215,59 @@ function savedBody(line, saved, context) {
       quantity(saved.quantity_sold, line.unit_of_measure, { absent: "awaiting closing" }),
     ),
   ]);
-
-  const actions = [];
-  if (context.editable) {
-    actions.push(
-      el("button", {
-        className: "btn btn-block",
-        text: saved.closing_reading === null ? "Enter closing reading" : "Edit closing reading",
-        attrs: { type: "button" },
-        on: { click: () => closingSheet(line, saved, context) },
-      }),
-    );
-  }
-  // §6.2's meter-reset escape hatch: admin only, reason mandatory, audit-logged.
-  if (context.editable && saved.meter_reset_occurred && satisfies(context.session.me.role, "admin")) {
-    actions.push(
-      el("button", {
-        className: "btn btn-block",
-        text: "Set manual quantity",
-        attrs: { type: "button" },
-        on: { click: () => overrideSheet(line, context) },
-      }),
-    );
-  }
-
-  return el("div", { className: "stack" }, [rows, ...actions]);
 }
 
-function unsavedBody(line, context) {
-  if (!context.editable) {
-    return el("p", { className: "t-caption", text: "No reading was recorded for this nozzle." });
-  }
+function flaggedNote(saved) {
+  if (!saved.requires_review) return null;
+  return el("p", {
+    className: "t-caption text-short",
+    text: saved.review_note
+      ? `Flagged for review: ${saved.review_note}`
+      : "Flagged for review — a human needs to reconcile this reading.",
+  });
+}
 
-  if (line.requires_anchor) {
-    return anchorBody(line, context);
-  }
+function labelled(label, value, valueClass = "") {
+  return el("div", { className: "list-row" }, [
+    el("div", { className: "list-row-main t-caption", text: label }),
+    el("div", { className: `list-row-value t-body t-numeric ${valueClass}`, text: value }),
+  ]);
+}
 
+/* --- creating a reading --------------------------------------------------------
+ *
+ * One POST carries the opening confirmation, the closing reading and the testing quantity,
+ * because they are recorded together on paper and splitting them across two requests would
+ * make a half-entered nozzle a state the register does not have.
+ *
+ * A fresh nozzle needs one of three choices made before that POST -- matches, mismatch or no
+ * sale -- and `entrySheet` opens a single sheet for all three rather than a chooser sheet that
+ * hands off to a second one. `openSheet` (ui/sheet.js) closes whatever's already open THE
+ * INSTANT a new one opens, with no slide-out; fine when the sheet being replaced is unrelated,
+ * wrong here, where the choice and the form are two steps of one action and a jump-cut between
+ * them would read as broken rather than as a transition. `buildEntryForm` therefore takes the
+ * already-open sheet and swaps its body in place via `sheet.setBody`.
+ */
+
+function entrySheet(line, context) {
+  const sheet = openSheet({
+    title: line.nozzle_label,
+    body: chooserBody(line, {
+      onMatches: () => buildEntryForm(sheet, line, context, { matches: true }),
+      onMismatch: () => buildEntryForm(sheet, line, context, { matches: false }),
+      onNoSale: () => buildEntryForm(sheet, line, context, { matches: true, noSale: true }),
+    }),
+  });
+}
+
+function chooserBody(line, { onMatches, onMismatch, onNoSale }) {
   return el("div", { className: "stack" }, [
     el("div", { className: "col" }, [
       el("span", { className: "t-micro", text: "Chain says this nozzle opens at" }),
       // Large and NOT an input. §4.7: "pre-filled, not typeable". Rendering it as a field
       // with a value in it invites a glance-and-tab-past, which is the assumption this whole
       // section exists to prevent.
-      el("div", {
-        className: "t-amount",
-        text: formatReading(line.chained_opening_reading),
-      }),
+      el("div", { className: "t-amount", text: formatReading(line.chained_opening_reading) }),
     ]),
     el("p", {
       className: "t-caption",
@@ -219,21 +278,33 @@ function unsavedBody(line, context) {
         className: "confirm",
         attrs: { type: "button", "data-state": "unconfirmed" },
         text: "✓  The meter reads exactly this",
-        on: { click: () => confirmSheet(line, context, { matches: true }) },
+        on: { click: onMatches },
       }),
       el("button", {
         className: "confirm",
         attrs: { type: "button", "data-state": "unconfirmed" },
         text: "✕  The meter reads something else",
-        on: { click: () => confirmSheet(line, context, { matches: false }) },
+        on: { click: onMismatch },
+      }),
+      el("button", {
+        className: "btn btn-block",
+        text: "No sale — nozzle stayed dry",
+        attrs: { type: "button" },
+        on: { click: onNoSale },
       }),
     ]),
   ]);
 }
 
-function anchorBody(line, context) {
+function anchorSheet(line, context) {
   const isAdmin = satisfies(context.session.me.role, "admin");
+  const sheet = openSheet({
+    title: line.nozzle_label,
+    body: anchorBody(isAdmin, () => buildEntryForm(sheet, line, context, { matches: false, anchor: true })),
+  });
+}
 
+function anchorBody(isAdmin, onAnchor) {
   return el("div", { className: "stack" }, [
     pill("needs anchoring", "review"),
     el("p", {
@@ -247,7 +318,7 @@ function anchorBody(line, context) {
           className: "btn btn-primary btn-block",
           text: "Anchor this nozzle",
           attrs: { type: "button" },
-          on: { click: () => confirmSheet(line, context, { matches: false, anchor: true }) },
+          on: { click: onAnchor },
         })
       : // A dead control with no explanation is the thing §16's wayfinding rule forbids. The
         // reason is shown instead of the button, so the attendant knows who to ask.
@@ -258,21 +329,11 @@ function anchorBody(line, context) {
   ]);
 }
 
-function labelled(label, value, valueClass = "") {
-  return el("div", { className: "list-row" }, [
-    el("div", { className: "list-row-main t-caption", text: label }),
-    el("div", { className: `list-row-value t-body t-numeric ${valueClass}`, text: value }),
-  ]);
-}
-
-/* --- creating a reading -------------------------------------------------------
- *
- * One POST carries the opening confirmation, the closing reading and the testing quantity,
- * because they are recorded together on paper and splitting them across two requests would
- * make a half-entered nozzle a state the register does not have.
- */
-
-function confirmSheet(line, context, { matches, anchor = false }) {
+/** Builds the confirm/mismatch/anchor form into an already-open sheet and wires its submit.
+ * Called by entrySheet (matches/mismatch/no-sale) and anchorSheet (anchor) -- one function, so
+ * the POST body and validation logic exist in exactly one place regardless of which of the
+ * three states a nozzle is in. */
+function buildEntryForm(sheet, line, context, { matches, anchor = false, noSale = false }) {
   const unit = line.unit_of_measure === "kilogram" ? "kg" : "litres";
 
   const fields = {};
@@ -301,6 +362,11 @@ function confirmSheet(line, context, { matches, anchor = false }) {
     }
   }
 
+  // "No sale" pre-fills a guess -- closing = opening, testing = 0 -- but this sheet submits
+  // via form.values() below, which sends every field regardless of whether it was touched.
+  // The attendant still sees both figures and still has to tap "Save reading": this is a
+  // convenience that fills in a guess a human can see, edit, and reject, never a default the
+  // system asserts on its own. Same distinction the chained opening reading itself relies on.
   fields.closing_reading = field({
     name: "closing_reading",
     label: "Closing reading",
@@ -308,10 +374,12 @@ function confirmSheet(line, context, { matches, anchor = false }) {
     step: "0.01",
     min: "0",
     inputMode: "decimal",
+    value: noSale ? String(line.chained_opening_reading) : "",
     hint: "Leave blank if the shift is still running.",
   });
 
-  // §4.2 / §14: an answer, never an omission. Deliberately NOT pre-filled with 0.
+  // §4.2 / §14: an answer, never an omission. Deliberately NOT pre-filled with 0, except by
+  // "No sale" above -- which is a human's explicit tap, not a form default.
   fields.testing_quantity = field({
     name: "testing_quantity",
     label: `Testing quantity (${unit})`,
@@ -319,6 +387,7 @@ function confirmSheet(line, context, { matches, anchor = false }) {
     step: "0.001",
     min: "0",
     inputMode: "decimal",
+    value: noSale ? "0" : "",
     hint:
       line.unit_of_measure === "kilogram"
         ? "CBG is not calibration-tested here, so this is normally 0 — but enter it rather than leaving it blank."
@@ -382,7 +451,7 @@ function confirmSheet(line, context, { matches, anchor = false }) {
       await api.post(`/shifts/${context.shiftId}/readings`, body);
       sheet.close();
       notify.success(`${line.nozzle_label} recorded.`);
-      renderReadings(context.container, context);
+      renderReadings(context.container, context, { silent: true });
     } catch (error) {
       submit.disabled = false;
       const unmatched = error.isValidation ? form.showErrors(error.detail) : [];
@@ -392,9 +461,8 @@ function confirmSheet(line, context, { matches, anchor = false }) {
     }
   });
 
-  const sheet = openSheet({
-    title: line.nozzle_label,
-    body: el("div", { className: "stack" }, [
+  sheet.setBody(
+    el("div", { className: "stack" }, [
       matches && !anchor
         ? el("div", { className: "card" }, [
             el("p", { className: "t-caption", text: "Opening confirmed against the meter" }),
@@ -423,8 +491,8 @@ function confirmSheet(line, context, { matches, anchor = false }) {
         ]),
       ]),
     ]),
-    footer: el("div", { style: { padding: "0 1rem 1rem" } }, [submit]),
-  });
+    el("div", { style: { padding: "0 1rem 1rem" } }, [submit]),
+  );
 }
 
 /* --- closing an already-open reading ------------------------------------------ */
@@ -476,7 +544,7 @@ function closingSheet(line, saved, context) {
       await api.patch(`/shifts/${context.shiftId}/readings/${line.nozzle_id}`, body);
       sheet.close();
       notify.success("Reading updated.");
-      renderReadings(context.container, context);
+      renderReadings(context.container, context, { silent: true });
     } catch (error) {
       submit.disabled = false;
       const unmatched = error.isValidation ? form.showErrors(error.detail) : [];
@@ -486,9 +554,53 @@ function closingSheet(line, saved, context) {
     }
   });
 
+  // Only offered before a closing exists. Once one is recorded, changing it to "no sale" is a
+  // correction to real data, not a first entry -- that goes through the ordinary fields above
+  // like any other edit, not this shortcut.
+  const noSaleBtn =
+    saved.closing_reading === null
+      ? el("button", {
+          className: "btn btn-block",
+          text: "No sale — same as opening",
+          attrs: { type: "button" },
+          on: {
+            // Sets the already-rendered inputs directly, after Form snapshotted its `initial`
+            // values at construction above. form.changes() -- unmodified -- compares each
+            // field's LIVE value against that snapshot, so both fields now read as touched and
+            // are included in the PATCH, exactly as if the attendant had typed them. This is
+            // not a bypass of §4.7/§4.2: nothing is sent until Save is tapped, and the two
+            // figures are visible and editable right up to that tap.
+            click: () => {
+              closing._input.value = String(saved.opening_reading);
+              testing._input.value = "0";
+            },
+          },
+        })
+      : null;
+
+  const isAdmin = satisfies(context.session.me.role, "admin");
+  // §6.2's meter-reset escape hatch: admin only, reason mandatory, audit-logged. Opens its own
+  // sheet (overrideSheet) rather than swapping this one's body -- rare and admin-only, unlike
+  // the match/mismatch/no-sale choice every attendant makes on every nozzle.
+  const overrideBtn =
+    context.editable && saved.meter_reset_occurred && isAdmin
+      ? el("button", {
+          className: "btn btn-block",
+          text: "Set manual quantity",
+          attrs: { type: "button" },
+          on: { click: () => overrideSheet(line, context) },
+        })
+      : null;
+
   const sheet = openSheet({
     title: line.nozzle_label,
-    body: el("div", { className: "stack" }, form.nodes()),
+    body: el("div", { className: "stack" }, [
+      flaggedNote(saved),
+      savedRows(line, saved),
+      noSaleBtn,
+      ...form.nodes(),
+      overrideBtn,
+    ]),
     footer: el("div", { style: { padding: "0 1rem 1rem" } }, [submit]),
   });
 }
@@ -532,7 +644,7 @@ function overrideSheet(line, context) {
       );
       sheet.close();
       notify.success("Override recorded.");
-      renderReadings(context.container, context);
+      renderReadings(context.container, context, { silent: true });
     } catch (error) {
       submit.disabled = false;
       const unmatched = error.isValidation ? form.showErrors(error.detail) : [];
