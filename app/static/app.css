@@ -411,8 +411,8 @@ body {
 }
 
 .tile-figure-tag {
-  color: var(--text-tertiary);
-  font-weight: 650;
+  color: var(--accent);
+  font-weight: 750;
 }
 
 .tabbar {
