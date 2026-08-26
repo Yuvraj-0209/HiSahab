@@ -357,7 +357,13 @@ body {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  justify-content: space-between;
+  /* flex-start, not space-between: with a third child (.tile-figures, below) space-between
+   * would push the status pill to float alone in the middle with an awkward gap either side.
+   * flex-start plus this gap reads as a natural top-to-bottom stack instead. Height is never a
+   * fixed number here -- min-height is only a floor for a two-line tile, a three-line one grows
+   * past it, and the grid's default `align-items: stretch` equalises every tile in a row to
+   * whichever is tallest regardless. */
+  justify-content: flex-start;
   gap: var(--sp-2);
   min-height: 4.5rem;
   padding: var(--sp-3);
@@ -380,6 +386,33 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+/* Opening / closing / sold, one line. white-space:nowrap keeps it one line as intended;
+ * overflow-x is the safety net for a reading long enough not to fit a half-width tile, so it
+ * scrolls within its own row instead of breaking the tile or the grid -- should be invisible
+ * in practice, but nothing looks broken on the day it isn't. */
+.tile-figures {
+  display: flex;
+  gap: var(--sp-3);
+  width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+  /* ~42% over the 0.8125rem this row would otherwise inherit from .t-caption -- same
+   * specificity, this rule wins on source order (it's declared later in the file). */
+  font-size: 1.15rem;
+}
+
+.tile-figures::-webkit-scrollbar {
+  display: none;
+}
+
+.tile-figure-tag {
+  color: var(--text-tertiary);
+  font-weight: 650;
 }
 
 .tabbar {

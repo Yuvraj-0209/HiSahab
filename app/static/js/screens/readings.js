@@ -156,8 +156,31 @@ function tile(line, context) {
       attrs: { type: "button" },
       on: { click: () => openTile(line, context, { saved, done }) },
     },
-    [el("div", { className: "tile-label t-body", text: line.nozzle_label }), pill(status.text, status.kind)],
+    [
+      el("div", { className: "tile-label t-body", text: line.nozzle_label }),
+      pill(status.text, status.kind),
+      done ? tileFigures(line, saved) : null,
+    ],
   );
+}
+
+/** A compact one-line glance at what's already recorded, using the same formatters (never a
+ * client-side rounding -- §3 rule 1) as the full detail one tap away in savedRows(). Absent
+ * values fall back to money.js's own short "—", not savedRows()'s longer "awaiting closing" --
+ * that fuller explanation still lives one tap away; this row is a glance, not the detail. */
+function tileFigures(line, saved) {
+  return el("div", { className: "tile-figures t-caption t-numeric" }, [
+    tileFigure("O", formatReading(saved.opening_reading)),
+    tileFigure("C", formatReading(saved.closing_reading)),
+    tileFigure("S", quantity(saved.quantity_sold, line.unit_of_measure)),
+  ]);
+}
+
+function tileFigure(tag, value) {
+  return el("span", { className: "tile-figure" }, [
+    el("span", { className: "tile-figure-tag", text: tag }),
+    ` ${value}`,
+  ]);
 }
 
 /** Mirrors the pill vocabulary this screen has always shown -- only where it's shown moved,
