@@ -867,6 +867,44 @@ select.field-input {
   border-left: 3px solid var(--warning);
 }
 
+/* The day lifecycle (Phase 15): Entered -> Closed -> Locked -> Reconciled -> Finalised.
+ *
+ * Two of those five steps are per shift and two are per day, which is precisely why the
+ * sequence confuses somebody meeting it for the first time. §11 phase 15: drawing it beats
+ * documenting it, because the strip is in front of the reader at the moment they wonder.
+ *
+ * Tokens only, never literal colours -- so `prefers-contrast: more` and the rest of §11's
+ * accessibility queries reach this the same way they reach everything else. A hardcoded hex
+ * here would be the one element on the page ignoring the setting.
+ */
+.lifecycle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: 0.2rem;
+}
+
+.lifecycle-dots {
+  display: inline-flex;
+  gap: 0.2rem;
+  flex: 0 0 auto;
+}
+
+.lifecycle-dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-high);
+  /* A hairline so an unreached step stays visible against the card rather than reading as
+   * empty space -- the difference between "three of five" and "three dots" at a glance. */
+  box-shadow: inset 0 0 0 1px var(--hairline-strong);
+}
+
+.lifecycle-dot.is-done {
+  background: var(--accent);
+  box-shadow: none;
+}
+
 /* ==========================================================================
    9b. Charts (Phase 13)
    ==========================================================================

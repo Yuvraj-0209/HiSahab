@@ -46,8 +46,8 @@ import { renderCreditRepayments } from "./screens/credit_repayments.js";
 import { renderBankDeposits } from "./screens/bank_deposits.js";
 import { renderCash } from "./screens/cash.js";
 import { renderCashPosition } from "./screens/cash_position.js";
-import { renderDailySummaries, renderDailySummary } from "./screens/daily_summaries.js";
-import { renderAlerts, renderDailyReport, renderReports } from "./screens/reports.js";
+import { renderDay, renderDays } from "./screens/days.js";
+import { renderAlerts, renderReports } from "./screens/reports.js";
 import {
   renderAdmin,
   renderCategories,
@@ -274,20 +274,31 @@ function registerRoutes() {
     { tab: "cash", role: "manager" },
   );
   route(
-    "/daily-summaries",
-    () => renderDailySummaries(session.shell.screen, { session, navigate }),
+    "/days",
+    () => renderDays(session.shell.screen, { session, navigate }),
     { tab: "cash", role: "manager" },
   );
   route(
-    "/daily-summaries/:businessDate",
+    "/days/:businessDate",
     (params) =>
-      renderDailySummary(session.shell.screen, {
+      renderDay(session.shell.screen, {
         session,
         navigate,
         businessDate: params.businessDate,
       }),
     { tab: "cash", role: "manager" },
   );
+
+  // Phase 15. One business date had two screens -- `/daily-summaries/{date}` for the stored
+  // snapshot and `/reports/{date}` for the fuel and expense detail -- described from two
+  // tables with no link between them. They merged into `/days/{date}`; these three keep every
+  // link, bookmark and half-typed URL that predates the merge working, and `redirect` replaces
+  // the history entry so the back button does not bounce off them.
+  route("/daily-summaries", () => redirect("#/days"), { tab: "cash", role: "manager" });
+  route("/daily-summaries/:businessDate", (params) => redirect(`#/days/${params.businessDate}`), {
+    tab: "cash",
+    role: "manager",
+  });
 
   // Phase 13. **"/reports/alerts" is registered before "/reports/:businessDate"**, and the
   // order is load-bearing: router.js's resolve() walks `routes` in registration order and
@@ -305,16 +316,10 @@ function registerRoutes() {
     (_params, query) => renderAlerts(session.shell.screen, { session, navigate }, query),
     { tab: "cash", role: "manager" },
   );
-  route(
-    "/reports/:businessDate",
-    (params) =>
-      renderDailyReport(session.shell.screen, {
-        session,
-        navigate,
-        businessDate: params.businessDate,
-      }),
-    { tab: "cash", role: "manager" },
-  );
+  route("/reports/:businessDate", (params) => redirect(`#/days/${params.businessDate}`), {
+    tab: "cash",
+    role: "manager",
+  });
 
   const adminScreen = (fn, extra = {}) => (params) =>
     fn(session.shell.screen, { session, navigate, ...extra, ...params });

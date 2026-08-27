@@ -312,16 +312,52 @@ def test_the_margin_catch_is_narrow_in_source_as_well_as_behaviour() -> None:
         assert "raise" in segment, segment
 
 
-def test_every_reporting_endpoint_is_reached_by_the_reports_screen() -> None:
+def test_every_reporting_endpoint_is_reached_by_a_screen() -> None:
     """`test_frontend_assets.py` only proves that the string "/reports" appears somewhere.
 
     That is the right check for *router* coverage and too weak for this phase: it would pass
     with two of the three endpoints unbuilt. Each path is asserted by name here instead.
+
+    **The per-path assertion is the point; the file it lands in is not.** Phase 15 moved the
+    per-day report out of `reports.js` and into `days.js`, because `#/reports/{date}` and
+    `#/daily-summaries/{date}` described one business date from two tables. Pinning the search
+    to a single filename made this test fail for a reorganisation it has no opinion about --
+    so it now searches the screens directory and keeps the assertion that actually guards
+    something: that each of the three endpoints is called by name, somewhere a user can reach.
+
+    Comments are **stripped first**, which `tests/test_frontend_assets.py` learned the hard
+    way: prose describing an endpoint silently satisfies a raw text search, and that is the
+    version of the failure nobody notices.
     """
-    source = Path("app/static/js/screens/reports.js").read_text()
+    screens = sorted(Path("app/static/js/screens").glob("*.js"))
+    assert screens, "no screens found -- did app/static/js/screens move?"
+
+    source = "\n".join(_strip_comments(path.read_text()) for path in screens)
 
     for path in ("/reports/range", "/reports/variance-alerts", "/reports/daily/"):
         assert path in source, f"no screen calls {path}"
+
+
+def _strip_comments(source: str) -> str:
+    """Remove `//` and `/* */` comments. Crude on purpose -- it only has to stop prose from
+    satisfying a search for an endpoint path, and a JavaScript parser is a dependency (§14)."""
+    out: list[str] = []
+    in_block = False
+    for line in source.split("\n"):
+        if in_block:
+            if "*/" in line:
+                line = line.split("*/", 1)[1]
+                in_block = False
+            else:
+                continue
+        if "/*" in line:
+            head, rest = line.split("/*", 1)
+            if "*/" in rest:
+                line = head + rest.split("*/", 1)[1]
+            else:
+                line, in_block = head, True
+        out.append(line.split("//", 1)[0])
+    return "\n".join(out)
 
 
 def test_the_shortfall_never_reaches_a_credit_table() -> None:
