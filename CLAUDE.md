@@ -323,6 +323,7 @@ Per-phase landing schedule:
 | 10 | `salesman_shortfalls`, `salesman_shortfall_settlements` | No — derivable via `shift_id` |
 | 10 | `daily_cash_summaries` | **Yes** |
 | ~~11~~ | ~~`audit_logs`~~ | Built in Phase 4 instead — see the row above |
+| 16 | `credit_opening_balances` | No — derivable via `credit_customer_id` |
 
 **Unique constraints are the expensive part**, not the columns. Each one below is
 cheap now and horrible to change once there is data. They are written into §5.1–§5.3
@@ -666,22 +667,56 @@ unambiguous: there is always exactly one closing reading to carry forward.
 
 **`credit_repayments`**
 - `credit_customer_id` — FK
-- `shift_id` — FK (the shift during which the money physically arrived)
+- `shift_id` — FK, **nullable since Phase 16** — the shift during which the money physically
+  arrived at the pump. `NULL` means it arrived at the bank instead; see below
+- `business_date` — DATE, NOT NULL. **Phase 16 amendment.** Set server-side from the shift when
+  there is one, supplied by the caller when there is not
 - `amount` — NUMERIC(12,2)
 - `mode` — enum: `cash` | `card` | `upi` | `bank_transfer`
 - `attachment_id` — FK nullable
 - `reverses_id` — FK to `credit_repayments.id`, nullable, **unique**. **Phase 9 amendment**
 - `reversal_reason` — text, nullable, required (and non-blank) when `reverses_id` is set.
   **Phase 9 amendment**
+- CHECK `ck_credit_repayments_cash_needs_shift`: `mode <> 'cash' OR shift_id IS NOT NULL`.
+  **Phase 16 amendment**
+
+> **A repayment with a shift arrived at the pump. A repayment with only a date arrived at the
+> bank.** Phase 16 amendment, and it is the sentence the whole credit ledger rests on.
+>
+> Every §6.4 sum is already `WHERE shift_id = :shift_id`, so the *presence of a shift* carries
+> the whole meaning and no second column is needed to say it. Cash is the one mode that cannot
+> be shift-less, because cash can only land in a drawer — a cash repayment with nowhere to land
+> is money §6.4 would never count, so the CHECK above refuses it at the database as well as the
+> API. A `card` or `upi` repayment **with** a shift went through that shift's machine and is
+> inside its collections total; the same repayment **without** one reached a bank account, and
+> is correctly absent from every shift's sum without anything having to record which it was.
+>
+> Before Phase 16 `shift_id` was `NOT NULL`, and the consequence was not theoretical: §5.2 says
+> nothing referencing a `locked` shift may be modified, so a customer settling by bank transfer
+> on a day already locked could not be recorded **at all**, and a transfer arriving on a day the
+> outlet was shut had no shift to attach to. Reconstructing a ledger — which §4.7's *typed in
+> after the fact* makes the normal case here — was blocked by the very shifts it described.
+>
+> `business_date` is derivable from the shift and is stored anyway, for the reason
+> `bank_deposits.business_date` is: it is the most-queried column on the table and reading it
+> through a join means it cannot be indexed directly. **§3 rule 7 still applies** — when a shift
+> is supplied the server takes the date from `shifts.business_date` and refuses the client's.
 
 > **`mode` is its own Postgres type, `credit_repayment_mode`** — not `collection_mode`
 > (which has `wallet` and no `bank_transfer`) and not `expense_mode`, whose labels happen to
 > match today. Sharing a type would force a later phase to alter a live enum or carry a value
 > meaningless to one of its users; §5.2 already makes this argument for `collections`.
 >
-> **Only `mode = cash` repayments enter §6.4's equation.** A customer settling by bank
-> transfer moves no money through the drawer, and adding it to expected cash would invent a
-> shortfall on the day they pay.
+> **Only `mode = cash` repayments reach the drawer.** A customer settling by bank transfer
+> moves no money through the locker, and adding it to expected cash would invent a shortfall on
+> the day they pay.
+>
+> **That is not the same as saying only cash enters §6.4. Phase 16 amendment.** A `card` or
+> `upi` repayment taken on a shift is inside that shift's card/UPI collections total, which
+> §6.4 subtracts — so without a term putting it back, the money is subtracted once and added
+> never, and the salesman shows a surplus he does not hold. It enters on the **sales** side, as
+> `card_upi_credit_repayments`, exactly where §6.4 puts a card-paid bottle of oil and for
+> exactly the same reason. A `bank_transfer` repayment enters nowhere at all.
 
 > **Both credit tables carry §6.9's reversal shape** (`reverses_id` unique, a mandatory
 > non-blank reason, the strict sign rule `(reverses_id IS NULL AND amount > 0) OR
@@ -690,6 +725,60 @@ unambiguous: there is always exactly one closing reading to carry forward.
 > mistyped udhaar discovered once the shift is closed is the *normal* case here, not an edge
 > one. Strict `>` / `<` rather than `>=` / `<=`, matching `expenses`: a ₹0 udhaar records
 > nothing and has no reason to exist.
+
+**`credit_opening_balances`** — what a customer already owed when this system started
+counting. **Phase 16.**
+- `credit_customer_id` — FK to `credit_customers`, NOT NULL
+- `as_of_date` — DATE, NOT NULL. The ledger begins here; everything before it is inside `amount`
+- `amount` — NUMERIC(12,2), NOT NULL. Positive = they owe the pump; **zero and negative are both
+  legitimate** — see below
+- `reverses_id` — FK to `credit_opening_balances.id`, nullable, **unique**
+- `reversal_reason` — text, nullable, required (and non-blank) when `reverses_id` is set
+- No `outlet_id` — derivable via `credit_customer_id`, per §5.0's rule
+
+> **Why a table and not a column on `credit_customers`.** §6.6 computes outstanding from rows
+> and forbids a denormalised total because it drifts; a mutable `opening_balance` column would
+> be that total under another name, editable by anyone with the customer form, with no record of
+> what it was before. And §6.9 says a money row is corrected by a reversal — §5.2 already gives
+> the short version of this argument for `non_fuel_sales`: *"you cannot reverse a column."*
+>
+> **Without this table every customer starts at zero, and that is not a small inaccuracy.** The
+> pump has been running for years and the software has not. A customer who already owed ₹12,400
+> reads as square, so his first repayment drives the balance **negative** — the pump owing him
+> money — and §6.6's credit limit, which is checked against outstanding, never fires against a
+> figure that is wrong by his entire history.
+>
+> **One *live* row per customer, enforced in the service, not by a UNIQUE constraint.** §5.2
+> works this through in full for `collections` and every word transfers: a reversed row stays in
+> the table forever, so its replacement collides with it on any natural key, every partial-index
+> variant fails identically because the replacement also carries `reverses_id IS NULL`, and the
+> only escape is a marker `UPDATE`d onto the original, which is the thing §6.9 forbids. So a
+> second live row is refused with 409 `OPENING_BALANCE_ALREADY_SET` and the correction path is a
+> reversal with a reason. *Live* means: not itself a reversal, and not referenced by one.
+>
+> **There is deliberately no amount sign CHECK, and this is the one place §6.9's usual shape
+> does not apply.** Every other money table here carries `(reverses_id IS NULL AND amount > 0)
+> OR (reverses_id IS NOT NULL AND amount < 0)`. It cannot be written here, because §6.6 already
+> states that an outstanding balance may legitimately be negative — a customer who paid in
+> advance or rounded a bill up is owed money by the pump — so an original may be negative and a
+> reversal positive, and **the sign carries no information about which is which**. `reverses_id`
+> carries it alone, and the exact negation is enforced by the one function that creates a
+> reversal. A CHECK that has to be true and cannot be stated is worse than its absence: it would
+> either refuse a real balance or be weakened into saying nothing.
+>
+> **Zero is an answer, not an omission** (§6.8's rule, one table over). *"I checked Vikram and he
+> was square on 1 July"* is a different fact from *"nobody has entered Vikram yet"*, and the
+> difference is exactly the one §4.7 spends a page on. An absent row means nobody looked.
+>
+> **`as_of_date` and the double-count guard.** The opening figure already contains everything
+> before its date, so a credit sale or repayment dated earlier would be counted twice. Both
+> directions are refused: an entry before an existing opening balance with 409
+> `BEFORE_OPENING_BALANCE_DATE`, and an opening balance set after such entries already exist
+> with 409 `ENTRIES_BEFORE_OPENING_BALANCE`.
+>
+> **Admin only** (§8), for the reason §6.5 makes admin-only the cash locker's seeded first
+> opening balance: it is a figure nothing else in the system can check, so the one person who
+> can write it should be the one person who answers for it.
 
 **`expenses`** (renamed from `cash_flows` — the old name was ambiguous, since
 collections and deposits are also cash flows)
@@ -875,7 +964,8 @@ gave it a column. This is that column, and it is per shift.
 - **The component snapshot** — `metered_fuel_sales`, `non_fuel_sales_total`, `card_total`,
   `upi_total`, `wallet_total`, `credit_sales_total`, `cash_credit_repayments`,
   `cash_shortfall_settlements`, `cash_expenses`, `bank_deposits_total`, `shortfalls_booked`,
-  each NUMERIC(12,2) NOT NULL. **Phase 10**
+  each NUMERIC(12,2) NOT NULL. **Phase 10** — plus `card_upi_credit_repayments`, **Phase 16**,
+  §6.4's twelfth term
 
 > **Why store `expected_closing` rather than always recomputing?**
 > If a calculation bug is fixed six months from now, you still need to know what the
@@ -1115,6 +1205,7 @@ can explain, and §5.1's helpers are right to raise rather than return null or z
 
 ```
 total_sales       = metered_fuel_sales + non_fuel_sales
+                  + card_upi_credit_repayments  ← udhaar settled on the machine, not a sale
 
 cash_sales        = total_sales − card_collections − upi_collections
                                  − wallet_collections − credit_sales_amount
@@ -1133,8 +1224,12 @@ variance          = actual_counted − expected_closing
 **Rules:**
 - Variance is **recorded, never auto-corrected**. Do not "fix" the closing balance to
   make it match. The variance *is* the signal.
-- Only `mode = cash` repayments enter this equation. UPI/bank repayments do not touch
-  the drawer.
+- Only `mode = cash` repayments reach the **drawer**, and they are the only ones on the cash
+  side. A `card` or `upi` repayment taken on a shift enters on the **sales** side instead
+  (`card_upi_credit_repayments`, below); a `bank_transfer` repayment enters nowhere.
+- **`card_upi_credit_repayments` means repayments on *this shift* whose mode is `card` or
+  `upi`, and only those.** A repayment with no `shift_id` reached a bank account rather than
+  the pump's machine (§5.2) and is correctly absent from every shift's sum.
 - `total_sales` is derived from nozzle readings, never entered.
 - **`cash_expenses` means `expenses` rows with `mode = cash`, and only those.** §5.2 gives
   `expenses` a `mode` column precisely so this line is answerable — before Phase 7, every
@@ -1160,6 +1255,21 @@ variance          = actual_counted − expected_closing
 > correct regardless of how the non-fuel sale was paid**, which is why it needs no mode
 > column of its own: the collections rows already record how the money arrived.
 
+> **Why `card_upi_credit_repayments` is on the sales side, Phase 16.** It is the
+> `other_cash_income` mistake below, one table over, and it was live on real money rather than
+> hypothetical — the owner confirmed customers settle udhaar on the card machine.
+>
+> `card_collections` is the machine's whole-day total. A ₹1,000 settlement is inside it and is
+> **not** a sale, so nothing in `total_sales` accounts for it. Take ₹95,000 of metered fuel,
+> ₹21,000 on the machine (₹20,000 fuel + the ₹1,000 settlement), ₹10,000 UPI and ₹5,000 of new
+> udhaar. The salesman actually holds ₹60,000. Without the term:
+> `95,000 − 21,000 − 10,000 − 5,000 = ₹59,000` — **understated by exactly the settlement**. And
+> since `gap = accountable − declared`, he reads as ₹1,000 in **surplus**, holding money the
+> system says nobody gave him. With it: `(95,000 + 1,000) − 21,000 − 10,000 − 5,000 = ₹60,000`.
+>
+> Adding it to the *cash* side instead would be wrong in the same direction and by the same
+> amount as the oil example below — the money never entered the drawer.
+>
 > **Why `shortfalls_booked` is subtracted, Phase 10.** Without it the same money is an asset
 > twice. Monday's meters imply Ramesh should hand over ₹50,000; he declares ₹49,500; a
 > manager books ₹500 as udhaar against his own name (§14). The locker physically gains
@@ -1253,8 +1363,18 @@ chain**, exactly as a confirmed meter reading re-anchors §4.7's.
   `NOT NULL` FK at the DB level *and* validated at the API level (the attachment must
   exist and have been uploaded by an authenticated user). Belt and braces: a client
   can bypass JavaScript, but not a database constraint.
-- Outstanding balance for a customer = `SUM(credit_sales.amount) − SUM(credit_repayments.amount)`.
+- Outstanding balance for a customer, **Phase 16**:
+
+  ```
+  outstanding = SUM(credit_opening_balances.amount)   ← what they already owed (§5.2)
+              + SUM(credit_sales.amount)
+              − SUM(credit_repayments.amount)
+  ```
+
   Compute it; do not maintain a denormalised running total in V1 (it will drift).
+  The opening balance is a term of this sum and therefore **counts toward the credit limit**
+  below — which is the point: a customer at ₹12,400 of history and a ₹15,000 limit has ₹2,600
+  of room, not ₹15,000.
   **Sum every row, reversals included** — they carry negative amounts and net out on their
   own. Do not filter to "live" rows here: a reversal that has not yet been replaced must show
   as the reduction it is, which is the same convention `totals_by_category_range` follows.
@@ -1574,6 +1694,8 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | List expense categories (to fill a dropdown) | ✅ | ✅ | ✅ |
 | List credit customers (to fill a dropdown — **name and vehicles only**, §9) | ✅ | ✅ | ✅ |
 | Read one customer's detail, outstanding balance, or ledger | ❌ | ✅ | ✅ |
+| Record a repayment that arrived at the bank, not on a shift (§5.2) | ❌ | ✅ | ✅ |
+| Set or reverse a customer's opening balance (§5.2) | ❌ | ❌ | ✅ |
 | List the outlet roster (to fill a picker — **name and role only**, §13.26) | ❌ | ✅ | ✅ |
 | Read one user's detail, including their phone | ❌ | ❌ | ✅ |
 | Close a shift | ❌ | ✅ | ✅ |
@@ -1591,7 +1713,7 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | Manage expense categories, incl. `requires_receipt` (§5.1, §6.11) | ❌ | ❌ | ✅ |
 | Manage users, nozzles, customers | ❌ | ❌ | ✅ |
 | Override credit limit / manual litres | ❌ | ❌ | ✅ |
-| Seed initial opening balance | ❌ | ❌ | ✅ |
+| Seed initial opening balance (the cash locker's, §6.5) | ❌ | ❌ | ✅ |
 
 **Ownership is a separate axis from role.** The first row is constrained by *ownership* as
 well as role: an attendant may write only to a shift whose `attendant_id` is their own user
@@ -1698,6 +1820,10 @@ test suite would give false confidence about exactly the rules that matter most.
 - Cash udhaar repayment increases expected cash; UPI repayment does not; `bank_transfer`
   does not
 - A `cash` expense reduces expected cash; a `card` / `upi` / `bank_transfer` expense does not
+- **A `card` repayment on a shift raises `accountable` by exactly its amount** — the phantom
+  surplus of §6.4's worked example is gone (Phase 16)
+- A `card` repayment with **no** shift leaves every §6.4 term untouched, and so does a
+  `bank_transfer` repayment with or without one
 - Rolling balance uses prior day's **actual counted**, not expected, **whenever a count
   exists** (§6.5)
 - With no prior count, the opening carries from the prior day's `expected_closing` and
@@ -1763,6 +1889,25 @@ test suite would give false confidence about exactly the rules that matter most.
 - Two customers cannot share a phone at one outlet; the same phone at a *different* outlet is
   fine (the constraint is outlet-scoped)
 - An attendant listing customers sees no `phone`, no `credit_limit` and no balance
+
+*The ledger (§5.2, §6.6 — Phase 16)*
+- An opening balance of ₹12,400 with no other rows reports ₹12,400 outstanding
+- A **₹0** opening balance is accepted, and is distinguishable from no row at all
+- A **negative** opening balance is accepted; outstanding goes negative
+- A second live opening balance → 409 `OPENING_BALANCE_ALREADY_SET`, **and no row is written**
+- Reversing then re-entering succeeds; the two net out and exactly one row is live
+- A manager setting an opening balance → 403; an attendant reading a ledger → 403
+- An opening balance counts toward `check_credit_limit` — exactly at the limit is accepted,
+  one paisa over is refused
+- A credit sale or repayment dated **before** the opening balance → 409
+  `BEFORE_OPENING_BALANCE_DATE`; setting an opening balance after such rows exist → 409
+  `ENTRIES_BEFORE_OPENING_BALANCE`
+- A `bank_transfer` repayment with no shift is accepted **on a date whose shift is locked**
+- A `cash` repayment with no shift → 422, and the database CHECK refuses it independently
+- The ledger's newest row's `balance_after` equals `outstanding`, and each older row differs
+  from the one above it by exactly that row's own delta — asserted with the list truncated
+- Ledger rows are ordered by **business date**, proven with a back-entered shift whose
+  `created_at` order differs from its trading order (§4.7)
 
 *Expenses*
 - Boundary: ₹999.99 not flagged, ₹1000.00 not flagged, ₹1000.01 flagged
@@ -2024,6 +2169,46 @@ ahead — no empty modules for later phases.
     durable fix is to show it rather than to document it. `actual_counted` is deliberately not
     a step: §6.5 says most days are never counted under the locker model, so making it one
     would mark every normal day incomplete.
+16. **The credit ledger stands on its own** — one migration, one new table, a fifth tab, and a
+    correction to §6.4 that was live on real money. Like Phase 15 this was written after
+    somebody sat down to enter real data, and what it fixes is a ledger that could not say
+    anything true about what a customer owed.
+
+    Three defects, one of them a bug in the ordinary sense.
+
+    **(a) Every customer started at zero.** §6.6 computes outstanding from rows and forbids a
+    stored total because it drifts — correct, and it means the software's ledger began the day
+    the software did, while the pump's began years earlier. A customer already owing ₹12,400
+    read as square, so his first repayment drove the balance negative and §6.6's credit limit
+    was checked against a figure wrong by his entire history. `credit_opening_balances` (§5.2)
+    is the missing third term: **one live row per customer**, a date, a figure that may be
+    zero, admin-only, corrected by §6.9's reversal like every other money row.
+
+    **(b) A bank transfer could not be recorded once a day was locked.**
+    `credit_repayments.shift_id` was `NOT NULL`, and §5.2 says nothing referencing a `locked`
+    shift may be modified — so reconstructing a month of ledger history was blocked by the
+    very shifts that month already had, and a transfer on a day the outlet was shut had no
+    shift to attach to at all. The rule that resolves it fits in a sentence and is stated in
+    §5.2: **a repayment with a shift arrived at the pump; a repayment with only a date arrived
+    at the bank.** Cash keeps its shift, because cash can only land in a drawer.
+
+    **(c) Udhaar settled on the card machine produced a phantom surplus.** Confirmed with the
+    owner that this happens. The settlement sits inside `card_collections`, which §6.4
+    subtracts, and nothing put it back — so the salesman read as holding money nobody gave
+    him. §6.4 gains `card_upi_credit_repayments` on the **sales** side, which is the same fix
+    the same section already worked through for a card-paid bottle of oil. §13.32 records why
+    existing summaries are flagged rather than recomputed.
+
+    **The tab is a fifth one, at the manager floor**, because §8 has always kept a customer's
+    balance above the attendant floor and nothing here changes that. Four screens: who owes
+    what, one customer's ledger with a running balance, a dated repayment form, and — gated to
+    admin inside a manager tab — the opening balances. The running balance is computed
+    server-side and sent as strings; §14 forbids money arithmetic in JavaScript, and a ledger
+    is nothing but money arithmetic.
+
+    **Not the WhatsApp module.** The owner intends reminders on bill creation in V2/V3; §12
+    scopes it out and says what V1 owes it, which is the phone number and the balance it
+    already has.
 
 ---
 
@@ -2059,6 +2244,16 @@ and ask.
   exception: `POST /users` *sets* an initial password, because it must supply one to create
   the account at all, and it never reads one back
 - Real-time updates, websockets, push notifications
+- **Outbound messaging of any kind — WhatsApp reminders, SMS, email.** Phase 16 clarification.
+  The owner intends WhatsApp automation in V2/V3: a message to a credit customer when a bill
+  is raised, and a reminder while it is unpaid. It is recorded here rather than forgotten,
+  and it is out of V1 for a reason beyond scope — it needs a Business API account, a template
+  approval process, a delivery-status store and a per-customer opt-out, none of which is a
+  petrol-pump concern and all of which is a second system to keep correct. What V1 owes it is
+  the data it will need, and §5.1 already carries that: `credit_customers.phone` is NOT NULL
+  and unique per outlet, and Phase 16 makes the outstanding balance a figure worth quoting.
+  **Do not add a `last_reminded_at`, a message log, or a notification-preference column ahead
+  of it** — §11's rule against scaffolding ahead, and §12's opening line
 - Per-transaction (per-fill) data capture
 - Role-based UI theming, **a dark/light mode toggle**, i18n. **Phase 12 clarification:** all
   three of these are *per-user configurability* features — a theme that varies by role, a
@@ -2389,6 +2584,36 @@ future reader must be able to tell the difference.
     a maximum; that is the intended behaviour for a back-entered day, and §13.24's 31-day cap
     is unchanged, so the cost is bounded. §4.7, §13.23, §13.24
 
+31. **A customer's ledger is capped rather than cursor-paginated, and that is what makes its
+    running balance trustworthy.** Phase 16, and it is a deliberate exception to §9's
+    cursor-on-every-list-endpoint rule, in the same shape as the ones `/nozzles` and
+    `/fuel-types` already carry.
+
+    The ledger's whole value is the `balance_after` column beside each row, and a running
+    balance is only meaningful as a walk from a known anchor. The walk here runs **newest
+    first, downward from `outstanding`** — so every row's balance depends only on rows *newer*
+    than itself, and truncating the old end cannot make a displayed figure wrong. A cursor
+    cannot promise that: page two has no anchor unless the token carries a money value, and a
+    money value in a client-held token is a figure the server would have to trust back.
+
+    The consequence to be honest about: a customer with more entries than the cap has older
+    history that this screen will not show, and `truncated` says so. The fix when it bites is a
+    date filter, not a cursor. §9, §14
+
+32. **The card/UPI repayment fix corrects the arithmetic from Phase 16 forward; it does not
+    reach back into a day already reconciled.** Migration `0015` computes each existing
+    summary's real `card_upi_credit_repayments` into the new column, and where that figure is
+    non-zero it sets `requires_review` with a note — it leaves `expected_closing` and every
+    other stored component **byte-identical**.
+
+    That is §13.16's rule applied to a bug fix rather than to a reopened shift, and the reason
+    is the one §5.2 gives for storing the figure at all: a reader has to be able to see what the
+    manager was told on the day, including on the days the system was wrong. §6.5 chains days,
+    so recomputing one would silently move every opening balance after it.
+
+    The consequence: a flagged day's stored total is knowably understated by its new column, and
+    a human decides what to do about it. §5.2, §6.4, §13.16
+
 ---
 
 ## 14. Guardrails for Claude Code
@@ -2471,6 +2696,30 @@ to occur on this specific project.
 - **Read `margin_at` on the cash path.** §6.4 needs the price, not the margin, and petrol and
   diesel margins have never been entered here — a cash engine that looked one up would refuse
   to reconcile every petrol day (§6.3)
+- **Put a customer's opening balance in a column on `credit_customers`.** It is a money row and
+  §6.9 corrects a money row with a reversal — *you cannot reverse a column*. A mutable column is
+  also §6.6's denormalised total under another name, editable from the ordinary customer form,
+  with nothing recording what it was before (§5.2)
+- **Treat a missing opening balance as ₹0.** An absent row means *nobody has entered this
+  customer's history yet*; an explicit ₹0 row means *somebody checked and they were square*.
+  §6.8's "zero as an answer, never zero as an omission", and the same `?? 0` reflex the client
+  is already forbidden. The sum over zero rows is genuinely `0.00` for arithmetic; do not let
+  the **screen** say "owes nothing" when what is true is "we do not know" (§5.2, §6.8)
+- **Refuse a negative or zero opening balance, or bolt §6.9's strict sign CHECK onto that
+  table.** §6.6 already says outstanding may legitimately be negative, so the sign cannot
+  distinguish an original from a reversal there — `reverses_id` does that alone. This is the one
+  table where the usual CHECK is absent, and it is absent for a stated reason (§5.2)
+- **Let a non-admin write an opening balance.** §8 puts it at the admin floor for the reason
+  §6.5 puts the cash locker's seed there: nothing else in the system can check the figure, so
+  the person who can write it must be the person who answers for it
+- **Add a *bank* repayment to §6.4.** A repayment with no `shift_id` reached a bank account, not
+  the pump — it belongs to the ledger and to nothing else. Conversely, do not *omit* a `card` or
+  `upi` repayment that **does** carry a shift: it is inside that shift's collections total,
+  which §6.4 subtracts, so leaving it out shows the salesman a surplus he is not holding. The
+  presence of the shift is the whole test (§5.2, §6.4)
+- **Recompute a reconciled day's stored components to backfill the card/UPI fix.** Flag it
+  (§13.32). Same rule, same reason as §13.16 — and §6.5 chains days, so the rewrite would not
+  stay local
 - **Maintain a denormalised outstanding balance**, on the customer row, a salesman row, or
   anywhere else.
   §6.6 says compute it, and Phase 9 deleted `credit_sales.is_settled` for exactly this
