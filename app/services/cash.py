@@ -652,6 +652,45 @@ def previous_summary(
     ).scalar_one_or_none()
 
 
+def oldest_unreconciled_before(
+    db: Session, *, outlet_id: UUID, business_date: date
+) -> date | None:
+    """The earliest date that traded before this one and has no summary, or `None`.
+
+    §6.5's ordering rule, and it exists because of the docstring directly above this one.
+    `previous_summary` deliberately finds *the most recent summary*, not yesterday -- so
+    reconciling the 4th before the 3rd chains the 4th's opening from the 2nd and quietly
+    skips a day's cash. Nothing repairs that afterwards: §5.2 stores `expected_closing`
+    precisely so a later write cannot rewrite it, and §13.16 flags rather than moves. The
+    wrong figure is permanent, propagates into every later day, and looks entirely plausible.
+
+    **"Traded" means has at least one shift.** A date the outlet was shut has nothing to
+    reconcile, so treating it as an obstacle would wedge the chain on a day that never
+    happened -- the same distinction §13.20's `no_trading` source draws.
+
+    Returns the *oldest* rather than merely "one of them", because the caller's job is to
+    tell somebody where to start.
+    """
+    summarised = (
+        select(DailyCashSummary.id)
+        .where(
+            DailyCashSummary.outlet_id == outlet_id,
+            DailyCashSummary.business_date == Shift.business_date,
+        )
+        .exists()
+    )
+    return db.execute(
+        select(Shift.business_date)
+        .where(
+            Shift.outlet_id == outlet_id,
+            Shift.business_date < business_date,
+            ~summarised,
+        )
+        .order_by(Shift.business_date)
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 def opening_balance_from(
     previous: DailyCashSummary,
 ) -> tuple[Decimal, OpeningBalanceSource]:

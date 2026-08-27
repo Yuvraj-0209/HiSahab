@@ -341,6 +341,24 @@ def create_summary(
         locked=False,
     )
 
+    # §6.5's ordering rule. Deliberately a different code from PRIOR_DAY_NOT_RECONCILED,
+    # which governs *finalising*: a caller who cannot tell which of the two they hit cannot
+    # tell which step to go and do.
+    earlier = cash_service.oldest_unreconciled_before(
+        db, outlet_id=actor.outlet_id, business_date=payload.business_date
+    )
+    if earlier is not None:
+        raise AppError(
+            status_code=409,
+            code="EARLIER_DAY_NOT_RECONCILED",
+            detail=(
+                f"{earlier.isoformat()} traded and has no cash summary. Days must be "
+                "reconciled oldest first, because the opening balance chains from the most "
+                "recent summary -- reconciling out of order would skip that day's cash "
+                "permanently. Reconcile it first."
+            ),
+        )
+
     previous = cash_service.previous_summary(
         db, outlet_id=actor.outlet_id, business_date=payload.business_date
     )

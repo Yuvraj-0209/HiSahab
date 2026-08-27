@@ -212,17 +212,20 @@ async def test_a_malformed_date_is_a_422_not_a_500(
 # --- GET /reports/range -------------------------------------------------------
 
 
-async def test_the_default_window_is_seven_days_ending_today_at_the_outlet(
+async def test_an_outlet_that_has_never_traded_gets_the_seven_days_ending_today(
     client: AsyncClient,
     make_user: Callable[..., UUID],
     auth_headers,
     clean_cash: None,
 ) -> None:
-    """§6.1 and §11's "7-day rolling view", together.
+    """§6.1 and §11's "7-day rolling view", together -- the fallback branch of §13.30.
 
     **Today at the outlet, not today in UTC.** At 23:00 IST the UTC date is still yesterday,
     so a UTC default would silently drop the current trading day from every evening's report --
     the one day a manager is most likely to be looking at.
+
+    With no shift anywhere there is no trading day to anchor to, so §13.30 falls back to
+    exactly the behaviour this test has always asserted.
     """
     from app.services import shifts as shift_service
 
@@ -237,6 +240,64 @@ async def test_the_default_window_is_seven_days_ending_today_at_the_outlet(
     assert [day["business_date"] for day in body["days"]] == [
         (expected_end - timedelta(days=offset)).isoformat() for offset in range(6, -1, -1)
     ]
+
+
+async def test_the_default_window_ends_on_the_most_recent_trading_day(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    auth_headers,
+    clean_cash: None,
+) -> None:
+    """§13.30, and it is the whole reason that section exists.
+
+    §4.7 says the day is typed in **after the fact**, in one sitting, often long afterwards.
+    An outlet catching up on July in late August opened this endpoint onto seven days of
+    `no_trading` -- a report about a week in which nothing happened.
+    """
+    from app.services import shifts as shift_service
+
+    manager = make_user("manager")
+    traded = shift_service.outlet_today("Asia/Kolkata") - timedelta(days=40)
+    make_shift(manager, business_date=traded, status="closed")
+
+    body = await _get(client, "/reports/range", auth_headers(manager))
+
+    assert body["to"] == traded.isoformat()
+    assert body["from"] == (traded - timedelta(days=6)).isoformat()
+    assert len(body["days"]) == 7
+    # And the day itself is in the window rather than 40 days off the end of it.
+    assert body["days"][-1]["business_date"] == traded.isoformat()
+    assert body["days"][-1]["source"] != "no_trading"
+
+
+async def test_the_alerts_window_follows_the_same_anchor(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    auth_headers,
+    clean_cash: None,
+) -> None:
+    """The two screens must agree about which week they are describing.
+
+    This is the case that started §13.30: the `day_not_reconciled` alert exists for exactly a
+    day that traded and was never reconciled, and it is windowed (§13.23) -- so anchoring the
+    window on today hid the alert for the very day somebody was looking for.
+    """
+    from app.services import shifts as shift_service
+
+    manager = make_user("manager")
+    traded = shift_service.outlet_today("Asia/Kolkata") - timedelta(days=40)
+    make_shift(manager, business_date=traded, status="locked")
+
+    body = await _get(client, "/reports/variance-alerts", auth_headers(manager))
+
+    assert body["to"] == traded.isoformat()
+    assert body["from"] == (traded - timedelta(days=6)).isoformat()
+    assert any(
+        alert["kind"] == "day_not_reconciled" and alert["business_date"] == traded.isoformat()
+        for alert in body["items"]
+    )
 
 
 async def test_every_date_in_the_window_appears_including_untraded_ones(

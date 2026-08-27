@@ -243,18 +243,38 @@ class AlertsResponse(BaseModel):
 
 
 def _resolve_window(
-    date_from: date | None, date_to: date | None, settings: Settings
+    date_from: date | None,
+    date_to: date | None,
+    settings: Settings,
+    db: Session,
+    outlet_id: UUID,
 ) -> tuple[date, date]:
     """Fill in the defaults, then refuse the three bad windows.
 
-    **The default `to` is today at the outlet, not today in UTC.** §6.1's rule: at 23:00 IST
-    the UTC date is still yesterday, so a UTC default would silently drop the current trading
-    day from every evening's report -- the one day a manager is most likely to be looking at.
+    **The default `to` is the outlet's most recent trading day, not today** -- §13.30. §4.7
+    says the whole day is typed in after the fact, in one sitting, often long afterwards, so
+    an outlet catching up on July in late August was shown seven days of `no_trading`: a
+    report about a week in which nothing happened. Worse, `/reports/variance-alerts` is
+    windowed (§13.23), so the `day_not_reconciled` alert that exists for exactly the day
+    somebody was hunting for was hidden by the same default.
+
+    For a live outlet this changes nothing at all, because the most recent trading day *is*
+    today. It differs only for an outlet that is behind, which is the one this was written for.
+
+    **When it falls back, it falls back to today at the outlet, not today in UTC.** §6.1's
+    rule, and the original reason this helper existed: at 23:00 IST the UTC date is still
+    yesterday, so a UTC default would silently drop the current trading day from every
+    evening's report -- the one day a manager is most likely to be looking at.
     """
     today = shift_service.outlet_today(settings.TZ_DISPLAY)
 
     if date_to is None:
-        date_to = today
+        latest = shift_service.latest_shift(db, outlet_id=outlet_id)
+        # `min(..., today)` is belt and braces rather than a live case: §6.1 already refuses a
+        # future `business_date` at the point a shift is opened. It is here so that the
+        # BUSINESS_DATE_IN_FUTURE guard below can stay a statement about what the *caller*
+        # asked for, and never fire on a default this function chose for itself.
+        date_to = min(latest.business_date, today) if latest is not None else today
     if date_from is None:
         date_from = date_to - timedelta(days=_DEFAULT_WINDOW_DAYS - 1)
 
@@ -338,7 +358,7 @@ def read_range_report(
     listed only the days something happened would make a reader count rows to notice a gap --
     and under §6.5's locker model the gap is often the thing worth noticing.
     """
-    start, end = _resolve_window(date_from, date_to, settings)
+    start, end = _resolve_window(date_from, date_to, settings, db, actor.outlet_id)
     threshold = settings.VARIANCE_ALERT_THRESHOLD
 
     days = reporting.range_report(
@@ -389,7 +409,7 @@ def read_variance_alerts(
     window is not surfaced here. The dedicated queues -- `/expenses/flagged` among them --
     remain the complete view, and this is the digest.
     """
-    start, end = _resolve_window(date_from, date_to, settings)
+    start, end = _resolve_window(date_from, date_to, settings, db, actor.outlet_id)
     threshold = settings.VARIANCE_ALERT_THRESHOLD
 
     found = reporting.alerts(

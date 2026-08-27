@@ -171,6 +171,94 @@ async def test_finalising_in_order_succeeds(
     assert two.json()["is_finalised"] is True
 
 
+async def test_a_day_cannot_be_reconciled_while_an_earlier_traded_day_is_not(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    settled_shift,
+    auth_headers,
+    engine: Engine,
+) -> None:
+    """§6.5's `EARLIER_DAY_NOT_RECONCILED`, and why it is not merely tidiness.
+
+    `cash.previous_summary` is *the most recent summary before this date*, not literally
+    yesterday -- correctly, since an outlet that was shut has no row to chain from. But that
+    means reconciling the 4th before the 3rd chains the 4th's opening from the 2nd, skipping a
+    whole day's cash. Nothing recomputes it afterwards: §5.2 stores `expected_closing` so a
+    later correction *cannot* rewrite it, and §13.16 flags rather than moves. The wrong
+    opening would be permanent, would propagate into every later day (§6.5 chains), and would
+    look entirely plausible.
+    """
+    admin = make_user("admin")
+    attendant = make_user("attendant")
+    first = date(2026, 6, 20)
+    skipped = date(2026, 6, 21)
+    third = date(2026, 6, 22)
+    settled_shift(attendant, first)
+    settled_shift(attendant, skipped)
+    settled_shift(attendant, third)
+
+    await _create(client, auth_headers(admin), day=first, opening_balance="0.00")
+
+    response = await _create(client, auth_headers(admin), day=third)
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "EARLIER_DAY_NOT_RECONCILED"
+    # The detail names the day to go and do, or the 409 is unanswerable.
+    assert skipped.isoformat() in response.json()["detail"]
+
+    with engine.begin() as connection:
+        written = connection.execute(
+            text(
+                "SELECT count(*) FROM daily_cash_summaries WHERE business_date = :day"
+            ),
+            {"day": third},
+        ).scalar_one()
+    assert written == 0
+
+
+async def test_reconciling_in_order_succeeds(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    settled_shift,
+    auth_headers,
+) -> None:
+    """The other half of the rule above: nothing is blocked when the days are taken in turn."""
+    admin = make_user("admin")
+    attendant = make_user("attendant")
+    first = date(2026, 6, 23)
+    second = date(2026, 6, 24)
+    settled_shift(attendant, first)
+    settled_shift(attendant, second)
+
+    await _create(client, auth_headers(admin), day=first, opening_balance="0.00")
+    response = await _create(client, auth_headers(admin), day=second)
+
+    assert response.status_code == 201, response.text
+
+
+async def test_a_date_the_outlet_was_shut_is_not_an_obstacle(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    settled_shift,
+    auth_headers,
+) -> None:
+    """"Traded" means *has at least one shift* -- the same distinction §13.20's `no_trading`
+    source draws. A day the pump was closed has nothing to reconcile, so requiring a summary
+    for it would wedge the chain permanently on a day that never happened."""
+    admin = make_user("admin")
+    attendant = make_user("attendant")
+    first = date(2026, 6, 25)
+    # 26 June: shut. No shift, and therefore no summary is possible or wanted.
+    third = date(2026, 6, 27)
+    settled_shift(attendant, first)
+    settled_shift(attendant, third)
+
+    await _create(client, auth_headers(admin), day=first, opening_balance="0.00")
+    response = await _create(client, auth_headers(admin), day=third)
+
+    assert response.status_code == 201, response.text
+
+
 async def test_a_business_date_in_the_future_is_refused(
     client: AsyncClient,
     make_user: Callable[..., UUID],
