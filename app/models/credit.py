@@ -53,7 +53,7 @@ keys only, and callers `flush()` between dependent inserts.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -232,6 +232,21 @@ class CreditRepayment(Base):
 
     `attachment_id` is *nullable*, unlike `credit_sales`'. A repayment is money coming in and
     the pump writes the receipt; there is no counterparty document to demand.
+
+    ## A repayment with a shift arrived at the pump; one with only a date arrived at the bank
+
+    Phase 16. `shift_id` is nullable and `business_date` is not, and between them they say
+    everything about where the money landed -- §5.2 states the rule in full.
+
+    Every §6.4 sum is already `WHERE shift_id = :shift_id`, so the *presence* of a shift
+    carries the whole meaning and no second column is needed. `cash` is the one mode that
+    cannot be shift-less, because cash can only land in a drawer; a cash repayment with
+    nowhere to land is money §6.4 would never count, hence the CHECK below.
+
+    Before Phase 16 `shift_id` was NOT NULL, and the cost was concrete: §5.2 forbids modifying
+    anything referencing a `locked` shift, so a bank transfer on a day already locked could
+    not be recorded at all, and one arriving on a day the outlet was shut had no shift to
+    attach to. §4.7's *typed in after the fact* makes that the normal case here.
     """
 
     __tablename__ = "credit_repayments"
@@ -251,8 +266,14 @@ class CreditRepayment(Base):
             "reverses_id IS NULL OR reverses_id <> id",
             name="ck_credit_repayments_reversal_not_self",
         ),
+        # Cash can only land in a drawer. Belt to the API's braces, §6.6's habit.
+        sa.CheckConstraint(
+            "mode <> 'cash' OR shift_id IS NOT NULL",
+            name="ck_credit_repayments_cash_needs_shift",
+        ),
         sa.Index("ix_credit_repayments_shift", "shift_id"),
         sa.Index("ix_credit_repayments_customer", "credit_customer_id"),
+        sa.Index("ix_credit_repayments_business_date", "business_date"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -261,11 +282,17 @@ class CreditRepayment(Base):
     credit_customer_id: Mapped[UUID] = mapped_column(
         sa.UUID(), sa.ForeignKey("credit_customers.id"), nullable=False
     )
-    # The shift during which the money physically arrived (§5.2) -- not the shift the original
-    # udhaar was issued on, which may be months earlier and is deliberately not referenced.
-    shift_id: Mapped[UUID] = mapped_column(
-        sa.UUID(), sa.ForeignKey("shifts.id"), nullable=False
+    # The shift during which the money physically arrived at the pump (§5.2) -- not the shift
+    # the original udhaar was issued on, which may be months earlier and is deliberately not
+    # referenced. NULL means it arrived at the bank instead; see the class docstring.
+    shift_id: Mapped[UUID | None] = mapped_column(
+        sa.UUID(), sa.ForeignKey("shifts.id"), nullable=True
     )
+    # Derivable from the shift when there is one, and stored anyway -- for the reason
+    # `bank_deposits.business_date` is (§5.2): it is the most-queried column on this table and
+    # reading it through a join means it cannot be indexed directly. §3 rule 7 still applies:
+    # when a shift is supplied the server takes this from `shifts.business_date`.
+    business_date: Mapped[date] = mapped_column(sa.Date(), nullable=False)
     amount: Mapped[Decimal] = mapped_column(sa.Numeric(12, 2), nullable=False)
     mode: Mapped[str] = mapped_column(_credit_repayment_mode_enum, nullable=False)
     attachment_id: Mapped[UUID | None] = mapped_column(
@@ -273,6 +300,80 @@ class CreditRepayment(Base):
     )
     reverses_id: Mapped[UUID | None] = mapped_column(
         sa.UUID(), sa.ForeignKey("credit_repayments.id"), nullable=True
+    )
+    reversal_reason: Mapped[str | None] = mapped_column(sa.Text(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")
+    )
+    created_by: Mapped[UUID | None] = mapped_column(
+        sa.UUID(), sa.ForeignKey("user_profiles.id"), nullable=True
+    )
+
+
+class CreditOpeningBalance(Base):
+    """What a customer already owed when this system started counting (§5.2, §6.6).
+
+    Phase 16. §6.6 computes outstanding from rows and forbids a stored running total because
+    it drifts -- correct, and it means the software's ledger began the day the software did
+    while this pump's began years earlier. A customer already owing 12,400 read as square, so
+    his first repayment drove the balance *negative*, and §6.6's credit limit was checked
+    against a figure wrong by his entire history. This is the missing third term.
+
+    ## One live row per customer, and it is NOT a unique constraint
+
+    §5.2 works this through for `collections` and every word transfers: a reversed row stays
+    in the table forever, so its replacement collides on any natural key, and every
+    partial-index variant fails identically because the replacement also carries
+    `reverses_id IS NULL`. The only escape is a marker UPDATEd onto the original, which is
+    what §6.9 forbids. `services/credit.py::set_opening_balance` refuses a second live row
+    with 409 OPENING_BALANCE_ALREADY_SET; the correction path is a reversal with a reason.
+
+    ## There is deliberately no amount sign CHECK
+
+    Every other money table here carries
+    `(reverses_id IS NULL AND amount > 0) OR (reverses_id IS NOT NULL AND amount < 0)`.
+    It cannot be written here. §6.6 already says an outstanding balance may legitimately be
+    negative -- a customer who paid in advance or rounded a bill up is owed money by the pump
+    -- so an original may be negative and a reversal positive, and **the sign carries no
+    information about which is which**. `reverses_id` carries it alone, and the exact negation
+    is enforced by `cash.py::append_reversal`, the only thing that creates one.
+
+    Zero is permitted and is a real statement (§6.8): "I checked Vikram and he was square on
+    1 July" is a different fact from "nobody has entered Vikram yet". An absent row is the
+    latter, and a screen must not read it as the former.
+
+    No `outlet_id` -- derivable via `credit_customer_id`, per §5.0's rule.
+    """
+
+    __tablename__ = "credit_opening_balances"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "reverses_id", name="uq_credit_opening_balances_reverses_id"
+        ),
+        sa.CheckConstraint(
+            "reverses_id IS NULL "
+            "OR (reversal_reason IS NOT NULL AND reversal_reason ~ '[^[:space:]]')",
+            name="ck_credit_opening_balances_reversal_has_reason",
+        ),
+        sa.CheckConstraint(
+            "reverses_id IS NULL OR reverses_id <> id",
+            name="ck_credit_opening_balances_reversal_not_self",
+        ),
+        sa.Index("ix_credit_opening_balances_customer", "credit_customer_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        sa.UUID(), primary_key=True, server_default=sa.text("gen_random_uuid()")
+    )
+    credit_customer_id: Mapped[UUID] = mapped_column(
+        sa.UUID(), sa.ForeignKey("credit_customers.id"), nullable=False
+    )
+    # The ledger begins here. Everything before this date is inside `amount`, which is why an
+    # entry dated earlier is refused -- it would be counted twice (§5.2).
+    as_of_date: Mapped[date] = mapped_column(sa.Date(), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(sa.Numeric(12, 2), nullable=False)
+    reverses_id: Mapped[UUID | None] = mapped_column(
+        sa.UUID(), sa.ForeignKey("credit_opening_balances.id"), nullable=True
     )
     reversal_reason: Mapped[str | None] = mapped_column(sa.Text(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

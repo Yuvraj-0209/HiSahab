@@ -1594,29 +1594,44 @@ def make_credit_repayment(engine: Engine) -> Iterator[Callable[..., UUID]]:
     created: list[UUID] = []
 
     def _make(
-        shift_id: UUID,
+        shift_id: UUID | None,
         credit_customer_id: UUID,
         *,
         amount: str = "500.00",
         mode: str = "cash",
+        business_date: date | str | None = None,
         attachment_id: UUID | None = None,
         reverses_id: UUID | None = None,
         reversal_reason: str | None = None,
         created_by: UUID | None = None,
     ) -> UUID:
+        # Phase 16. `shift_id` may be None -- a repayment that arrived at the bank rather
+        # than the pump (§5.2). `business_date` is then required; with a shift it is read
+        # off the shift in SQL, which is what the router does too (§3 rule 7).
+        if shift_id is None and business_date is None:
+            raise AssertionError(
+                "a shift-less repayment needs an explicit business_date (§5.2)"
+            )
         repayment_id = uuid4()
         with engine.begin() as connection:
             connection.execute(
                 text(
                     "INSERT INTO credit_repayments (id, credit_customer_id, shift_id, "
-                    "amount, mode, attachment_id, reverses_id, reversal_reason, "
-                    "created_by) VALUES (:id, :customer_id, :shift_id, "
+                    "business_date, amount, mode, attachment_id, reverses_id, "
+                    "reversal_reason, created_by) VALUES (:id, :customer_id, :shift_id, "
+                    "COALESCE(CAST(:business_date AS date), "
+                    "(SELECT business_date FROM shifts WHERE id = :shift_id)), "
                     "CAST(:amount AS numeric), CAST(:mode AS credit_repayment_mode), "
                     ":attachment_id, :reverses_id, :reversal_reason, :created_by)"
                 ).bindparams(
                     id=repayment_id,
                     customer_id=credit_customer_id,
                     shift_id=shift_id,
+                    business_date=(
+                        business_date.isoformat()
+                        if isinstance(business_date, date)
+                        else business_date
+                    ),
                     amount=amount,
                     mode=mode,
                     attachment_id=attachment_id,
@@ -1657,6 +1672,78 @@ def make_credit_repayment(engine: Engine) -> Iterator[Callable[..., UUID]]:
 
 
 @pytest.fixture
+def make_credit_opening_balance(engine: Engine) -> Iterator[Callable[..., UUID]]:
+    """Create a `credit_opening_balances` row directly (§5.2, Phase 16).
+
+    `amount` is a **string** cast in SQL, like every money fixture here -- and unlike the
+    other credit tables it may legitimately be `"0.00"` or negative, because §6.6 permits a
+    negative outstanding balance and this table therefore carries no sign CHECK.
+    """
+    created: list[UUID] = []
+
+    def _make(
+        credit_customer_id: UUID,
+        *,
+        amount: str = "1000.00",
+        as_of_date: date | str = date(2026, 7, 1),
+        reverses_id: UUID | None = None,
+        reversal_reason: str | None = None,
+        created_by: UUID | None = None,
+    ) -> UUID:
+        balance_id = uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO credit_opening_balances (id, credit_customer_id, "
+                    "as_of_date, amount, reverses_id, reversal_reason, created_by) "
+                    "VALUES (:id, :customer_id, CAST(:as_of_date AS date), "
+                    "CAST(:amount AS numeric), :reverses_id, :reversal_reason, :created_by)"
+                ).bindparams(
+                    id=balance_id,
+                    customer_id=credit_customer_id,
+                    as_of_date=(
+                        as_of_date.isoformat()
+                        if isinstance(as_of_date, date)
+                        else as_of_date
+                    ),
+                    amount=amount,
+                    reverses_id=reverses_id,
+                    reversal_reason=reversal_reason,
+                    created_by=created_by,
+                )
+            )
+        created.append(balance_id)
+        return balance_id
+
+    yield _make
+
+    if created:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE audit_logs DISABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM audit_logs WHERE table_name = "
+                    "'credit_opening_balances' AND record_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM credit_opening_balances WHERE reverses_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM credit_opening_balances WHERE id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+
+
+@pytest.fixture
 def clean_credit(engine: Engine) -> Iterator[None]:
     """Remove every credit row created during a test, for tests that go through the API.
 
@@ -1673,13 +1760,14 @@ def clean_credit(engine: Engine) -> Iterator[None]:
         connection.execute(
             text(
                 "DELETE FROM audit_logs WHERE table_name IN "
-                "('credit_sales', 'credit_repayments', 'credit_customers')"
+                "('credit_sales', 'credit_repayments', 'credit_customers', "
+                "'credit_opening_balances')"
             )
         )
         connection.execute(
             text("ALTER TABLE audit_logs ENABLE TRIGGER trg_audit_logs_append_only")
         )
-        for table in ("credit_sales", "credit_repayments"):
+        for table in ("credit_sales", "credit_repayments", "credit_opening_balances"):
             connection.execute(
                 text(f"DELETE FROM {table} WHERE reverses_id IS NOT NULL")
             )

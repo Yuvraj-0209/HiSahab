@@ -85,7 +85,18 @@ def resolve_customer(
 
 
 def outstanding(db: Session, *, customer_id: UUID) -> Decimal:
-    """§6.6: `SUM(credit_sales.amount) - SUM(credit_repayments.amount)`.
+    """§6.6, Phase 16:
+
+        SUM(credit_opening_balances.amount)   <- what they already owed
+      + SUM(credit_sales.amount)
+      - SUM(credit_repayments.amount)
+
+    **The opening balance is the term this was missing until Phase 16**, and its absence was
+    not a rounding matter. §6.6 computes from rows and rightly forbids a stored total -- so
+    the software's ledger began the day the software did, while this pump's began years
+    earlier. A customer already owing 12,400 read as square, his first repayment drove the
+    balance negative, and `check_credit_limit` below was measuring against a figure wrong by
+    his entire history.
 
     **Every row, reversals included.** They carry negative amounts and net out on their own,
     which is the same convention `expenses.totals_by_category_range` follows and states: a
@@ -100,6 +111,11 @@ def outstanding(db: Session, *, customer_id: UUID) -> Decimal:
     **The result may be negative**, and that is not an error -- a customer who pays in advance
     or rounds a payment up is owed money by the pump (§6.6).
     """
+    opening = db.execute(
+        select(
+            func.coalesce(func.sum(CreditOpeningBalance.amount), Decimal("0.00"))
+        ).where(CreditOpeningBalance.credit_customer_id == customer_id)
+    ).scalar_one()
     sales = db.execute(
         select(func.coalesce(func.sum(CreditSale.amount), Decimal("0.00"))).where(
             CreditSale.credit_customer_id == customer_id
@@ -110,7 +126,7 @@ def outstanding(db: Session, *, customer_id: UUID) -> Decimal:
             CreditRepayment.credit_customer_id == customer_id
         )
     ).scalar_one()
-    return sales - repaid
+    return opening + sales - repaid
 
 
 def outstanding_by_customer(db: Session, *, outlet_id: UUID) -> dict[UUID, Decimal]:
@@ -124,6 +140,10 @@ def outstanding_by_customer(db: Session, *, outlet_id: UUID) -> dict[UUID, Decim
 
     Customers with no rows at all are included, at ₹0.00: "who owes me nothing" is a real
     answer to "show me the ledger", and omitting them would make a new customer invisible.
+
+    **₹0.00 here does not mean somebody checked.** §6.8's distinction, and §14 forbids a
+    screen collapsing the two: a customer with no opening balance is one nobody has entered
+    yet. `live_opening_balance` is how a caller tells the difference.
     """
     balances: dict[UUID, Decimal] = {
         customer_id: Decimal("0.00")
@@ -131,6 +151,21 @@ def outstanding_by_customer(db: Session, *, outlet_id: UUID) -> dict[UUID, Decim
             select(CreditCustomer.id).where(CreditCustomer.outlet_id == outlet_id)
         ).scalars()
     }
+
+    opening = db.execute(
+        select(
+            CreditOpeningBalance.credit_customer_id,
+            func.sum(CreditOpeningBalance.amount),
+        )
+        .join(
+            CreditCustomer,
+            CreditCustomer.id == CreditOpeningBalance.credit_customer_id,
+        )
+        .where(CreditCustomer.outlet_id == outlet_id)
+        .group_by(CreditOpeningBalance.credit_customer_id)
+    ).all()
+    for customer_id, total in opening:
+        balances[customer_id] = balances.get(customer_id, Decimal("0.00")) + total
 
     sales = db.execute(
         select(CreditSale.credit_customer_id, func.sum(CreditSale.amount))

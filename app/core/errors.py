@@ -70,6 +70,13 @@ _CONSTRAINT_ERRORS: dict[str, tuple[int, str, str]] = {
         "ALREADY_REVERSED",
         "This repayment has already been reversed.",
     ),
+    # Phase 16. Mapped in the same commit as migration 0015, which is the whole point of the
+    # structural test below -- §6.9 records that this was forgotten twice before it existed.
+    "uq_credit_opening_balances_reverses_id": (
+        409,
+        "ALREADY_REVERSED",
+        "This opening balance has already been reversed.",
+    ),
     # Phase 10. Four more tables carrying §6.9's shape, mapped on the day 0013 landed rather
     # than a phase later -- which is what the structural test below exists to force.
     "uq_non_fuel_sales_reverses_id": (
