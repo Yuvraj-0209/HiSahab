@@ -253,6 +253,48 @@ def test_no_money_value_is_parsed_into_a_float() -> None:
     assert offenders == [], f"float parsing in the money path: {offenders}"
 
 
+# --- the rule that produces a silently dead button ----------------------------
+
+
+def test_no_module_calls_a_secure_context_only_api_unguarded() -> None:
+    """A `[SecureContext]` API is `undefined` over LAN HTTP, and the failure is total.
+
+    `Crypto.randomUUID()` is marked `[SecureContext]` in the Web Crypto spec. `localhost`
+    counts as a secure context and `http://192.168.1.23:8000` does not -- which is exactly
+    how this app is reached from a phone on the local network, and the only way it has ever
+    been tested by hand (§13.18: the behavioural half is checked by a person).
+
+    So the property is simply missing there, and calling it throws a `TypeError`. Every
+    entry screen builds its `Submission` -- which mints §6.10's `Idempotency-Key` -- *before*
+    it calls `openSheet`, so the throw happens inside the click handler and the sheet never
+    opens. Nine screens plus `ui/reversal.js`: every Add button and every Reverse button in
+    the application is a dead tap, with nothing rendered to say why. Nozzle readings were the
+    one entry screen that still worked, because §6.10 makes a reading idempotent by
+    construction and `readings.js` therefore builds no `Submission` at all.
+
+    That is this file's stated criterion in its purest form: invisible in the Python suite,
+    total in a browser. It is also invisible in a *desktop* browser, which is worse -- the
+    developer's own machine is the one place the bug cannot reproduce.
+
+    The rule: `crypto.randomUUID` may be named only in `js/api.js`, and only in a file that
+    also carries a `crypto.getRandomValues` fallback. `getRandomValues` is **not**
+    secure-context-gated, so the fallback is real randomness rather than `Math.random` -- a
+    guessable idempotency key is a replay handed to whoever guesses it.
+    """
+    offenders: list[str] = []
+
+    for path in _js_modules():
+        source = path.read_text()
+        for number, line in _code_lines(path):
+            if "crypto.randomUUID" not in line:
+                continue
+            if path.name == "api.js" and "crypto.getRandomValues" in source:
+                continue
+            offenders.append(f"{path.name}:{number}: {line.strip()}")
+
+    assert offenders == [], f"unguarded secure-context API: {offenders}"
+
+
 def test_every_router_is_reachable_from_a_screen() -> None:
     """A Phase 13 router that ships with no way to reach it fails here, not in review.
 

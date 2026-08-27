@@ -773,6 +773,19 @@ select.field-input {
   overscroll-behavior: contain;
 }
 
+/* The submit row. `js/ui/sheet.js` wraps the caller's footer in this element so setBody()
+ * can swap it without touching the sheet's own child list -- but the wrapper arrived with no
+ * rule here, which left every sheet's primary button flush against both edges.
+ *
+ * `flex: none` so a long body cannot squeeze the one control the sheet exists to offer.
+ * Horizontal padding matches `.sheet-body`'s, so the button lines up with the fields above
+ * it. No bottom safe-area inset here: `.sheet` already carries `padding-bottom:
+ * var(--safe-bottom)`, and adding it twice would float the button off the home indicator. */
+.sheet-footer {
+  flex: none;
+  padding: 0 var(--sp-4) var(--sp-4);
+}
+
 /* ==========================================================================
    8. Toasts
    ========================================================================== */

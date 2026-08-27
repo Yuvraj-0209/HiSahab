@@ -198,6 +198,43 @@ export const api = {
 };
 
 /**
+ * A v4 UUID, on a page that is **not guaranteed to be a secure context**.
+ *
+ * `Crypto.randomUUID()` is marked `[SecureContext]` in the Web Crypto spec. `https://` and
+ * `http://localhost` qualify; `http://192.168.1.23:8000` does not -- and that is exactly how
+ * this app is reached from a phone on the local network, which §13.18 records as the only way
+ * the frontend is ever checked ("the behavioural half is checked by a person").
+ *
+ * On that origin the property is simply `undefined`, so calling it throws a `TypeError`.
+ * Every screen builds its `Submission` *before* calling `openSheet`, so the throw lands
+ * inside the click handler and the sheet never opens: every Add button and every Reverse
+ * button in the application became a dead tap, with nothing rendered to say why. Nozzle
+ * readings were the one entry screen that still worked, because §6.10 makes a reading
+ * idempotent by construction and so builds no `Submission` at all.
+ *
+ * The failure is worst on the developer's own machine, where it cannot reproduce.
+ * `tests/test_frontend_assets.py` is what stops it coming back.
+ *
+ * `crypto.getRandomValues` is deliberately NOT secure-context-gated, so the fallback is real
+ * randomness and never `Math.random` -- a guessable idempotency key is a replay handed to
+ * whoever guesses it. The server stores the key as opaque text (§5.3) and only checks that it
+ * is non-empty, so the format has to be unique, not parseable.
+ */
+export function newIdempotencyKey() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10xx
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+
+  return (
+    `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-` +
+    `${hex.slice(16, 20)}-${hex.slice(20)}`
+  );
+}
+
+/**
  * One attempt at creating one money record, with a key that survives retries.
  *
  * Construct it when the user presses the button, then call `run()` as many times as needed.
@@ -208,14 +245,15 @@ export const api = {
  *   - the same key with a *different* body is a client bug, and the server says so with 422
  *     IDEMPOTENCY_KEY_REUSED rather than returning somebody else's answer
  *
- * `crypto.randomUUID` is available in every browser that supports ES modules over HTTPS
- * (and on localhost), so there is no fallback to write.
+ * The key comes from `newIdempotencyKey()` above, never from `crypto.randomUUID` directly.
+ * This comment used to claim the opposite and was wrong on the only device that matters --
+ * see that function for what it cost.
  */
 export class Submission {
   constructor(method, path) {
     this.method = method;
     this.path = path;
-    this.key = crypto.randomUUID();
+    this.key = newIdempotencyKey();
     this.done = false;
   }
 
