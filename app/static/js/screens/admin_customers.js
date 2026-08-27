@@ -240,74 +240,10 @@ function customerSheet(existing, onDone) {
   });
 }
 
-/* --- the ledger ------------------------------------------------------------------
+
+/* The ledger moved to the Credit tab in Phase 16 (`screens/credit.js`).
  *
- * §6.6: outstanding is COMPUTED from sales minus repayments, summing **every** row including
- * reversals -- they carry negative amounts and net out. §14 forbids maintaining a
- * denormalised total anywhere, and Phase 9 deleted `credit_sales.is_settled` for the same
- * reason, so this screen only ever displays what the server computed.
+ * It lived here because `#/admin/customers` was the only screen that had ever shown a
+ * balance, not because a customer's account is administration. `#/admin/customers/{id}/ledger`
+ * now redirects to `#/credit/customers/{id}`, so an old bookmark still lands somewhere real.
  */
-
-export async function renderCustomerLedger(container, { session, navigate, customerId }) {
-  const { shell } = session;
-  shell.setTab("admin");
-  shell.setTitle("Ledger");
-
-  render(container, el("div", { className: "t-caption", text: "Loading…" }));
-
-  let customer;
-  let ledger;
-  try {
-    [customer, ledger] = await Promise.all([
-      api.get(`/credit-customers/${customerId}`),
-      api.get(`/credit-customers/${customerId}/ledger`, { limit: 100 }),
-    ]);
-  } catch (error) {
-    render(
-      container,
-      errorCard(error, () =>
-        renderCustomerLedger(container, { session, navigate, customerId }),
-      ),
-    );
-    return;
-  }
-
-  shell.setTitle("Ledger", customer.name);
-
-  render(
-    container,
-    el("div", { className: "stack" }, [
-      el("div", { className: "card stack" }, [
-        el("div", { className: "t-micro", text: "Outstanding" }),
-        el("div", { className: "t-amount", text: format(customer.outstanding) }),
-        el("p", {
-          className: "t-caption",
-          text: "Computed from every sale and repayment, reversals included — never stored, so it cannot drift.",
-        }),
-      ]),
-
-      ledger.items.length
-        ? el("div", { className: "list" }, ledger.items.map((entry) =>
-            el("div", { className: "list-row" }, [
-              el("div", { className: "list-row-main" }, [
-                el("div", {
-                  className: "t-body",
-                  text: entry.kind === "sale" ? "Udhaar issued" : "Repayment",
-                }),
-                el("div", { className: "t-caption", text: dateTime(entry.created_at) }),
-              ]),
-              el("div", { className: "row" }, [
-                entry.is_reversal ? pill("reversal", "neutral") : null,
-                el("span", {
-                  className: `t-body t-numeric ${
-                    entry.balance_delta.trim().startsWith("-") ? "text-surplus" : ""
-                  }`,
-                  text: format(entry.balance_delta, { sign: true }),
-                }),
-              ]),
-            ]),
-          ))
-        : empty("Nothing on this ledger yet."),
-    ]),
-  );
-}

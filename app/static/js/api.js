@@ -46,6 +46,10 @@ const NEEDS_IDEMPOTENCY = [
   /^\/shifts\/[^/]+\/expenses$/,
   /^\/shifts\/[^/]+\/credit-sales$/,
   /^\/shifts\/[^/]+\/credit-repayments$/,
+  // Phase 16: the dated, shift-less form. Creates a money record and can duplicate on a
+  // retry, so it needs a key -- unlike /credit-opening-balances, which the server refuses
+  // a second time with 409 and therefore cannot duplicate (§6.10).
+  /^\/credit-repayments$/,
   /^\/shifts\/[^/]+\/non-fuel-sales$/,
   /^\/shifts\/[^/]+\/bank-deposits$/,
   /^\/shifts\/[^/]+\/shortfalls$/,

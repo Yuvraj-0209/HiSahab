@@ -28,6 +28,10 @@ export const TABS = [
   { id: "today", label: "Today", glyph: "◎", route: "#/today", role: "attendant" },
   { id: "entry", label: "Entry", glyph: "✎", route: "#/entry", role: "attendant" },
   { id: "cash", label: "Cash", glyph: "₹", route: "#/cash", role: "manager" },
+  // Manager floor, matching §8: a customer's balance has never been an attendant's business.
+  // Opening balances live inside this tab but are admin-gated on their own route -- §8's
+  // usual read/write split, and the reason the tab itself does not sit at the admin floor.
+  { id: "credit", label: "Credit", glyph: "◈", route: "#/credit", role: "manager" },
   { id: "admin", label: "Admin", glyph: "⚙", route: "#/admin", role: "admin" },
 ];
 

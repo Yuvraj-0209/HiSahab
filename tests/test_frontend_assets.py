@@ -341,6 +341,7 @@ def test_every_router_is_reachable_from_a_screen() -> None:
         "credit_customers": "/credit-customers",
         "credit_sales": "/credit-sales",
         "credit_repayments": "/credit-repayments",
+        "credit_opening_balances": "/credit-opening-balances",
         "non_fuel_sales": "/non-fuel-sales",
         "bank_deposits": "/bank-deposits",
         "cash_position": "/cash-position",

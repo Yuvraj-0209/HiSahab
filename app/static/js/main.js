@@ -42,7 +42,12 @@ import { renderCollections } from "./screens/collections.js";
 import { renderExpenses } from "./screens/expenses.js";
 import { renderNonFuelSales } from "./screens/non_fuel_sales.js";
 import { renderCreditSales } from "./screens/credit_sales.js";
-import { renderCreditRepayments } from "./screens/credit_repayments.js";
+import {
+  renderCreditRepayments,
+  renderLedgerRepayments,
+} from "./screens/credit_repayments.js";
+import { renderCreditHub, renderCustomerLedger as renderLedger } from "./screens/credit.js";
+import { renderOpeningBalances } from "./screens/credit_opening_balances.js";
 import { renderBankDeposits } from "./screens/bank_deposits.js";
 import { renderCash } from "./screens/cash.js";
 import { renderCashPosition } from "./screens/cash_position.js";
@@ -56,7 +61,7 @@ import {
   renderShiftTemplates,
 } from "./screens/admin.js";
 import { renderPricing } from "./screens/admin_pricing.js";
-import { renderCustomerLedger, renderCustomers } from "./screens/admin_customers.js";
+import { renderCustomers } from "./screens/admin_customers.js";
 import { renderAuditLogs } from "./screens/audit_logs.js";
 import { renderUsers } from "./screens/admin_users.js";
 import { renderShortfallLedger } from "./screens/shortfalls.js";
@@ -294,6 +299,30 @@ function registerRoutes() {
   // tables with no link between them. They merged into `/days/{date}`; these three keep every
   // link, bookmark and half-typed URL that predates the merge working, and `redirect` replaces
   // the history entry so the back button does not bounce off them.
+  // Same shape as `adminScreen` below: params flow through untouched, so a route with a
+  // `:customerId` gets it by name.
+  const creditScreen = (fn) => (params) =>
+    fn(session.shell.screen, { session, navigate, ...params });
+
+  // Phase 16 -- the Credit tab. Manager floor to read; the opening-balances screen is
+  // admin, gated by `setBeforeEach` above as well as by the server (§8: "hiding a button is
+  // UX, not a control"). Registered before "/credit/customers/:customerId" is irrelevant
+  // here -- none of these four patterns can swallow another, since "customers",
+  // "repayments" and "opening-balances" sit at the same depth under distinct literals.
+  route("/credit", creditScreen(renderCreditHub), { tab: "credit", role: "manager" });
+  route("/credit/repayments", creditScreen(renderLedgerRepayments), {
+    tab: "credit",
+    role: "manager",
+  });
+  route("/credit/opening-balances", creditScreen(renderOpeningBalances), {
+    tab: "credit",
+    role: "admin",
+  });
+  route("/credit/customers/:customerId", creditScreen(renderLedger), {
+    tab: "credit",
+    role: "manager",
+  });
+
   route("/daily-summaries", () => redirect("#/days"), { tab: "cash", role: "manager" });
   route("/daily-summaries/:businessDate", (params) => redirect(`#/days/${params.businessDate}`), {
     tab: "cash",
@@ -337,10 +366,15 @@ function registerRoutes() {
   });
   route("/admin/categories", adminScreen(renderCategories), { tab: "admin", role: "admin" });
   route("/admin/customers", adminScreen(renderCustomers), { tab: "admin", role: "admin" });
-  route("/admin/customers/:customerId/ledger", adminScreen(renderCustomerLedger), {
-    tab: "admin",
-    role: "admin",
-  });
+  // Phase 16. The ledger moved to the Credit tab, where a manager can reach it -- it lived
+  // under Admin only because that was the one screen that had ever shown a balance. This
+  // keeps every existing link and bookmark working, and `redirect` replaces the history
+  // entry so the back button does not bounce off it.
+  route(
+    "/admin/customers/:customerId/ledger",
+    (params) => redirect(`#/credit/customers/${params.customerId}`),
+    { tab: "credit", role: "manager" },
+  );
   route("/admin/shift-templates", adminScreen(renderShiftTemplates), {
     tab: "admin",
     role: "admin",

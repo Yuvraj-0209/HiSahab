@@ -963,7 +963,89 @@ async def test_reversals_appear_as_their_own_lines(
     assert sum(1 for row in items if row["is_reversal"]) == 1
 
 
-async def test_the_ledger_is_cursor_paginated(
+async def test_the_ledger_carries_a_running_balance(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_attachment: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_sale: Callable[..., UUID],
+    make_credit_repayment: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """The column the screen exists for. §14 forbids computing it in JavaScript.
+
+    The newest line's `balance_after` is the customer's current outstanding, and each older
+    line differs from the one above it by exactly that line's own `balance_delta`.
+    """
+    attendant = make_user("attendant")
+    manager = make_user("manager")
+    shift = make_shift(attendant, business_date=DAY, sequence=1)
+    customer = make_credit_customer()
+    make_credit_sale(shift, customer, make_attachment(attendant), amount="1000.00")
+    make_credit_repayment(shift, customer, amount="400.00", mode="cash")
+
+    response = await client.get(
+        f"/api/v1/credit-customers/{customer}/ledger", headers=auth_headers(manager)
+    )
+    body = response.json()
+
+    assert Decimal(body["outstanding"]) == Decimal("600.00")
+    assert Decimal(body["items"][0]["balance_after"]) == Decimal("600.00")
+
+    for newer, older in zip(body["items"], body["items"][1:]):
+        assert Decimal(older["balance_after"]) == Decimal(
+            newer["balance_after"]
+        ) - Decimal(newer["balance_delta"])
+
+
+async def test_the_opening_balance_is_a_ledger_line_and_a_header_figure(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_opening_balance: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """Phase 16. It is the oldest line of the account, and the anchor above it."""
+    manager = make_user("manager")
+    customer = make_credit_customer()
+    make_credit_opening_balance(customer, amount="12400.00", as_of_date=date(2026, 7, 1))
+
+    body = (
+        await client.get(
+            f"/api/v1/credit-customers/{customer}/ledger", headers=auth_headers(manager)
+        )
+    ).json()
+
+    assert Decimal(body["opening_balance"]) == Decimal("12400.00")
+    assert [row["kind"] for row in body["items"]] == ["opening"]
+    assert body["items"][0]["shift_id"] is None
+    assert body["items"][0]["business_date"] == "2026-07-01"
+    assert Decimal(body["items"][0]["balance_after"]) == Decimal("12400.00")
+
+
+async def test_a_customer_with_no_opening_balance_reports_null_not_zero(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """§6.8's distinction, and §14's `?? 0` guardrail. "Nobody has entered this" is not
+    "somebody checked and they were square"."""
+    manager = make_user("manager")
+    customer = make_credit_customer()
+
+    body = (
+        await client.get(
+            f"/api/v1/credit-customers/{customer}/ledger", headers=auth_headers(manager)
+        )
+    ).json()
+
+    assert body["opening_balance"] is None
+    assert Decimal(body["outstanding"]) == Decimal("0.00")
+
+
+async def test_the_ledger_is_ordered_by_business_date_not_entry_order(
     client: AsyncClient,
     make_user: Callable[..., UUID],
     make_shift: Callable[..., UUID],
@@ -972,75 +1054,68 @@ async def test_the_ledger_is_cursor_paginated(
     make_credit_sale: Callable[..., UUID],
     auth_headers,
 ) -> None:
-    """§9 forbids offset pagination -- inserts during a scroll cause duplicates and skips.
-    A ledger grows forever, unlike the customer list, so it gets a real cursor."""
+    """§4.7: the whole day is typed in after the fact, so `created_at` is entry order and a
+    running balance read in entry order never matches the slips.
+
+    The later trading day is created *first* here, so the two orderings disagree.
+    """
+    attendant = make_user("attendant")
+    manager = make_user("manager")
+    later = make_shift(attendant, business_date=date(2026, 7, 9), sequence=1)
+    earlier = make_shift(attendant, business_date=date(2026, 7, 2), sequence=1)
+    customer = make_credit_customer()
+    make_credit_sale(later, customer, make_attachment(attendant), amount="900.00")
+    make_credit_sale(earlier, customer, make_attachment(attendant), amount="100.00")
+
+    body = (
+        await client.get(
+            f"/api/v1/credit-customers/{customer}/ledger", headers=auth_headers(manager)
+        )
+    ).json()
+
+    assert [row["business_date"] for row in body["items"]] == [
+        "2026-07-09",
+        "2026-07-02",
+    ]
+    # And the running balance follows the trading order, not the typing order.
+    assert Decimal(body["items"][0]["balance_after"]) == Decimal("1000.00")
+    assert Decimal(body["items"][1]["balance_after"]) == Decimal("100.00")
+
+
+async def test_truncation_does_not_corrupt_the_balances_it_does_show(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_attachment: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_sale: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """§13.31's whole argument, as a test.
+
+    The walk runs downward from `outstanding`, so a shown line's balance depends only on
+    lines *newer* than it -- and cutting the old end off cannot make a displayed figure
+    wrong. This is what a cursor could not have promised on page two.
+    """
     attendant = make_user("attendant")
     manager = make_user("manager")
     shift = make_shift(attendant, business_date=DAY, sequence=1)
     customer = make_credit_customer()
     for _ in range(5):
-        make_credit_sale(
-            shift, customer, make_attachment(attendant), amount="100.00"
+        make_credit_sale(shift, customer, make_attachment(attendant), amount="100.00")
+
+    body = (
+        await client.get(
+            f"/api/v1/credit-customers/{customer}/ledger?limit=2",
+            headers=auth_headers(manager),
         )
+    ).json()
 
-    first = await client.get(
-        f"/api/v1/credit-customers/{customer}/ledger?limit=2",
-        headers=auth_headers(manager),
-    )
-    body = first.json()
+    assert body["truncated"] is True
     assert len(body["items"]) == 2
-    assert body["next_cursor"] is not None
-
-    second = await client.get(
-        f"/api/v1/credit-customers/{customer}/ledger?limit=2&cursor={body['next_cursor']}",
-        headers=auth_headers(manager),
-    )
-
-    first_ids = {row["id"] for row in body["items"]}
-    second_ids = {row["id"] for row in second.json()["items"]}
-    assert first_ids.isdisjoint(second_ids)
-
-
-async def test_the_last_page_has_no_cursor(
-    client: AsyncClient,
-    make_user: Callable[..., UUID],
-    make_shift: Callable[..., UUID],
-    make_attachment: Callable[..., UUID],
-    make_credit_customer: Callable[..., UUID],
-    make_credit_sale: Callable[..., UUID],
-    auth_headers,
-) -> None:
-    attendant = make_user("attendant")
-    manager = make_user("manager")
-    shift = make_shift(attendant, business_date=DAY, sequence=1)
-    customer = make_credit_customer()
-    make_credit_sale(shift, customer, make_attachment(attendant), amount="100.00")
-
-    response = await client.get(
-        f"/api/v1/credit-customers/{customer}/ledger", headers=auth_headers(manager)
-    )
-
-    assert response.json()["next_cursor"] is None
-
-
-async def test_a_bad_cursor_is_a_400(
-    client: AsyncClient,
-    make_user: Callable[..., UUID],
-    make_credit_customer: Callable[..., UUID],
-    auth_headers,
-) -> None:
-    """Never a silent restart from the top -- that would look like working pagination while
-    quietly re-showing rows the reader already passed."""
-    manager = make_user("manager")
-    customer = make_credit_customer()
-
-    response = await client.get(
-        f"/api/v1/credit-customers/{customer}/ledger?cursor=not-a-cursor",
-        headers=auth_headers(manager),
-    )
-
-    assert response.status_code == 400
-    assert response.json()["code"] == "INVALID_CURSOR"
+    assert Decimal(body["outstanding"]) == Decimal("500.00")
+    assert Decimal(body["items"][0]["balance_after"]) == Decimal("500.00")
+    assert Decimal(body["items"][1]["balance_after"]) == Decimal("400.00")
 
 
 async def test_an_attendant_cannot_read_a_ledger(

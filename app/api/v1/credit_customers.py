@@ -28,12 +28,14 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field, condecimal, field_validator
-from sqlalchemy import literal, select, tuple_, union_all
+from sqlalchemy import UUID as sa_UUID
+from sqlalchemy import literal, select, union_all
 from sqlalchemy.orm import Session
 
 from app.api.cursor import DEFAULT_LIMIT, MAX_LIMIT, decode_cursor, encode_cursor
@@ -43,7 +45,13 @@ from app.core.errors import AppError
 from app.core.roles import Role
 from app.db.session import get_db
 from app.services import audit
-from app.models.credit import CreditCustomer, CreditRepayment, CreditSale
+from app.models.credit import (
+    CreditCustomer,
+    CreditOpeningBalance,
+    CreditRepayment,
+    CreditSale,
+)
+from app.models.shift import Shift
 from app.services import credit as credit_service
 
 logger = logging.getLogger(__name__)
@@ -54,6 +62,12 @@ router = APIRouter(tags=["credit"])
 # rule: a pump's customer list is bounded reference data, not a history to page through. The
 # cap makes the bound structural rather than assumed.
 _MAX_ROWS = 500
+
+# The ledger's own cap. Larger than a page and smaller than forever: one customer's whole
+# account at a pump is realistically dozens of lines, and §13.31 records why this is a cap
+# rather than a cursor -- the running balance is only meaningful as a walk from a known
+# anchor, and a cursor's page two has no anchor.
+_MAX_LEDGER_ROWS = 500
 
 # Indian vehicle registrations, normalised: upper-cased with every space and hyphen removed,
 # so `MH 12 AB 1234`, `mh12-ab-1234` and `MH12AB1234` all become one value. Not validated
@@ -118,16 +132,41 @@ class LedgerEntry(BaseModel):
 
     id: UUID
     kind: str
-    shift_id: UUID
+    # `None` on an opening balance, which belongs to no shift, and on a repayment that
+    # arrived at the bank rather than at this pump (§5.2).
+    shift_id: UUID | None
+    business_date: date
     amount: Decimal
     balance_delta: Decimal
+    # The customer's outstanding immediately after this line. Computed server-side in
+    # `Decimal` and serialised as a string, because §14 forbids money arithmetic in
+    # JavaScript -- and a running balance is nothing but money arithmetic.
+    balance_after: Decimal
     is_reversal: bool
     created_at: str
 
 
 class LedgerPage(BaseModel):
+    """A customer's account, newest first, with the balance beside every line.
+
+    **Capped rather than cursor-paginated, and that is a deliberate exception to §9** in the
+    same shape as `/nozzles` and `/fuel-types` (§13.31).
+
+    The whole value of this screen is `balance_after`, and a running balance is only
+    meaningful as a walk from a known anchor. The walk here runs newest-first *downward from
+    `outstanding`*, so every line's balance depends only on lines **newer** than itself --
+    which means truncating the old end cannot make a displayed figure wrong. A cursor cannot
+    promise that: page two has no anchor unless the token carries a money value, and a money
+    value in a client-held token is a figure the server would then have to trust back.
+
+    `opening_balance` is `None` when none was entered, and must stay `None` all the way to
+    the screen: §6.8's distinction between an answer and an omission (§14).
+    """
+
     items: list[LedgerEntry]
-    next_cursor: str | None
+    opening_balance: Decimal | None
+    outstanding: Decimal
+    truncated: bool
 
 
 class CreditCustomerCreate(BaseModel):
@@ -516,92 +555,121 @@ def update_credit_customer(
     )
 
 
-@router.get(
-    "/credit-customers/{customer_id}/ledger", response_model=LedgerPage
-)
+@router.get("/credit-customers/{customer_id}/ledger", response_model=LedgerPage)
 def get_credit_customer_ledger(
     customer_id: UUID,
-    limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
-    cursor: str | None = Query(default=None),
+    limit: int = Query(default=_MAX_LEDGER_ROWS, ge=1, le=_MAX_LEDGER_ROWS),
     actor: Actor = Depends(
         require_role(Role.manager, resolve_outlet_from_credit_customer)
     ),
     db: Session = Depends(get_db),
 ) -> LedgerPage:
-    """Every sale and repayment against one customer, newest first. Manager floor (§8).
+    """Every line of one customer's account, newest first, with a running balance (§8).
 
     This is the evidence behind §6.6's outstanding figure. A balance nobody can take apart is
     a number the owner has to trust rather than check, and §14 says a plausible-but-wrong
     figure is this project's primary failure mode -- so the arithmetic has to be auditable
     line by line, not merely correct.
 
-    **Cursor-paginated, unlike the customer list.** A customer list is bounded reference
-    data; a ledger grows forever, and §9 forbids offset pagination because inserts during a
-    scroll cause duplicates and skips.
+    **Three tables, `UNION ALL`, not three requests the client merges.** Merging client-side
+    cannot order correctly: taking the newest N of each table and interleaving them gives the
+    newest N overall only by luck, and gets steadily wronger the more one-sided an account
+    is. The true ordering exists only in the combined result.
 
-    **A `UNION ALL` across the two tables rather than two requests the client merges.**
-    Merging client-side cannot paginate correctly: taking the newest 50 of each table and
-    interleaving them gives the newest 50 overall only by luck, and gets steadily wronger the
-    more one-sided the account is. The keyset then runs over the combined result, which is
-    the only place the true ordering exists.
+    **Ordered by business date, not `created_at`. Phase 16 changed this.** §4.7 says the whole
+    day is typed in after the fact, often days later, so entry order is not economic order --
+    and a running balance read in entry order is a column of numbers that never matches the
+    slips. `created_at` stays as the tiebreaker within a date, because two rows on one day
+    have no other ordering and it only has to be stable.
 
     Reversals appear as their own lines rather than being netted away, per §6.9: both rows
     remain visible, and a customer disputing a bill is entitled to see that a charge was
     raised and cancelled rather than an account that silently never mentions it.
     """
-    sales = select(
-        CreditSale.id.label("id"),
-        CreditSale.created_at.label("created_at"),
-        literal("sale").label("kind"),
-        CreditSale.amount.label("amount"),
-        # A sale adds to what is owed, so the row's own sign is already the balance effect.
-        CreditSale.amount.label("balance_delta"),
-        CreditSale.shift_id.label("shift_id"),
-        CreditSale.reverses_id.label("reverses_id"),
-    ).where(CreditSale.credit_customer_id == customer_id)
+    # A sale's own sign is already its effect on the balance. A repayment's is the negation
+    # -- which also makes a *reversed* repayment (already negative) correctly add the debt
+    # back, with no second rule. An opening balance states the debt, so it reads like a sale.
+    openings = select(
+        CreditOpeningBalance.id.label("id"),
+        CreditOpeningBalance.created_at.label("created_at"),
+        CreditOpeningBalance.as_of_date.label("business_date"),
+        literal("opening").label("kind"),
+        CreditOpeningBalance.amount.label("amount"),
+        CreditOpeningBalance.amount.label("balance_delta"),
+        literal(None, type_=sa_UUID).label("shift_id"),
+        CreditOpeningBalance.reverses_id.label("reverses_id"),
+    ).where(CreditOpeningBalance.credit_customer_id == customer_id)
+
+    sales = (
+        select(
+            CreditSale.id,
+            CreditSale.created_at,
+            Shift.business_date,
+            literal("sale"),
+            CreditSale.amount,
+            CreditSale.amount,
+            CreditSale.shift_id,
+            CreditSale.reverses_id,
+        )
+        # A credit sale has no date of its own -- it belongs to a shift, and the shift owns
+        # the business date (§6.1). This join is the only place that date exists.
+        .join(Shift, Shift.id == CreditSale.shift_id)
+        .where(CreditSale.credit_customer_id == customer_id)
+    )
 
     repayments = select(
         CreditRepayment.id,
         CreditRepayment.created_at,
+        CreditRepayment.business_date,
         literal("repayment"),
         CreditRepayment.amount,
-        # A repayment reduces what is owed, so its effect on the balance is the negation --
-        # which also makes a *reversed* repayment (already negative) correctly add the debt
-        # back, without a second rule.
         -CreditRepayment.amount,
         CreditRepayment.shift_id,
         CreditRepayment.reverses_id,
     ).where(CreditRepayment.credit_customer_id == customer_id)
 
-    combined = union_all(sales, repayments).subquery()
-    statement = select(combined).order_by(
-        combined.c.created_at.desc(), combined.c.id.desc()
-    )
-    if cursor is not None:
-        last_created_at, last_id = decode_cursor(cursor)
-        statement = statement.where(
-            tuple_(combined.c.created_at, combined.c.id)
-            < tuple_(last_created_at, last_id)
+    combined = union_all(openings, sales, repayments).subquery()
+    rows = db.execute(
+        select(combined)
+        .order_by(
+            combined.c.business_date.desc(),
+            combined.c.created_at.desc(),
+            combined.c.id.desc(),
         )
+        .limit(limit + 1)
+    ).all()
 
-    rows = db.execute(statement.limit(limit + 1)).all()
-    has_more = len(rows) > limit
+    truncated = len(rows) > limit
     page = rows[:limit]
 
-    return LedgerPage(
-        items=[
+    # Walk down from the current outstanding. Every line's `balance_after` therefore depends
+    # only on the lines above it (newer than it), which is what makes the figures correct even
+    # when the old end is truncated -- see `LedgerPage`.
+    outstanding = credit_service.outstanding(db, customer_id=customer_id)
+    running = outstanding
+    entries: list[LedgerEntry] = []
+    for row in page:
+        entries.append(
             LedgerEntry(
                 id=row.id,
                 kind=row.kind,
                 shift_id=row.shift_id,
+                business_date=row.business_date,
                 amount=row.amount,
                 balance_delta=row.balance_delta,
+                balance_after=running,
                 is_reversal=row.reverses_id is not None,
                 created_at=row.created_at.isoformat(),
             )
-            for row in page
-        ],
-        next_cursor=(
-            encode_cursor(page[-1].created_at, page[-1].id) if has_more and page else None
-        ),
+        )
+        running = running - row.balance_delta
+
+    live_opening = credit_service.live_opening_balance(db, customer_id=customer_id)
+
+    return LedgerPage(
+        items=entries,
+        # `None`, never ₹0.00, when nobody has entered one (§6.8, §14).
+        opening_balance=live_opening.amount if live_opening is not None else None,
+        outstanding=outstanding,
+        truncated=truncated,
     )

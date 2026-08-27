@@ -26,6 +26,7 @@
 import { el, empty, pill, render } from "../dom.js";
 import { api, explain, Submission, uploadReceipt } from "../api.js";
 import { format } from "../money.js";
+import { businessDate, todayAtOutlet } from "../time.js";
 import { field, Form, select } from "../ui/field.js";
 import { openSheet } from "../ui/sheet.js";
 import { openReversalSheet, reversalBadge } from "../ui/reversal.js";
@@ -306,6 +307,232 @@ function repaymentSheet(existing, context) {
         receiptStatus,
       ]),
     ]),
+    footer: el("div", { style: { padding: "0 1rem 1rem" } }, [submit]),
+  });
+}
+
+/* --- Repayments that arrived at the bank (§5.2, Phase 16) --------------------
+ *
+ * The Credit tab's write screen, and the one that makes a ledger reconstructable at all.
+ *
+ * Before Phase 16 every repayment hung off a shift, and §5.2 forbids modifying anything
+ * referencing a `locked` shift -- so a bank transfer against a day already locked could not
+ * be recorded, and one arriving on a day the outlet was shut had no shift to attach to.
+ * §4.7 says the whole day is typed in after the fact, which makes both the normal case here.
+ *
+ * **Cash is deliberately absent from this form.** Cash lands in a drawer, so it belongs to
+ * the shift it arrived on -- the screen above. The server refuses `mode = cash` here with
+ * 422 CASH_REPAYMENT_NEEDS_SHIFT and the database refuses it too, so omitting it from the
+ * select is a courtesy rather than the control (§8).
+ */
+
+const BANK_MODES = [
+  { value: "bank_transfer", label: "Bank transfer" },
+  { value: "upi", label: "UPI — to a bank account, not the pump's QR" },
+  { value: "card", label: "Card — not on the pump's machine" },
+];
+
+export async function renderLedgerRepayments(container, { session, navigate }) {
+  const { shell } = session;
+  shell.setTab("credit");
+  shell.setTitle("Payments received");
+
+  render(container, el("div", { className: "t-caption", text: "Loading…" }));
+
+  let page;
+  let customers;
+  try {
+    [page, customers] = await Promise.all([
+      api.get("/credit-repayments", { limit: 25 }),
+      api.get("/credit-customers", { include_inactive: true }),
+    ]);
+  } catch (error) {
+    render(
+      container,
+      errorCard(error, () => renderLedgerRepayments(container, { session, navigate })),
+    );
+    return;
+  }
+
+  const context = { session, container, navigate, customers };
+  const byId = new Map(customers.map((customer) => [customer.id, customer]));
+
+  shell.setActions(
+    el("button", {
+      className: "btn btn-primary",
+      text: "Add",
+      attrs: { type: "button" },
+      on: { click: () => bankRepaymentSheet(context) },
+    }),
+  );
+
+  render(
+    container,
+    el("div", { className: "stack" }, [
+      el("div", { className: "card stack" }, [
+        el("div", { className: "t-micro", text: "Money that reached the bank" }),
+        el("p", {
+          className: "t-body",
+          text:
+            "Record a settlement that arrived by transfer rather than at the pump. It " +
+            "reduces what the customer owes and changes no day's cash — the locker never " +
+            "saw it.",
+        }),
+        el("p", {
+          className: "t-caption",
+          text: "Cash belongs on the shift it arrived on. Enter that under Entry › Repayments.",
+        }),
+      ]),
+
+      page.items.length
+        ? el(
+            "div",
+            { className: "stack" },
+            page.items.map((repayment) => ledgerRepaymentCard(repayment, byId, context)),
+          )
+        : empty("Nothing recorded yet."),
+    ]),
+  );
+}
+
+function ledgerRepaymentCard(repayment, byId, context) {
+  const customer = byId.get(repayment.credit_customer_id);
+  return el("div", { className: "card stack" }, [
+    el("div", { className: "row-between" }, [
+      el("div", { className: "grow" }, [
+        el("div", { className: "t-headline", text: customer?.name ?? "Unknown customer" }),
+        el("div", {
+          className: "t-caption",
+          text:
+            `${businessDate(repayment.business_date)} · ` +
+            repayment.mode.replace("_", " ") +
+            (repayment.shift_id === null ? "" : " · on a shift"),
+        }),
+      ]),
+      el("div", { className: "row" }, [
+        reversalBadge(repayment),
+        el("span", { className: "t-title t-numeric", text: format(repayment.amount) }),
+      ]),
+    ]),
+    repayment.reversal_reason
+      ? el("p", { className: "t-caption", text: `Reason: ${repayment.reversal_reason}` })
+      : null,
+  ]);
+}
+
+function bankRepaymentSheet(context) {
+  const { customers } = context;
+
+  const customerSelect = select({
+    name: "credit_customer_id",
+    label: "Customer",
+    options: [
+      { value: "", label: "Choose…" },
+      ...customers.map((customer) => ({
+        value: customer.id,
+        label: customer.is_active ? customer.name : `${customer.name} (deactivated)`,
+      })),
+    ],
+    value: "",
+    required: true,
+    hint: "A deactivated customer can still pay off what they owe.",
+  });
+
+  const amount = field({
+    name: "amount",
+    label: "Amount",
+    type: "number",
+    step: "0.01",
+    min: "0.01",
+    value: "",
+    required: true,
+    inputMode: "decimal",
+    hint: "More than they owe is accepted — the balance simply goes negative.",
+  });
+
+  const modeSelect = select({
+    name: "mode",
+    label: "How did it arrive?",
+    options: [{ value: "", label: "Choose…" }, ...BANK_MODES],
+    value: "",
+    required: true,
+    hint: "None of these touch the locker, so no day's cash position changes.",
+  });
+
+  const businessDateField = field({
+    name: "business_date",
+    label: "Date it arrived",
+    type: "date",
+    value: todayAtOutlet(),
+    required: true,
+    hint: "The day the money reached the account — not the day you are typing this in.",
+  });
+
+  const form = new Form({
+    credit_customer_id: customerSelect,
+    amount,
+    mode: modeSelect,
+    business_date: businessDateField,
+  });
+
+  const submit = el("button", {
+    className: "btn btn-primary btn-block",
+    text: "Record payment",
+    attrs: { type: "button" },
+  });
+
+  // §6.10 and §14: the key belongs to the *submission*, minted once and reused by every
+  // retry until it succeeds. A fresh key per fetch would reintroduce the duplicate this
+  // exists to prevent, on exactly the connectivity it was built for.
+  const submission = new Submission("POST", "/credit-repayments");
+
+  submit.addEventListener("click", async () => {
+    form.clearErrors();
+    const values = form.values();
+
+    const missing = ["credit_customer_id", "mode"].find((name) => !values[name]);
+    if (missing) {
+      form.showErrors([
+        {
+          loc: ["body", missing],
+          msg:
+            missing === "credit_customer_id"
+              ? "Choose a customer."
+              : "Choose how the money arrived.",
+        },
+      ]);
+      return;
+    }
+
+    submit.disabled = true;
+    try {
+      await submission.run({
+        credit_customer_id: values.credit_customer_id,
+        amount: values.amount,
+        mode: values.mode,
+        business_date: values.business_date,
+      });
+      sheet.close();
+      notify.success("Payment recorded.");
+      renderLedgerRepayments(context.container, context);
+    } catch (error) {
+      submit.disabled = false;
+      const unmatched = error.isValidation ? form.showErrors(error.detail) : [];
+      if (!error.isValidation || unmatched.length) {
+        notify.error(explain(error), {
+          requestId: error.requestId,
+          action:
+            error.name === "NetworkError"
+              ? { label: "Retry", onClick: () => submit.click() }
+              : undefined,
+        });
+      }
+    }
+  });
+
+  const sheet = openSheet({
+    title: "Record a bank payment",
+    body: el("div", { className: "stack" }, form.nodes()),
     footer: el("div", { style: { padding: "0 1rem 1rem" } }, [submit]),
   });
 }
