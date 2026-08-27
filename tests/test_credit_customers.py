@@ -1024,6 +1024,46 @@ async def test_the_opening_balance_is_a_ledger_line_and_a_header_figure(
     assert Decimal(body["items"][0]["balance_after"]) == Decimal("12400.00")
 
 
+async def test_the_opening_balance_is_the_oldest_line_on_its_own_date(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_attachment: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_sale: Callable[..., UUID],
+    make_credit_opening_balance: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """An opening balance anchors the account, so it must sit under everything on its date.
+
+    Found against real data rather than in review. The opening balance is typed in *long*
+    after the sales it precedes, so ordering the day by `created_at` floated it to the top
+    and the account read as though the customer started at zero and was handed a balance
+    mid-morning -- with a running balance that was arithmetically correct and told the wrong
+    story. §4.7's argument about entry order versus trading order, one level finer.
+    """
+    attendant = make_user("attendant")
+    manager = make_user("manager")
+    shift = make_shift(attendant, business_date=date(2026, 7, 1), sequence=1)
+    customer = make_credit_customer()
+
+    # Sales first, opening balance afterwards -- the real order of events.
+    make_credit_sale(shift, customer, make_attachment(attendant), amount="511.00")
+    make_credit_sale(shift, customer, make_attachment(attendant), amount="511.00")
+    make_credit_opening_balance(customer, amount="50000.00", as_of_date=date(2026, 7, 1))
+
+    body = (
+        await client.get(
+            f"/api/v1/credit-customers/{customer}/ledger", headers=auth_headers(manager)
+        )
+    ).json()
+
+    # Newest first, so the anchor is last -- despite being the most recently created row.
+    assert [entry["kind"] for entry in body["items"]] == ["sale", "sale", "opening"]
+    assert Decimal(body["items"][-1]["balance_after"]) == Decimal("50000.00")
+    assert Decimal(body["items"][0]["balance_after"]) == Decimal("51022.00")
+
+
 async def test_a_customer_with_no_opening_balance_reports_null_not_zero(
     client: AsyncClient,
     make_user: Callable[..., UUID],

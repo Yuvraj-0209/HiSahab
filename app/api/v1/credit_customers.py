@@ -594,6 +594,11 @@ def get_credit_customer_ledger(
         CreditOpeningBalance.created_at.label("created_at"),
         CreditOpeningBalance.as_of_date.label("business_date"),
         literal("opening").label("kind"),
+        # Sort rank. An opening balance is the *anchor* of an account, so it must be the
+        # oldest line on its date no matter when it was typed in -- and it is typed in long
+        # afterwards, so `created_at` puts it at the top of the day and the account reads as
+        # though the customer started at zero and was handed a balance mid-morning.
+        literal(0).label("sort_rank"),
         CreditOpeningBalance.amount.label("amount"),
         CreditOpeningBalance.amount.label("balance_delta"),
         literal(None, type_=sa_UUID).label("shift_id"),
@@ -606,6 +611,7 @@ def get_credit_customer_ledger(
             CreditSale.created_at,
             Shift.business_date,
             literal("sale"),
+            literal(1),
             CreditSale.amount,
             CreditSale.amount,
             CreditSale.shift_id,
@@ -622,6 +628,7 @@ def get_credit_customer_ledger(
         CreditRepayment.created_at,
         CreditRepayment.business_date,
         literal("repayment"),
+        literal(1),
         CreditRepayment.amount,
         -CreditRepayment.amount,
         CreditRepayment.shift_id,
@@ -633,6 +640,10 @@ def get_credit_customer_ledger(
         select(combined)
         .order_by(
             combined.c.business_date.desc(),
+            # Descending, so rank 1 (sales and repayments) comes before rank 0 (the opening
+            # balance) in this newest-first list -- i.e. the opening balance lands underneath
+            # everything on its own date, which is where an anchor belongs.
+            combined.c.sort_rank.desc(),
             combined.c.created_at.desc(),
             combined.c.id.desc(),
         )
