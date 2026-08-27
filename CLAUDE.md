@@ -1224,6 +1224,28 @@ chain**, exactly as a confirmed meter reading re-anchors §4.7's.
   eventually disagree about where the locker started.
 - `daily_cash_summaries.opening_balance_source` records which of the three branches produced
   the figure, so a reader never has to infer it from the previous row.
+- **Days must be reconciled oldest first.** A business date is refused with 409
+  `EARLIER_DAY_NOT_RECONCILED` while any earlier date that traded has no summary row.
+  **Phase 15 amendment.**
+
+> **Why this is a rule and not merely good practice.** `cash.py::previous_summary` is *the
+> most recent summary before this date* — deliberately, since §4.7's argument about a nozzle
+> applies here too and "literally yesterday" would snap the chain on a day the outlet was
+> shut. But the same looseness means reconciling 3 July before 2 July chains 3 July's opening
+> from **1 July**, quietly skipping a whole day's cash. Nothing recomputes it afterwards:
+> §5.2 stores `expected_closing` precisely so that a later correction cannot rewrite it, and
+> §13.16 says a reopened shift *flags* the summary rather than moving it. So the wrong
+> opening is permanent, it propagates into every day after it (§6.5 chains), and it is
+> invisible — the figure is plausible and the arithmetic is internally consistent.
+>
+> Note it is **`EARLIER_DAY_NOT_RECONCILED`, not `PRIOR_DAY_NOT_RECONCILED`.** The two govern
+> different acts and must stay distinguishable: the older code refuses to *finalise* day N
+> while day N−1 is not finalised; this one refuses to *create* day N's summary at all while
+> an earlier trading day has none. Reusing the code would make a 409 unanswerable — a caller
+> could not tell which step to go and do.
+>
+> "Traded" means *has at least one shift*. A date the outlet was shut has no shift and is
+> therefore no obstacle, which is the same distinction §13.20's `no_trading` source draws.
 
 ### 6.6 Udhaar (credit) rules
 
@@ -1961,6 +1983,47 @@ ahead — no empty modules for later phases.
 
     This is **not** the bank/IOCL module. §12 scopes that as one post-V1 module built together,
     after V1 is hand-tested and deployed.
+15. **The Cash tab as a worklist** — no migration, no new endpoint, and **one new business
+    rule** (§6.5's `EARLIER_DAY_NOT_RECONCILED`). Phase 12 built nineteen screens and Phase 13
+    added three more; this is the first phase written after somebody entered a real trading
+    day through them, and what it fixes is not a broken endpoint but a tab that could not be
+    used to do the thing it is named after.
+
+    The report of it was concrete. A day was entered, closed and locked, and then could not be
+    found. Three defects had stacked:
+
+    **(a) A read-only report was labelled with a write verb.** `cash.js` offered *"Reconcile
+    this shift"*, whose entire action was to navigate to `GET /shifts/{id}/cash-position` —
+    which §8 requires to write nothing, because it is a report. Doing exactly what the button
+    said left no summary row. §14 gains a guardrail about this, because the failure is not a
+    typo: it taught a manager that a day was settled when nothing had been written.
+
+    **(b) A day that traded and was never reconciled was structurally invisible.**
+    `GET /daily-summaries` is a single-table read of `daily_cash_summaries` with no join to
+    `shifts`. That is correct for what it is, and it means the one list on the Cash tab could
+    not show the one day that needed attention. **The fix is a client-side merge of
+    `GET /shifts` with `GET /daily-summaries`, not a new endpoint** — both already exist, both
+    are already manager-floor, and the join is a presentation concern.
+
+    **(c) Reports were anchored to the calendar rather than to the trading.** See §13.30.
+
+    So the tab stops being a menu of six reports and becomes a worklist: **the days that need
+    you, oldest first**, each showing where it stands in the lifecycle and offering the one
+    act that would move it on. §4.7's principle at the interface — the abnormal day becomes
+    visible instead of being reassigned to nobody's attention.
+
+    **One day, one screen.** `#/daily-summaries/{date}` and `#/reports/{date}` described the
+    same business date from two different tables and never linked to each other. They merge
+    into `#/days/{date}`; the old routes redirect. §13.20's distinction is untouched and stays
+    on the merged screen — a `computed` day is an estimate and a `snapshot` is a record, and
+    the screen must go on saying which.
+
+    **The lifecycle is drawn, not assumed.** Entered → Closed → Locked → Reconciled →
+    Finalised, as five dots on every day row. Two of those steps are per *shift* and two are
+    per *day*, which is the whole reason the sequence is confusing to a newcomer, and the only
+    durable fix is to show it rather than to document it. `actual_counted` is deliberately not
+    a step: §6.5 says most days are never counted under the locker model, so making it one
+    would mark every normal day incomplete.
 
 ---
 
@@ -2300,6 +2363,32 @@ future reader must be able to tell the difference.
     **The rule this leaves behind:** anything that moves continuously moves under `transform`
     or `opacity`, and is never redrawn to say so. §13.18, §14
 
+30. **A report's default window ends on the outlet's most recent trading day, not on today.**
+    Phase 15. `reports.py::_resolve_window` used to default `to` to `outlet_today()` and
+    `from` to six days before it, and the docstring defended the *timezone* half of that
+    carefully — at 23:00 IST the UTC date is still yesterday, so a UTC default would drop the
+    current trading day. That reasoning is untouched and still correct. What it never
+    questioned was the anchor itself.
+
+    §4.7 says the whole day is typed in **after the fact**, in one sitting, often days later.
+    An outlet catching up on July in late August therefore opened both reporting screens onto
+    seven days of `no_trading` — and the `day_not_reconciled` alert, which exists for exactly
+    the day they were looking for, is windowed (§13.23) and so was never shown either. A
+    report about a week in which nothing happened is a report about nothing.
+
+    So the default `to` is now the most recent `business_date` that has a shift, falling back
+    to `outlet_today()` for an outlet that has never traded, and clamped so it can never
+    exceed today. **For a live outlet this changes nothing**, because the most recent trading
+    day *is* today; it only differs for an outlet that is behind, which is the one this
+    software was written for.
+
+    Two consequences to be honest about. The window is now **data-dependent**, so two managers
+    opening "this week" on different days can see the same seven dates — which is correct, and
+    is why the resolved `from`/`to` were already returned in the response and rendered in the
+    screen's subtitle. And a **single backdated shift moves the window**, since the anchor is
+    a maximum; that is the intended behaviour for a back-entered day, and §13.24's 31-day cap
+    is unchanged, so the cost is bounded. §4.7, §13.23, §13.24
+
 ---
 
 ## 14. Guardrails for Claude Code
@@ -2443,6 +2532,23 @@ to occur on this specific project.
   checked the meter" cannot be what happens when nobody looked. A pre-ticked box in the client
   defeats that as completely as a default in the schema would, and §4.7 spells out the cost: an
   assumed opening converts theft into a debt owed by someone who did nothing wrong (§4.2, §4.7)
+- **Label a read-only screen with a verb that implies a write.** Phase 15's report was that a
+  primary button reading *"Reconcile this shift"* only navigated to `GET /cash-position`,
+  which §8 requires to write nothing. The user pressed it, believed the day was settled, and
+  no `daily_cash_summaries` row was ever created — so §6.5's chain never advanced and the day
+  vanished from every list. **A verb on a button is a promise about what the server will be
+  asked to do.** If the screen behind it only reads, name what it shows ("Cash position"),
+  not what the reader wishes it did (§13.20, §11 phase 15)
+- **Show a list of *records* where the user is looking for a list of *days*.**
+  `GET /daily-summaries` reads one table and cannot surface a business date that traded and
+  was never reconciled — which is precisely the date somebody needs to act on. Merge it with
+  `GET /shifts` client-side; do not add an endpoint, and do not let the absence of a row read
+  as the absence of a day (§11 phase 15)
+- **Offer "reconcile" on any day but the oldest unreconciled one.** §6.5's opening balance
+  chains from the most recent *summary*, not from yesterday, so reconciling out of order
+  skips a day's cash permanently and invisibly. The server refuses with 409
+  `EARLIER_DAY_NOT_RECONCILED`; the client should not need to be refused, and sorts its
+  worklist oldest-first so the right day is the one with the button (§6.5)
 - **Treat a hidden control as a permission check.** §8 already says hiding a button is UX, not
   a control. The corollary for Phase 12: every screen still handles a 403 as a real outcome,
   and no client-side rule exists that the server does not also enforce (§8)
