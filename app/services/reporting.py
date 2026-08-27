@@ -346,6 +346,7 @@ class DayCash:
     wallet_total: Decimal | None
     credit_sales_total: Decimal | None
     cash_credit_repayments: Decimal | None
+    card_upi_credit_repayments: Decimal | None
     cash_shortfall_settlements: Decimal | None
     cash_expenses: Decimal | None
     bank_deposits_total: Decimal | None
@@ -400,6 +401,7 @@ def _from_snapshot(summary: DailyCashSummary, *, shift_count: int) -> DayCash:
         wallet_total=summary.wallet_total,
         credit_sales_total=summary.credit_sales_total,
         cash_credit_repayments=summary.cash_credit_repayments,
+        card_upi_credit_repayments=summary.card_upi_credit_repayments,
         cash_shortfall_settlements=summary.cash_shortfall_settlements,
         cash_expenses=summary.cash_expenses,
         bank_deposits_total=summary.bank_deposits_total,
@@ -437,6 +439,7 @@ def _no_trading(business_date: date) -> DayCash:
         wallet_total=_ZERO,
         credit_sales_total=_ZERO,
         cash_credit_repayments=_ZERO,
+        card_upi_credit_repayments=_ZERO,
         cash_shortfall_settlements=_ZERO,
         cash_expenses=_ZERO,
         bank_deposits_total=_ZERO,
@@ -467,6 +470,7 @@ def _unavailable(business_date: date, *, shift_count: int, reason: str) -> DayCa
         wallet_total=None,
         credit_sales_total=None,
         cash_credit_repayments=None,
+        card_upi_credit_repayments=None,
         cash_shortfall_settlements=None,
         cash_expenses=None,
         bank_deposits_total=None,
@@ -550,6 +554,7 @@ def day_cash(db: Session, *, outlet_id: UUID, business_date: date) -> DayCash:
         wallet_total=totals.wallet_total,
         credit_sales_total=totals.credit_sales_total,
         cash_credit_repayments=totals.cash_credit_repayments,
+        card_upi_credit_repayments=totals.card_upi_credit_repayments,
         cash_shortfall_settlements=totals.cash_shortfall_settlements,
         cash_expenses=totals.cash_expenses,
         bank_deposits_total=totals.bank_deposits_total,

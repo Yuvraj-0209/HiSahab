@@ -95,6 +95,7 @@ class SummaryResponse(BaseModel):
     wallet_total: Decimal
     credit_sales_total: Decimal
     cash_credit_repayments: Decimal
+    card_upi_credit_repayments: Decimal
     cash_shortfall_settlements: Decimal
     cash_expenses: Decimal
     bank_deposits_total: Decimal
@@ -163,6 +164,7 @@ def _to_response(row: DailyCashSummary) -> SummaryResponse:
         wallet_total=row.wallet_total,
         credit_sales_total=row.credit_sales_total,
         cash_credit_repayments=row.cash_credit_repayments,
+        card_upi_credit_repayments=row.card_upi_credit_repayments,
         cash_shortfall_settlements=row.cash_shortfall_settlements,
         cash_expenses=row.cash_expenses,
         bank_deposits_total=row.bank_deposits_total,
@@ -419,6 +421,7 @@ def create_summary(
         wallet_total=totals.wallet_total,
         credit_sales_total=totals.credit_sales_total,
         cash_credit_repayments=totals.cash_credit_repayments,
+        card_upi_credit_repayments=totals.card_upi_credit_repayments,
         cash_shortfall_settlements=totals.cash_shortfall_settlements,
         cash_expenses=totals.cash_expenses,
         bank_deposits_total=totals.bank_deposits_total,

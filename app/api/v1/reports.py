@@ -148,6 +148,7 @@ class DayCashResponse(BaseModel):
     wallet_total: Decimal | None
     credit_sales_total: Decimal | None
     cash_credit_repayments: Decimal | None
+    card_upi_credit_repayments: Decimal | None
     cash_shortfall_settlements: Decimal | None
     cash_expenses: Decimal | None
     bank_deposits_total: Decimal | None
@@ -324,6 +325,7 @@ def _cash_to_response(cash: reporting.DayCash) -> DayCashResponse:
         wallet_total=cash.wallet_total,
         credit_sales_total=cash.credit_sales_total,
         cash_credit_repayments=cash.cash_credit_repayments,
+        card_upi_credit_repayments=cash.card_upi_credit_repayments,
         cash_shortfall_settlements=cash.cash_shortfall_settlements,
         cash_expenses=cash.cash_expenses,
         bank_deposits_total=cash.bank_deposits_total,

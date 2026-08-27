@@ -379,6 +379,14 @@ def create_credit_sale(
                 ),
             )
 
+        # §5.2's double-count guard, Phase 16. Everything before this customer's opening
+        # balance is already inside that figure, so an entry dated earlier would be counted
+        # twice -- once in the opening balance and once on its own. Checked before the limit,
+        # because a refused date makes the limit question moot.
+        credit_service.refuse_entry_before_opening_balance(
+            db, customer_id=customer.id, business_date=shift.business_date
+        )
+
         # §6.6's limit, and the admin override. Checked before anything is written.
         if payload.limit_override_reason is not None:
             if not satisfies(actor.role, Role.admin):

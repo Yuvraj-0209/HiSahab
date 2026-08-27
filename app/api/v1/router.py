@@ -16,6 +16,7 @@ from app.api.v1 import (
     client_config,
     collections,
     credit_customers,
+    credit_opening_balances,
     credit_repayments,
     credit_sales,
     daily_summaries,
@@ -106,6 +107,12 @@ api_router.include_router(credit_customers.router)
 # in shifts.py, so there is no ordering hazard against it or against credit_customers.py.
 api_router.include_router(credit_sales.router)
 api_router.include_router(credit_repayments.router)
+
+# Phase 16 -- opening balances: §6.6's third term, the one the ledger was missing.
+# `/credit-opening-balances` and `/credit-opening-balances/{id}/reversals` share no prefix
+# with `/credit-customers`, so the ordering hazard above does not reach here. Registered
+# after the customer router only because it reads through it.
+api_router.include_router(credit_opening_balances.router)
 
 # Phase 10 -- the cash engine. Non-fuel sales hang off a shift, same depth and shape as
 # collections and expenses, so there is no ordering hazard against shifts.py or against

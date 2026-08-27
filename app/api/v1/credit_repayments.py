@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal
+from datetime import date
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -29,20 +30,24 @@ from fastapi import APIRouter, Depends, Header
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, StringConstraints, condecimal
+from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 
-from app.api.deps import ShiftAccess, require_shift_access
+from app.api.cursor import DEFAULT_LIMIT, MAX_LIMIT, decode_cursor, encode_cursor
+from app.api.deps import Actor, ShiftAccess, require_role, require_shift_access
 from app.core import idempotency
 from app.core.audit import AuditAction
 from app.core.credit import CreditRepaymentMode
+from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.roles import Role, satisfies
 from app.core.shifts import ShiftStatus
 from app.db.session import get_db
 from app.models.attachment import Attachment
-from app.models.credit import CreditRepayment
+from app.models.credit import CreditCustomer, CreditRepayment
 from app.services import attachments as attachment_service
 from app.services import audit, credit as credit_service
+from app.services import shifts as shift_service
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +67,10 @@ ReasonValue = Annotated[
 
 class CreditRepaymentResponse(BaseModel):
     id: UUID
-    shift_id: UUID
+    # Nullable since Phase 16: `None` means the money arrived at the bank rather than at
+    # this pump, and §6.4 therefore never sees it (§5.2).
+    shift_id: UUID | None
+    business_date: date
     credit_customer_id: UUID
     amount: Decimal
     mode: CreditRepaymentMode
@@ -99,6 +107,30 @@ class CreditRepaymentUpdate(BaseModel):
     mode: CreditRepaymentMode | None = None
 
 
+class DatedCreditRepaymentCreate(BaseModel):
+    """A repayment that arrived at the bank rather than at this pump (§5.2).
+
+    Separate from `CreditRepaymentCreate` rather than a widening of it, because the two
+    genuinely differ: that one takes its shift from the path and its date from the shift,
+    this one takes a date and has no shift at all. Both are `extra="forbid"`, so merging
+    them would mean two optional fields that are each required in exactly one case -- a
+    shape that validates nothing and reads as though either is acceptable anywhere.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    credit_customer_id: UUID
+    amount: MoneyValue
+    mode: CreditRepaymentMode
+    business_date: date
+    attachment_id: UUID | None = None
+
+
+class DatedCreditRepaymentPage(BaseModel):
+    items: list[CreditRepaymentResponse]
+    next_cursor: str | None
+
+
 class CreditRepaymentReversal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -109,8 +141,13 @@ class CreditRepaymentReversal(BaseModel):
 class CreditRepaymentPage(BaseModel):
     items: list[CreditRepaymentResponse]
     total: Decimal
-    # §6.4's term, split out so Phase 10 does not have to re-derive which modes count.
+    # §6.4's terms, split out so Phase 10 does not have to re-derive which modes count.
     cash_total: Decimal
+    # Phase 16. Udhaar settled on the machine is inside this shift's card/UPI collections,
+    # which §6.4 subtracts -- so it is a term of the equation too, on the sales side. Shown
+    # beside `cash_total` because "why is my card figure not the whole card figure" is
+    # otherwise a question somebody has to ask.
+    card_upi_total: Decimal
     truncated: bool
 
 
@@ -129,6 +166,7 @@ def _to_response(
     return CreditRepaymentResponse(
         id=row.id,
         shift_id=row.shift_id,
+        business_date=row.business_date,
         credit_customer_id=row.credit_customer_id,
         amount=row.amount,
         mode=CreditRepaymentMode(row.mode),
@@ -143,6 +181,8 @@ def _to_response(
 def _audit_snapshot(row: CreditRepayment) -> dict[str, object]:
     return {
         "credit_customer_id": str(row.credit_customer_id),
+        "shift_id": str(row.shift_id) if row.shift_id else None,
+        "business_date": row.business_date.isoformat(),
         "amount": row.amount,
         "mode": row.mode,
         "attachment_id": str(row.attachment_id) if row.attachment_id else None,
@@ -212,6 +252,7 @@ def list_credit_repayments(
         # §6.4's `cash_credit_repayments` term, filtered to the one mode that reaches the
         # drawer. Answered in the service, next to the rows it sums.
         cash_total=credit_service.cash_repayments_total(db, shift_id=shift.id),
+        card_upi_total=credit_service.card_upi_repayments_total(db, shift_id=shift.id),
         truncated=truncated,
     )
 
@@ -268,9 +309,19 @@ def create_credit_repayment(
                 db, attachment=attachment, outlet_id=shift.outlet_id
             )
 
+        # §5.2's double-count guard: everything before the customer's opening balance is
+        # already inside that figure, so an entry dated earlier would be counted twice.
+        credit_service.refuse_entry_before_opening_balance(
+            db, customer_id=customer.id, business_date=shift.business_date
+        )
+
         repayment = CreditRepayment(
             credit_customer_id=customer.id,
             shift_id=shift.id,
+            # §3 rule 7: taken from the shift, never from the client. §4.7 makes this the
+            # normal case rather than an edge one -- the day is typed in after the fact, so
+            # "today" would file the row under a date the register never mentions.
+            business_date=shift.business_date,
             amount=payload.amount,
             mode=payload.mode.value,
             attachment_id=attachment.id if attachment is not None else None,
@@ -486,3 +537,202 @@ def reverse_credit_repayment(
         db, key=key, endpoint=endpoint, user_id=actor.user.id, status_code=201, body=body
     )
     return response
+
+
+# --- repayments that arrived at the bank (§5.2, Phase 16) ---------------------
+#
+# Manager floor, and that is not an arbitrary choice. `require_shift_access` applies §8's
+# ownership axis -- "an attendant may write only to a shift whose `attendant_id` is their
+# own" -- and a repayment with no shift has no such axis to check. Rather than invent one,
+# the endpoint sits at the floor where ownership stops being the question.
+
+
+@router.get("/credit-repayments", response_model=DatedCreditRepaymentPage)
+def list_recent_repayments(
+    limit: int = DEFAULT_LIMIT,
+    cursor: str | None = None,
+    actor: Actor = Depends(require_role(Role.manager)),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Recent settlements across every customer at this outlet, newest first.
+
+    The read side of the dated form below. A write screen with no read is the "record and
+    hope" shape, and on the connectivity §6.10 was built for that is a real cost.
+
+    Keyed on `(created_at, id)` through the shared `encode_cursor` / `decode_cursor` -- the
+    same pair `/expenses/flagged` reuses, and deliberately not a third encoder (§9). Note it
+    is entry order rather than business date: this list answers "did what I just typed
+    land", which is a question about typing. The *ledger* orders by business date, because
+    that answers a different question.
+    """
+    limit = max(1, min(limit, MAX_LIMIT))
+
+    statement = (
+        select(CreditRepayment)
+        .join(
+            CreditCustomer,
+            CreditCustomer.id == CreditRepayment.credit_customer_id,
+        )
+        .where(CreditCustomer.outlet_id == actor.outlet_id)
+        .order_by(CreditRepayment.created_at.desc(), CreditRepayment.id.desc())
+    )
+    if cursor is not None:
+        last_created_at, last_id = decode_cursor(cursor)
+        statement = statement.where(
+            tuple_(CreditRepayment.created_at, CreditRepayment.id)
+            < tuple_(last_created_at, last_id)
+        )
+
+    rows = list(db.execute(statement.limit(limit + 1)).scalars().all())
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+
+    reversed_ids = {
+        row.reverses_id for row in rows if row.reverses_id is not None
+    }
+    return DatedCreditRepaymentPage(
+        items=[
+            _to_response(row, is_reversed=row.id in reversed_ids) for row in rows
+        ],
+        next_cursor=(
+            encode_cursor(rows[-1].created_at, rows[-1].id) if has_more and rows else None
+        ),
+    )
+
+
+@router.post("/credit-repayments", response_model=CreditRepaymentResponse, status_code=201)
+def create_dated_repayment(
+    payload: DatedCreditRepaymentCreate,
+    actor: Actor = Depends(require_role(Role.manager)),
+    db: Session = Depends(get_db),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> Any:
+    """Record a repayment that reached a bank account rather than this pump (§5.2).
+
+    **This is the endpoint that unblocks reconstructing a ledger.** Before Phase 16
+    `credit_repayments.shift_id` was `NOT NULL`, and §5.2 forbids modifying anything
+    referencing a `locked` shift -- so a bank transfer on a day already locked could not be
+    recorded at all, and one arriving on a day the outlet was shut had no shift to attach
+    to. §4.7 says the whole day is typed in after the fact, which makes both the normal case
+    here rather than the exception.
+
+    It writes no shift, and therefore touches no term of §6.4. That is the entire meaning of
+    the rule: every cash-engine sum is `WHERE shift_id = :shift_id`, so a row with no shift
+    is invisible to the drawer by construction rather than by a filter somebody has to
+    remember to write.
+
+    `mode = cash` is refused. Cash can only land in a drawer, and a cash repayment nobody
+    can attribute to a shift is money §6.4 would never count -- the same rule
+    `ck_credit_repayments_cash_needs_shift` states at the database (§6.6, belt and braces).
+    """
+    key = _require_key(idempotency_key)
+    endpoint = "POST /credit-repayments"
+
+    if payload.mode is CreditRepaymentMode.cash:
+        raise AppError(
+            status_code=422,
+            code="CASH_REPAYMENT_NEEDS_SHIFT",
+            detail=(
+                "Cash lands in a drawer, so a cash repayment has to be recorded against "
+                "the shift it arrived on. Use the shift's repayments screen instead."
+            ),
+        )
+
+    replay = idempotency.begin(
+        db,
+        key=key,
+        endpoint=endpoint,
+        user_id=actor.user.id,
+        request_fingerprint=idempotency.fingerprint(
+            path_params={}, body=jsonable_encoder(payload)
+        ),
+    )
+    if replay is not None:
+        return _replayed(replay)
+
+    try:
+        # `for_sale=False`: a deactivated customer may still pay off what they owe (§5.1).
+        customer = credit_service.resolve_customer(
+            db,
+            customer_id=payload.credit_customer_id,
+            outlet_id=actor.outlet_id,
+            for_sale=False,
+        )
+
+        # §6.1: a future business date is always a data-entry error. Evaluated in the
+        # outlet's local timezone, because at 23:00 IST the UTC date is still yesterday and
+        # a correct entry would be refused.
+        if payload.business_date > shift_service.outlet_today(
+            get_settings().TZ_DISPLAY
+        ):
+            raise AppError(
+                status_code=422,
+                code="BUSINESS_DATE_IN_FUTURE",
+                detail=(
+                    "That business date is in the future. The money cannot have arrived "
+                    "yet."
+                ),
+            )
+
+        credit_service.refuse_entry_before_opening_balance(
+            db, customer_id=customer.id, business_date=payload.business_date
+        )
+
+        attachment: Attachment | None = None
+        if payload.attachment_id is not None:
+            attachment = db.get(Attachment, payload.attachment_id)
+            if attachment is None:
+                raise AppError(
+                    status_code=404,
+                    code="ATTACHMENT_NOT_FOUND",
+                    detail="No attachment with that id.",
+                )
+            attachment_service.link(
+                db, attachment=attachment, outlet_id=actor.outlet_id
+            )
+
+        repayment = CreditRepayment(
+            credit_customer_id=customer.id,
+            shift_id=None,
+            business_date=payload.business_date,
+            amount=payload.amount,
+            mode=payload.mode.value,
+            attachment_id=attachment.id if attachment is not None else None,
+            created_by=actor.user.id,
+        )
+        db.add(repayment)
+        db.flush()
+
+        audit.record(
+            db,
+            outlet_id=actor.outlet_id,
+            table_name="credit_repayments",
+            record_id=repayment.id,
+            action=AuditAction.insert,
+            changed_by=actor.user.id,
+            new_values=_audit_snapshot(repayment),
+        )
+        db.commit()
+        db.refresh(repayment)
+    except Exception:
+        db.rollback()
+        idempotency.discard(db, key=key, endpoint=endpoint, user_id=actor.user.id)
+        raise
+
+    response = _to_response(repayment)
+    body = jsonable_encoder(response)
+    idempotency.store(
+        db, key=key, endpoint=endpoint, user_id=actor.user.id, status_code=201, body=body
+    )
+
+    logger.info(
+        "dated credit repayment recorded",
+        extra={
+            "credit_repayment_id": str(repayment.id),
+            "credit_customer_id": str(customer.id),
+            "business_date": repayment.business_date.isoformat(),
+            "amount": str(repayment.amount),
+            "mode": repayment.mode,
+        },
+    )
+    return JSONResponse(status_code=201, content=body)

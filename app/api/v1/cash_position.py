@@ -71,6 +71,7 @@ class CashPositionResponse(BaseModel):
     wallet_total: Decimal
     credit_sales_total: Decimal
     cash_credit_repayments: Decimal
+    card_upi_credit_repayments: Decimal
     cash_shortfall_settlements: Decimal
     cash_expenses: Decimal
 

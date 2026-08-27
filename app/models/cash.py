@@ -229,6 +229,9 @@ class DailyCashSummary(Base):
     wallet_total: Mapped[Decimal] = _money()
     credit_sales_total: Mapped[Decimal] = _money()
     cash_credit_repayments: Mapped[Decimal] = _money()
+    # §6.4's twelfth term, Phase 16 -- udhaar settled on the card machine or the UPI QR.
+    # Stored like every other component so a manager can see which term moved (§5.2).
+    card_upi_credit_repayments: Mapped[Decimal] = _money()
     cash_shortfall_settlements: Mapped[Decimal] = _money()
     cash_expenses: Mapped[Decimal] = _money()
     bank_deposits_total: Mapped[Decimal] = _money()

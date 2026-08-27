@@ -401,6 +401,10 @@ class CashPosition:
     wallet_total: Decimal
     credit_sales_total: Decimal
     cash_credit_repayments: Decimal
+    # §6.4's twelfth term, Phase 16. Udhaar settled on the card machine or the UPI QR is
+    # inside `card_total` / `upi_total` and is not a sale, so it has to be added back on the
+    # SALES side -- never the cash side, since the money never entered the drawer.
+    card_upi_credit_repayments: Decimal
     cash_shortfall_settlements: Decimal
     cash_expenses: Decimal
     accountable_cash: Decimal
@@ -450,12 +454,20 @@ def shift_cash_position(db: Session, *, shift: Shift) -> CashPosition:
     non_fuel = non_fuel_sales_total(db, shift_id=shift.id)
     credit_sales = credit_service.credit_sales_total(db, shift_id=shift.id)
     repayments = credit_service.cash_repayments_total(db, shift_id=shift.id)
+    card_upi_repayments = credit_service.card_upi_repayments_total(
+        db, shift_id=shift.id
+    )
     settlements = cash_settlements_total(db, shift_id=shift.id)
     expenses_paid = expense_service.cash_expenses_total(db, shift_id=shift.id)
 
     accountable = (
         metered
         + non_fuel
+        # Phase 16. `card` and `upi` below are the machines' whole-day totals, and a customer
+        # settling an old bill on one of them puts money in there that no meter counted.
+        # Subtracting the machine total without adding the settlement back showed the salesman
+        # a surplus he was not holding -- §6.4's worked example, and it was live on real money.
+        + card_upi_repayments
         - card
         - upi
         - wallet
@@ -483,6 +495,7 @@ def shift_cash_position(db: Session, *, shift: Shift) -> CashPosition:
         wallet_total=wallet,
         credit_sales_total=credit_sales,
         cash_credit_repayments=repayments,
+        card_upi_credit_repayments=card_upi_repayments,
         cash_shortfall_settlements=settlements,
         cash_expenses=expenses_paid,
         accountable_cash=accountable,
@@ -513,6 +526,7 @@ class DayTotals:
     wallet_total: Decimal
     credit_sales_total: Decimal
     cash_credit_repayments: Decimal
+    card_upi_credit_repayments: Decimal
     cash_shortfall_settlements: Decimal
     cash_expenses: Decimal
     bank_deposits_total: Decimal
@@ -527,10 +541,15 @@ class DayTotals:
         the **sales** side, never the cash side. §6.4's worked example: a card-paid bottle of
         oil is already inside `card_total`, so putting it on the cash side would understate
         derived cash by exactly its amount.
+
+        `card_upi_credit_repayments` joins it there in Phase 16, for the identical reason: a
+        settlement taken on the machine is inside `card_total` and is not a sale, so without
+        it the salesman reads as holding a surplus nobody gave him.
         """
         return (
             self.metered_fuel_sales
             + self.non_fuel_sales_total
+            + self.card_upi_credit_repayments
             - self.card_total
             - self.upi_total
             - self.wallet_total
@@ -572,6 +591,7 @@ def day_totals(db: Session, *, outlet_id: UUID, business_date: date) -> DayTotal
             "cash_expenses",
             "bank_deposits_total",
             "shortfalls_booked",
+            "card_upi_credit_repayments",
         )
     }
     incomplete = False
@@ -585,6 +605,7 @@ def day_totals(db: Session, *, outlet_id: UUID, business_date: date) -> DayTotal
         totals["wallet_total"] += position.wallet_total
         totals["credit_sales_total"] += position.credit_sales_total
         totals["cash_credit_repayments"] += position.cash_credit_repayments
+        totals["card_upi_credit_repayments"] += position.card_upi_credit_repayments
         totals["cash_shortfall_settlements"] += position.cash_shortfall_settlements
         totals["cash_expenses"] += position.cash_expenses
         totals["shortfalls_booked"] += position.shortfalls_booked

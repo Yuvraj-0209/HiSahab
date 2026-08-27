@@ -1925,6 +1925,7 @@ def make_daily_summary(engine: Engine) -> Iterator[Callable[..., UUID]]:
         "wallet_total",
         "credit_sales_total",
         "cash_credit_repayments",
+        "card_upi_credit_repayments",
         "cash_shortfall_settlements",
         "cash_expenses",
         "bank_deposits_total",

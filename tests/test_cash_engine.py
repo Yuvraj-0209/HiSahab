@@ -219,16 +219,29 @@ async def test_an_unbooked_gap_does_not_reduce_expected_closing(
     assert Decimal(response.json()["shortfalls_booked"]) == Decimal("0.00")
 
 
-async def test_a_cash_repayment_raises_expected_cash_but_a_upi_one_does_not(
+async def test_only_a_cash_repayment_reaches_the_drawer(
     client: AsyncClient,
     make_user: Callable[..., UUID],
     make_shift: Callable[..., UUID],
+    make_collection: Callable[..., UUID],
     make_credit_customer: Callable[..., UUID],
     make_credit_repayment: Callable[..., UUID],
     auth_headers,
 ) -> None:
     """§10 names this case. A customer settling by bank transfer moves no money through the
-    drawer, and adding it would invent a shortfall on the very day they paid."""
+    drawer, and adding it would invent a shortfall on the very day they paid.
+
+    **Phase 16 narrowed what this test may claim.** It used to assert that a UPI repayment
+    left `expected_closing` untouched, which was true only because the scenario gave the
+    shift no UPI *collection* to net it against. In the real world the settlement is inside
+    the machine's total, §6.4 subtracts that total, and nothing put the settlement back --
+    so the salesman read as holding a surplus nobody gave him. The two now cancel, which is
+    what "it does not reach the drawer" actually means, and the ₹9,000 is visible in its own
+    stored term rather than being silently absent.
+
+    `bank_transfer` is the mode that genuinely touches nothing: it never went through a
+    machine here, so there is no collection to net it against and none is invented.
+    """
     admin = make_user("admin")
     attendant = make_user("attendant")
     day = date(2026, 5, 5)
@@ -245,13 +258,19 @@ async def test_a_cash_repayment_raises_expected_cash_but_a_upi_one_does_not(
     make_credit_repayment(shift, customer, amount="2000.00", mode="cash")
     make_credit_repayment(shift, customer, amount="9000.00", mode="upi")
     make_credit_repayment(shift, customer, amount="7000.00", mode="bank_transfer")
+    # The UPI settlement is inside the QR's day total, exactly as it is on a real day.
+    make_collection(shift, mode="upi", amount="9000.00")
 
     response = await _create(
         client, auth_headers(admin), day=day, opening_balance="0.00"
     )
+    body = response.json()
 
-    assert Decimal(response.json()["cash_credit_repayments"]) == Decimal("2000.00")
-    assert Decimal(response.json()["expected_closing"]) == Decimal("2000.00")
+    assert Decimal(body["cash_credit_repayments"]) == Decimal("2000.00")
+    assert Decimal(body["card_upi_credit_repayments"]) == Decimal("9000.00")
+    # 9,000 added on the sales side, 9,000 subtracted as a UPI collection: net zero.
+    # The bank transfer contributes nothing at all. Only the cash repayment moves the figure.
+    assert Decimal(body["expected_closing"]) == Decimal("2000.00")
 
 
 async def test_only_cash_expenses_leave_the_drawer(

@@ -14,16 +14,23 @@ the database entirely.
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
+from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import exists, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.core.credit import CreditRepaymentMode
 from app.core.errors import AppError
 from app.models.attachment import Attachment
-from app.models.credit import CreditCustomer, CreditRepayment, CreditSale
+from app.models.credit import (
+    CreditCustomer,
+    CreditOpeningBalance,
+    CreditRepayment,
+    CreditSale,
+)
 from app.models.shift import Shift
 
 logger = logging.getLogger(__name__)
@@ -406,6 +413,10 @@ def reverse_repayment(
     reversal = CreditRepayment(
         credit_customer_id=original.credit_customer_id,
         shift_id=original.shift_id,
+        # Carried, not recomputed. A correction restates the amount, never when the money
+        # arrived -- and moving the date would silently change which §6.4 shift, or which
+        # side of an opening balance, the row belongs to (§5.2).
+        business_date=original.business_date,
         amount=-original.amount,
         mode=original.mode,
         attachment_id=original.attachment_id,
@@ -421,6 +432,7 @@ def reverse_repayment(
         replacement = CreditRepayment(
             credit_customer_id=original.credit_customer_id,
             shift_id=original.shift_id,
+            business_date=original.business_date,
             amount=replacement_amount,
             mode=original.mode,
             attachment_id=original.attachment_id,
@@ -496,9 +508,12 @@ def credit_sales_total(db: Session, *, shift_id: UUID) -> Decimal:
 
 
 def _repayments_sum(
-    db: Session, *, shift_id: UUID, mode: CreditRepaymentMode | None = None
+    db: Session,
+    *,
+    shift_id: UUID,
+    modes: Collection[CreditRepaymentMode] | None = None,
 ) -> Decimal:
-    """Sum this shift's repayments, optionally narrowed to one mode.
+    """Sum this shift's repayments, optionally narrowed to a set of modes.
 
     Written once and parameterised, in the shape `pricing._effective_row_at` established for
     `rate_at` / `margin_at`: the two public callers below differ by one `WHERE` clause, and
@@ -509,10 +524,20 @@ def _repayments_sum(
     **Reversals are included**, for the reason `outstanding` gives: a cancelled repayment must
     show as the reduction it is rather than vanish. A reversal inherits the original's `mode`,
     so a reversed cash repayment nets out inside the filter rather than escaping it.
+
+    **Shift-scoped, and that is now load-bearing rather than incidental.** Since Phase 16 a
+    repayment may carry no shift at all -- money that reached a bank account rather than this
+    pump (§5.2). Such a row matches no shift here, which is exactly right: §6.4 must never see
+    it. The `WHERE shift_id = :shift_id` below is the whole implementation of that rule.
+
+    Phase 16 widened `mode` to `modes` because there are now two mode-filtered callers and the
+    second wants two labels. One membership test rather than two near-identical functions.
     """
     conditions = [CreditRepayment.shift_id == shift_id]
-    if mode is not None:
-        conditions.append(CreditRepayment.mode == mode.value)
+    if modes is not None:
+        conditions.append(
+            CreditRepayment.mode.in_([mode.value for mode in modes])
+        )
     return db.execute(
         select(
             func.coalesce(func.sum(CreditRepayment.amount), Decimal("0.00"))
@@ -544,7 +569,282 @@ def cash_repayments_total(db: Session, *, shift_id: UUID) -> Decimal:
     wrote it, so §6.4's equation reads every term from one layer. A router is not where a term
     of the cash equation belongs, and Phase 10's engine must not import a router to find one.
     """
-    return _repayments_sum(db, shift_id=shift_id, mode=CreditRepaymentMode.cash)
+    return _repayments_sum(db, shift_id=shift_id, modes=(CreditRepaymentMode.cash,))
+
+
+def card_upi_repayments_total(db: Session, *, shift_id: UUID) -> Decimal:
+    """§6.4's `card_upi_credit_repayments` term for one shift. **Phase 16.**
+
+    The bug this closes was live on real money: the owner confirms customers settle udhaar on
+    the card machine. That settlement is inside `collections.mode = 'card'` -- the machine's
+    whole-day total -- which §6.4 subtracts from metered sales to derive cash. Nothing put it
+    back, because it is not a sale and `cash_repayments_total` above filters it out. So
+    `accountable_cash` came out low by exactly the settlement, and since
+    `gap = accountable - declared` the salesman read as holding a **surplus** nobody gave him.
+
+    It therefore enters on the **sales** side, where §6.4 already puts a card-paid bottle of
+    oil, and for the identical reason. Putting it on the cash side would be wrong by the same
+    amount in the same direction -- the money never entered the drawer (§14).
+
+    **This term depends on `collections.mode = 'card'` meaning the machine's total**, which is
+    what §5.2 says it is: one lumped figure per mode, read off the terminal. If a salesman ever
+    typed a card figure that already excluded settlements, this would double-count. That is a
+    data-entry contract, not an arithmetic one, and it is stated here because nothing else
+    would say it.
+
+    `bank_transfer` is deliberately absent: it never touched a machine at this pump.
+    """
+    return _repayments_sum(
+        db,
+        shift_id=shift_id,
+        modes=(CreditRepaymentMode.card, CreditRepaymentMode.upi),
+    )
+
+
+# --- opening balances (§5.2, §6.6 -- Phase 16) --------------------------------
+
+
+def live_opening_balance(
+    db: Session, *, customer_id: UUID
+) -> CreditOpeningBalance | None:
+    """The one opening balance currently standing for this customer, or `None`.
+
+    **`None` means nobody has entered this customer's history**, which is a different fact
+    from an entered ₹0.00 (§6.8, §14). `outstanding` above returns ₹0.00 for both, correctly
+    -- the arithmetic is the same -- so a caller that needs to tell them apart asks here.
+
+    *Live* means what it means for `collections` in §5.2: not itself a reversal, and not
+    referenced by one. There is deliberately no unique constraint expressing this, because a
+    reversed row stays in the table forever and its replacement would collide with it.
+    """
+    # A correlated NOT EXISTS over an alias of the same table -- "nothing points at me" --
+    # rather than a self-join, so it reads the way the other liveness checks in this module do.
+    inner = aliased(CreditOpeningBalance)
+    return db.execute(
+        select(CreditOpeningBalance)
+        .where(
+            CreditOpeningBalance.credit_customer_id == customer_id,
+            CreditOpeningBalance.reverses_id.is_(None),
+            ~exists().where(inner.reverses_id == CreditOpeningBalance.id),
+        )
+        .order_by(CreditOpeningBalance.created_at.desc())
+    ).scalars().first()
+
+
+def opening_balances_by_customer(
+    db: Session, *, outlet_id: UUID
+) -> dict[UUID, CreditOpeningBalance]:
+    """Every customer's live opening balance at an outlet, in one query rather than N.
+
+    The bulk form of `live_opening_balance`, and it keeps that function's meaning exactly: a
+    customer absent from the returned mapping has no opening balance entered, and a customer
+    present with `amount == 0` was checked and found square. Do not fill the gaps with zeros
+    -- that is precisely the collapse §14 forbids.
+    """
+    inner = aliased(CreditOpeningBalance)
+    rows = db.execute(
+        select(CreditOpeningBalance)
+        .join(
+            CreditCustomer,
+            CreditCustomer.id == CreditOpeningBalance.credit_customer_id,
+        )
+        .where(
+            CreditCustomer.outlet_id == outlet_id,
+            CreditOpeningBalance.reverses_id.is_(None),
+            ~exists().where(inner.reverses_id == CreditOpeningBalance.id),
+        )
+    ).scalars().all()
+    return {row.credit_customer_id: row for row in rows}
+
+
+def earliest_entry_date(db: Session, *, customer_id: UUID) -> date | None:
+    """The business date of this customer's oldest credit sale or repayment.
+
+    Used only by `set_opening_balance` below, to refuse an opening balance that would
+    double-count rows already recorded before it.
+    """
+    oldest_sale = db.execute(
+        select(func.min(Shift.business_date))
+        .join(CreditSale, CreditSale.shift_id == Shift.id)
+        .where(CreditSale.credit_customer_id == customer_id)
+    ).scalar_one()
+    oldest_repayment = db.execute(
+        select(func.min(CreditRepayment.business_date)).where(
+            CreditRepayment.credit_customer_id == customer_id
+        )
+    ).scalar_one()
+
+    candidates = [d for d in (oldest_sale, oldest_repayment) if d is not None]
+    return min(candidates) if candidates else None
+
+
+def refuse_entry_before_opening_balance(
+    db: Session, *, customer_id: UUID, business_date: date
+) -> None:
+    """§5.2's double-count guard, applied when a sale or repayment is recorded.
+
+    The opening figure already contains everything before `as_of_date`, so an entry dated
+    earlier would be counted twice -- once inside the opening balance and once on its own.
+    The guard exists in both directions; `set_opening_balance` below is the other one.
+    """
+    opening = live_opening_balance(db, customer_id=customer_id)
+    if opening is None or business_date >= opening.as_of_date:
+        return
+
+    raise AppError(
+        status_code=409,
+        code="BEFORE_OPENING_BALANCE_DATE",
+        detail=(
+            f"This customer's ledger starts on {opening.as_of_date.isoformat()}, and "
+            f"everything before that is already inside their opening balance. An entry "
+            f"dated {business_date.isoformat()} would be counted twice."
+        ),
+    )
+
+
+def set_opening_balance(
+    db: Session,
+    *,
+    customer: CreditCustomer,
+    as_of_date: date,
+    amount: Decimal,
+    actor_id: UUID,
+) -> CreditOpeningBalance:
+    """Anchor a customer's ledger to a real figure on a real date (§5.2, §6.6).
+
+    Two refusals, and they are the same guard from opposite sides:
+
+    * a live opening balance already exists -- 409 `OPENING_BALANCE_ALREADY_SET`. Correct it
+      with a reversal and a reason, never by writing a second one. §5.2 explains at length why
+      this is a service check rather than a unique constraint;
+    * the customer already has a sale or repayment dated **before** `as_of_date` -- 409
+      `ENTRIES_BEFORE_OPENING_BALANCE`. The opening figure contains that period already, so
+      keeping both would double-count it.
+
+    `amount` may be zero (§6.8: somebody checked and they were square) or negative (§6.6: a
+    customer who paid in advance is owed money by the pump). Neither is an error, which is why
+    this table carries no sign CHECK.
+
+    The caller commits, as everywhere else -- so the row and its `audit_logs` entry land in
+    one transaction or neither (§14).
+    """
+    if live_opening_balance(db, customer_id=customer.id) is not None:
+        raise AppError(
+            status_code=409,
+            code="OPENING_BALANCE_ALREADY_SET",
+            detail=(
+                "This customer already has an opening balance. Reverse it with a reason "
+                "and enter the corrected figure -- a money row is never edited in place."
+            ),
+        )
+
+    earliest = earliest_entry_date(db, customer_id=customer.id)
+    if earliest is not None and earliest < as_of_date:
+        raise AppError(
+            status_code=409,
+            code="ENTRIES_BEFORE_OPENING_BALANCE",
+            detail=(
+                f"This customer already has entries from {earliest.isoformat()}, which is "
+                f"before {as_of_date.isoformat()}. An opening balance on that date would "
+                "count the same money twice."
+            ),
+        )
+
+    balance = CreditOpeningBalance(
+        credit_customer_id=customer.id,
+        as_of_date=as_of_date,
+        amount=amount,
+        created_by=actor_id,
+    )
+    db.add(balance)
+    db.flush()
+    return balance
+
+
+def opening_balance_reversal_of(db: Session, *, balance_id: UUID) -> UUID | None:
+    """The id of the row that cancels this one, if any. Matches `sale_reversal_of` above."""
+    return db.execute(
+        select(CreditOpeningBalance.id).where(
+            CreditOpeningBalance.reverses_id == balance_id
+        )
+    ).scalar_one_or_none()
+
+
+def reverse_opening_balance(
+    db: Session,
+    *,
+    original: CreditOpeningBalance,
+    reason: str,
+    actor_id: UUID,
+    replacement_amount: Decimal | None = None,
+) -> tuple[CreditOpeningBalance, CreditOpeningBalance | None]:
+    """§6.9's correction path: cancel by appending, never by editing.
+
+    Hand-rolled in the shape of `reverse_sale` above rather than delegating to
+    `cash.append_reversal`, which is the newer shared implementation -- **`app/services/cash.py`
+    imports this module**, so importing it back would be circular. The duplication is four
+    lines and the alternative is an import cycle or a third module holding one function.
+
+    `as_of_date` is carried onto both the reversal and any replacement: a correction restates
+    *what* was owed on a date, never *which* date. Moving the date is a different act, and it
+    would silently change which historical entries the double-count guard refuses.
+
+    Note the reversal's amount is `-original.amount` with no sign assertion, because this
+    table has no sign CHECK: §6.6 permits a negative opening balance, so a reversal here may
+    legitimately be positive. `reverses_id` is what distinguishes them (§5.2).
+    """
+    if original.reverses_id is not None:
+        raise AppError(
+            status_code=409,
+            code="CANNOT_REVERSE_A_REVERSAL",
+            detail=(
+                "This row is itself a reversal. To undo a reversal, record the correct "
+                "figure as a new opening balance rather than negating the negation."
+            ),
+        )
+
+    if opening_balance_reversal_of(db, balance_id=original.id) is not None:
+        raise AppError(
+            status_code=409,
+            code="ALREADY_REVERSED",
+            detail="This opening balance has already been reversed.",
+        )
+
+    reversal = CreditOpeningBalance(
+        credit_customer_id=original.credit_customer_id,
+        as_of_date=original.as_of_date,
+        amount=-original.amount,
+        reverses_id=original.id,
+        reversal_reason=reason,
+        created_by=actor_id,
+    )
+    db.add(reversal)
+    db.flush()
+
+    replacement = None
+    if replacement_amount is not None:
+        replacement = CreditOpeningBalance(
+            credit_customer_id=original.credit_customer_id,
+            as_of_date=original.as_of_date,
+            amount=replacement_amount,
+            created_by=actor_id,
+        )
+        db.add(replacement)
+        db.flush()
+
+    logger.warning(
+        "credit opening balance reversed",
+        extra={
+            "opening_balance_id": str(original.id),
+            "reversal_id": str(reversal.id),
+            "customer_id": str(original.credit_customer_id),
+            "amount": str(original.amount),
+            "reason": reason,
+            "replaced_with": str(replacement_amount) if replacement else None,
+            "reversed_by": str(actor_id),
+        },
+    )
+    return reversal, replacement
 
 
 def sales_missing_receipt(db: Session, *, shift: Shift) -> list[UUID]:
