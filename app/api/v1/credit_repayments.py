@@ -736,3 +736,129 @@ def create_dated_repayment(
         },
     )
     return JSONResponse(status_code=201, content=body)
+
+
+@router.post(
+    "/credit-repayments/{repayment_id}/reversals",
+    response_model=CreditRepaymentReversalResponse,
+    status_code=201,
+)
+def reverse_dated_repayment(
+    repayment_id: UUID,
+    payload: CreditRepaymentReversal,
+    actor: Actor = Depends(require_role(Role.manager)),
+    db: Session = Depends(get_db),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> Any:
+    """§6.9's correction path for a repayment that has no shift.
+
+    **This route exists because without it those rows were uncorrectable.** The other
+    reversal route is `/shifts/{shift_id}/credit-repayments/{id}/reversals`, and a row with
+    `shift_id IS NULL` can never reach it -- so a mistyped bank transfer stayed wrong in a
+    customer's ledger forever, which §6.9 exists to make impossible. Found by driving the
+    real app rather than in review.
+
+    **It refuses a repayment that *does* have a shift**, with 409
+    `REPAYMENT_BELONGS_TO_A_SHIFT`, and that is the load-bearing half. The shift-scoped route
+    applies §5.2's locked-shift rule -- 403 `LOCKED_SHIFT_REVERSAL_REQUIRES_ADMIN` for a
+    non-admin -- and a second route reaching the same rows without that check would not be a
+    convenience, it would be the hole. Every row is reversible through exactly one path.
+    """
+    key = _require_key(idempotency_key)
+    endpoint = "POST /credit-repayments/{repayment_id}/reversals"
+
+    replay = idempotency.begin(
+        db,
+        key=key,
+        endpoint=endpoint,
+        user_id=actor.user.id,
+        request_fingerprint=idempotency.fingerprint(
+            path_params={"repayment_id": repayment_id}, body=jsonable_encoder(payload)
+        ),
+    )
+    if replay is not None:
+        return _replayed(replay)
+
+    try:
+        # Scoped through the customer, because this table carries no `outlet_id` of its own
+        # (§5.0: derivable, so it waits). A row at another outlet is simply not found.
+        original = db.execute(
+            select(CreditRepayment)
+            .join(
+                CreditCustomer,
+                CreditCustomer.id == CreditRepayment.credit_customer_id,
+            )
+            .where(
+                CreditRepayment.id == repayment_id,
+                CreditCustomer.outlet_id == actor.outlet_id,
+            )
+        ).scalar_one_or_none()
+
+        if original is None:
+            raise AppError(
+                status_code=404,
+                code="CREDIT_REPAYMENT_NOT_FOUND",
+                detail="No repayment with that id.",
+            )
+
+        if original.shift_id is not None:
+            raise AppError(
+                status_code=409,
+                code="REPAYMENT_BELONGS_TO_A_SHIFT",
+                detail=(
+                    "This repayment was recorded against a shift, so it is reversed from "
+                    "that shift's repayments screen -- which is also where the locked-shift "
+                    "rule is applied."
+                ),
+            )
+
+        before = _audit_snapshot(original)
+        reversal, replacement = credit_service.reverse_repayment(
+            db,
+            original=original,
+            reason=payload.reason,
+            actor_id=actor.user.id,
+            replacement_amount=payload.replacement_amount,
+        )
+
+        audit.record(
+            db,
+            outlet_id=actor.outlet_id,
+            table_name="credit_repayments",
+            record_id=reversal.id,
+            action=AuditAction.reversal,
+            changed_by=actor.user.id,
+            old_values=before,
+            new_values=_audit_snapshot(reversal) | {"reason": reversal.reversal_reason},
+        )
+        if replacement is not None:
+            audit.record(
+                db,
+                outlet_id=actor.outlet_id,
+                table_name="credit_repayments",
+                record_id=replacement.id,
+                action=AuditAction.insert,
+                changed_by=actor.user.id,
+                new_values=_audit_snapshot(replacement),
+            )
+
+        db.commit()
+        db.refresh(reversal)
+        db.refresh(original)
+        if replacement is not None:
+            db.refresh(replacement)
+    except Exception:
+        db.rollback()
+        idempotency.discard(db, key=key, endpoint=endpoint, user_id=actor.user.id)
+        raise
+
+    response = CreditRepaymentReversalResponse(
+        reversal=_to_response(reversal),
+        replacement=_to_response(replacement) if replacement is not None else None,
+        original=_to_response(original, is_reversed=True),
+    )
+    body = jsonable_encoder(response)
+    idempotency.store(
+        db, key=key, endpoint=endpoint, user_id=actor.user.id, status_code=201, body=body
+    )
+    return JSONResponse(status_code=201, content=body)

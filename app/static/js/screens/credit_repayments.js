@@ -417,6 +417,26 @@ function ledgerRepaymentCard(repayment, byId, context) {
     repayment.reversal_reason
       ? el("p", { className: "t-caption", text: `Reason: ${repayment.reversal_reason}` })
       : null,
+    // §6.9: a money row is corrected by a reversal, never by an edit -- and a row with no
+    // shift cannot reach the shift-scoped reversal route, so it gets its own. Without this
+    // button a mistyped bank transfer would sit in a customer's ledger permanently.
+    !repayment.reverses_id && !repayment.is_reversed && repayment.shift_id === null
+      ? el("button", {
+          className: "btn btn-danger",
+          text: "Reverse",
+          attrs: { type: "button" },
+          on: {
+            click: () =>
+              openReversalSheet({
+                title: "Reverse payment",
+                path: `/credit-repayments/${repayment.id}/reversals`,
+                amount: repayment.amount,
+                description: customer?.name ?? "Payment",
+                onDone: () => renderLedgerRepayments(context.container, context),
+              }),
+          },
+        })
+      : null,
   ]);
 }
 

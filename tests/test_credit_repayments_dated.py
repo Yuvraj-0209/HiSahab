@@ -430,3 +430,133 @@ async def test_the_daily_summary_stores_the_new_component(
     assert response.status_code == 201, response.text
     assert response.json()["card_upi_credit_repayments"] == "1000.00"
     assert Decimal(response.json()["expected_closing"]) == Decimal("0.00")
+
+
+# --- §6.9's correction path for a row with no shift --------------------------
+#
+# The hole this section closes was found by probing the real app, not in review: the reversal
+# route is `/shifts/{shift_id}/credit-repayments/{id}/reversals`, and a repayment with no
+# shift can never reach it. §6.9 makes a reversal the *only* way to correct a money row, so a
+# mistyped bank transfer was uncorrectable -- permanently wrong in a customer's ledger.
+
+
+async def test_a_dated_repayment_can_be_reversed(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    auth_headers,
+    clean_credit,
+) -> None:
+    manager = make_user("manager")
+    customer = make_credit_customer(name="Ramesh", phone="9000000301")
+
+    created = await _post_dated(
+        client,
+        auth_headers(manager),
+        credit_customer_id=str(customer),
+        amount="4000.00",
+        mode="bank_transfer",
+        business_date=DAY.isoformat(),
+    )
+    assert created.status_code == 201
+    assert _outstanding(customer) == Decimal("-4000.00")
+
+    reversal = await client.post(
+        f"/api/v1/credit-repayments/{created.json()['id']}/reversals",
+        json={"reason": "Credited to the wrong customer."},
+        headers={**auth_headers(manager), "Idempotency-Key": str(uuid4())},
+    )
+
+    assert reversal.status_code == 201, reversal.text
+    body = reversal.json()
+    assert Decimal(body["reversal"]["amount"]) == Decimal("-4000.00")
+    assert body["reversal"]["business_date"] == DAY.isoformat()
+    assert body["original"]["is_reversed"] is True
+    assert _outstanding(customer) == Decimal("0.00")
+
+
+async def test_a_dated_reversal_can_carry_a_replacement(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    auth_headers,
+    clean_credit,
+) -> None:
+    """Applied in the same transaction, for the reason every other reversal route gives."""
+    manager = make_user("manager")
+    customer = make_credit_customer(name="Ramesh", phone="9000000302")
+    created = await _post_dated(
+        client,
+        auth_headers(manager),
+        credit_customer_id=str(customer),
+        amount="4000.00",
+        mode="bank_transfer",
+        business_date=DAY.isoformat(),
+    )
+
+    reversal = await client.post(
+        f"/api/v1/credit-repayments/{created.json()['id']}/reversals",
+        json={"reason": "Fat-fingered the amount.", "replacement_amount": "400.00"},
+        headers={**auth_headers(manager), "Idempotency-Key": str(uuid4())},
+    )
+
+    assert reversal.status_code == 201, reversal.text
+    assert Decimal(reversal.json()["replacement"]["amount"]) == Decimal("400.00")
+    assert reversal.json()["replacement"]["shift_id"] is None
+    assert _outstanding(customer) == Decimal("-400.00")
+
+
+async def test_the_dated_route_refuses_a_repayment_that_has_a_shift(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_repayment: Callable[..., UUID],
+    auth_headers,
+    clean_credit,
+) -> None:
+    """Otherwise this route is a way around the locked-shift guard.
+
+    The shift-scoped reversal route refuses a non-admin on a `locked` shift with 403
+    `LOCKED_SHIFT_REVERSAL_REQUIRES_ADMIN`. A second route that reversed the same rows
+    without that check would not be a convenience, it would be the hole.
+    """
+    manager = make_user("manager")
+    attendant = make_user("attendant")
+    shift = make_shift(attendant, business_date=DAY, sequence=1, status="locked")
+    customer = make_credit_customer(name="Ramesh", phone="9000000303")
+    repayment = make_credit_repayment(shift, customer, amount="500.00", mode="cash")
+
+    response = await client.post(
+        f"/api/v1/credit-repayments/{repayment}/reversals",
+        json={"reason": "Trying to dodge the locked-shift check."},
+        headers={**auth_headers(manager), "Idempotency-Key": str(uuid4())},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "REPAYMENT_BELONGS_TO_A_SHIFT"
+    assert _outstanding(customer) == Decimal("-500.00")
+
+
+async def test_an_attendant_cannot_reverse_a_dated_repayment(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    make_credit_repayment: Callable[..., UUID],
+    auth_headers,
+    clean_credit,
+) -> None:
+    attendant = make_user("attendant")
+    customer = make_credit_customer(name="Ramesh", phone="9000000304")
+    repayment = make_credit_repayment(
+        None, customer, amount="900.00", mode="bank_transfer", business_date=DAY
+    )
+
+    response = await client.post(
+        f"/api/v1/credit-repayments/{repayment}/reversals",
+        json={"reason": "Not my call to make."},
+        headers={**auth_headers(attendant), "Idempotency-Key": str(uuid4())},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "INSUFFICIENT_ROLE"

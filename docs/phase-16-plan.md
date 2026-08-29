@@ -230,6 +230,18 @@ exist in `app.css`. The first became `days.js`'s pattern — a `div.card` with a
 inside, since a `<button>` wrapping that much structure reads as one enormous control to a
 screen reader. The second became `list-row-value`, which already did the job.
 
+**A shift-less repayment could not be reversed at all, and that was found by using the app.**
+The reversal route is `/shifts/{shift_id}/credit-repayments/{id}/reversals`; a row with
+`shift_id IS NULL` can never reach it. §6.9 makes a reversal the *only* correction path, so a
+mistyped bank transfer would have sat in a customer's ledger permanently — the exact failure
+§6.9 exists to prevent, introduced by the feature that made those rows possible.
+
+`POST /credit-repayments/{id}/reversals` closes it, and **refuses a repayment that does have a
+shift** (409 `REPAYMENT_BELONGS_TO_A_SHIFT`). That refusal is the load-bearing half: the
+shift-scoped route applies §5.2's locked-shift rule, and a second route reaching the same rows
+without it would be a way around the check rather than a convenience. Every row is reversible
+through exactly one path.
+
 **Verified against the dev database**, not only the test suite: an opening balance set and a
 second refused, a bank transfer recorded against a date whose shift is `locked`, the ledger's
 running balance correct, and 2 July's cash position byte-identical afterwards — gap still ₹1.25,
