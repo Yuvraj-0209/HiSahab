@@ -266,6 +266,56 @@ async def test_reversing_frees_the_slot_for_a_replacement(
     assert _outstanding(customer) == Decimal("14200.00")
 
 
+async def test_a_wrong_date_is_corrected_by_reversing_and_re_entering(
+    client,
+    make_user: Callable[..., UUID],
+    make_credit_customer: Callable[..., UUID],
+    auth_headers,
+    clean_credit,
+) -> None:
+    """The real repair path, found by the owner hitting it.
+
+    A reversal *replacement* deliberately inherits the original's `as_of_date` -- a
+    correction restates what was owed on a date, never which date. So when the **date** is
+    the mistake, the fix is a reversal with **no** replacement, which frees the slot, and
+    then a fresh entry on the right date.
+
+    That path existed and nothing said so, because the correction sheet offers an amount and
+    the date is not on it. Pinned here so it cannot quietly stop working.
+    """
+    admin = make_user("admin")
+    customer = make_credit_customer(name="Aarth", phone="9000000117")
+
+    # The mistake: the date field defaulted to today and nobody looked at it.
+    wrong = await _post(
+        client, auth_headers(admin), customer_id=customer, amount="0.00",
+        as_of=date(2026, 8, 29),
+    )
+    assert wrong.status_code == 201
+
+    # It blocks exactly what matters -- back-entering the trading days before it.
+    assert _live_opening(customer) == (Decimal("0.00"), date(2026, 8, 29))
+
+    # Step one: reverse it, with NO replacement amount.
+    undo = await client.post(
+        f"/api/v1/credit-opening-balances/{wrong.json()['id']}/reversals",
+        json={"reason": "Dated today by mistake; the ledger starts on 1 July."},
+        headers={**auth_headers(admin), "Idempotency-Key": str(uuid4())},
+    )
+    assert undo.status_code == 201, undo.text
+    assert undo.json()["replacement"] is None
+    assert _live_opening(customer) is None
+
+    # Step two: enter it again on the right date.
+    again = await _post(
+        client, auth_headers(admin), customer_id=customer, amount="0.00", as_of=AS_OF
+    )
+    assert again.status_code == 201, again.text
+    assert _live_opening(customer) == (Decimal("0.00"), AS_OF)
+    # Both rows are ₹0.00 and net to nothing, so the balance never moved.
+    assert _outstanding(customer) == Decimal("0.00")
+
+
 async def test_a_customer_from_another_outlet_is_not_found(
     client,
     make_user: Callable[..., UUID],

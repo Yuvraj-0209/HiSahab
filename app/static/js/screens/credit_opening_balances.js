@@ -47,7 +47,14 @@ export async function renderOpeningBalances(container, { session, navigate }) {
     return;
   }
 
-  const context = { session, container, navigate };
+  // Default the date to the one already in use at this outlet, not to today.
+  //
+  // These are entered in a batch and they almost always share a date -- the day the ledger
+  // starts. Defaulting to `todayAtOutlet()` meant the first customer set the real date and
+  // every one after it silently offered the wrong one, which is exactly how a 0.00 landed on
+  // 29 August instead of 1 July. A date that is wrong AND invisible then blocks every
+  // back-entry before it (BEFORE_OPENING_BALANCE_DATE), which is the part that hurts.
+  const context = { session, container, navigate, defaultDate: ledgerStartDate(page.items) };
   const pending = page.items.filter((entry) => entry.opening_balance === null);
   const anchored = page.items.filter((entry) => entry.opening_balance !== null);
 
@@ -90,6 +97,17 @@ export async function renderOpeningBalances(container, { session, navigate }) {
         : empty("No credit customers yet. Add them under Admin › Credit customers first."),
     ]),
   );
+}
+
+/* The earliest `as_of_date` already entered here -- the ledger's start date -- or today for
+ * an outlet that has entered none yet. Comparing ISO date strings is a correct ordering and
+ * needs no Date object, which `time.js` explains at length. */
+function ledgerStartDate(items) {
+  const dates = items
+    .map((entry) => entry.as_of_date)
+    .filter((value) => value !== null)
+    .sort();
+  return dates.length ? dates[0] : todayAtOutlet();
 }
 
 function pendingCard(entry, context) {
@@ -139,8 +157,13 @@ function anchoredCard(entry, context) {
             path: `/credit-opening-balances/${entry.opening_balance_id}/reversals`,
             amount: entry.opening_balance,
             description: entry.name,
+            // Names the repair for a wrong DATE, which is otherwise invisible: a
+            // replacement inherits the original's `as_of_date` deliberately (a correction
+            // restates what was owed, never when), so the only way to move the date is to
+            // reverse with no replacement and enter it again.
             replacementText:
-              "Corrected opening balance (leave blank to remove it entirely)",
+              "Corrected amount — leave blank to remove it entirely, which is what you " +
+              "want if the DATE was wrong (then enter it again on the right date)",
             onDone: () => renderOpeningBalances(context.container, context),
           }),
       },
@@ -166,9 +189,9 @@ function openingSheet(entry, context) {
     name: "as_of_date",
     label: "As of",
     type: "date",
-    value: todayAtOutlet(),
+    value: context.defaultDate,
     required: true,
-    hint: "Their ledger starts here. Nothing dated before this can be entered afterwards.",
+    hint: "Their ledger starts here. Nothing dated before this can be entered afterwards — so if you are still back-entering July, this must be the start of July, not today.",
   });
 
   const form = new Form({ amount, as_of_date: asOf });
@@ -179,10 +202,20 @@ function openingSheet(entry, context) {
     attrs: { type: "button" },
   });
 
+  // The date is on the button, because this is the control that gets pressed without
+  // reading the form -- that is the whole appeal of it, and it is how a wrong date gets in.
   const zero = el("button", {
     className: "btn btn-block",
-    text: "They owed nothing",
+    text: `They owed nothing on ${businessDate(context.defaultDate)}`,
     attrs: { type: "button" },
+  });
+
+  // Keep the button honest if the date is edited.
+  asOf._input.addEventListener("change", () => {
+    const chosen = form.values().as_of_date;
+    zero.textContent = chosen
+      ? `They owed nothing on ${businessDate(chosen)}`
+      : "They owed nothing";
   });
 
   async function send(amountValue) {
