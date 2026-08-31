@@ -59,11 +59,9 @@ import { satisfies } from "../ui/nav.js";
 import { errorCard } from "./today.js";
 import { SOURCE_PILL } from "./reports.js";
 import {
-  SOURCE_LABEL,
   countSheet,
   createSheet,
   finaliseControls,
-  termRow,
 } from "./daily_summaries.js";
 
 /** The five steps a business date passes through, in order. See the module docstring. */
@@ -619,37 +617,12 @@ export async function renderDay(container, { session, navigate, businessDate: da
           ])
         : null,
 
-      // The stored component snapshot -- §5.2 -- and **only** for a snapshot day. On a
-      // computed day there is nothing stored to show, and rendering the live figures under
-      // this heading would claim a permanence they do not have (§13.20).
-      summary && cash.source === "snapshot"
-        ? el("div", { className: "card stack grid-wide" }, [
-            el("div", { className: "t-micro", text: "As it stood on the day" }),
-            el("p", {
-              className: "t-caption",
-              text: `Opening balance ${format(summary.opening_balance)} — ${
-                SOURCE_LABEL[summary.opening_balance_source] ?? summary.opening_balance_source
-              }.`,
-            }),
-            el("div", { className: "list" }, [
-              termRow("Metered fuel sales", summary.metered_fuel_sales),
-              termRow("Non-fuel sales", summary.non_fuel_sales_total),
-              termRow("Card", summary.card_total),
-              termRow("UPI", summary.upi_total),
-              termRow("Wallet", summary.wallet_total),
-              termRow("Credit sales", summary.credit_sales_total),
-              termRow("Cash repayments", summary.cash_credit_repayments),
-              termRow("Cash settlements", summary.cash_shortfall_settlements),
-              termRow("Cash expenses", summary.cash_expenses),
-              termRow("Bank deposits", summary.bank_deposits_total),
-              termRow("Shortfalls booked", summary.shortfalls_booked),
-            ]),
-            el("p", {
-              className: "t-caption",
-              text: "Stored, not recomputed — so the total and its own explanation cannot drift apart six months from now.",
-            }),
-          ])
-        : null,
+      // §13.20's "As it stood on the day" card was removed here. `_from_snapshot` in
+      // reporting.py reads every one of these eleven terms straight off `summary`, and this
+      // block only ever rendered when a summary exists -- so it was, every single time, a
+      // byte-for-byte repeat of the "Expected closing" card already at the top of this page.
+      // The stored-not-recomputed guarantee that section explained still holds; it is now
+      // explained once, where the figures actually live.
 
       summary?.notes
         ? el("div", { className: "card" }, [el("p", { className: "t-body", text: summary.notes })])

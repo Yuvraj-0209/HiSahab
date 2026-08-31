@@ -42,7 +42,7 @@
 
 import { el } from "../dom.js";
 import { api, explain } from "../api.js";
-import { format } from "../money.js";
+import { format, gapLabel } from "../money.js";
 import { todayAtOutlet } from "../time.js";
 import { field, Form } from "../ui/field.js";
 import { openSheet } from "../ui/sheet.js";
@@ -62,9 +62,46 @@ export function termRow(label, value) {
   ]);
 }
 
+/* The recap shown beside the finalise/unfinalise action itself.
+ *
+ * Before this, the button that freezes a day's cash forever showed no cash figure at all --
+ * the closing balance lived only in a card several screens back, above the fuel and expense
+ * breakdowns. `summary` already carries `expected_closing`, `actual_counted` and `variance`
+ * (§5.2's stored snapshot), so this is a read, not a recomputation.
+ */
+function closingRecap(summary) {
+  const variance = gapLabel(summary.variance, { absent: "not counted" });
+
+  return el("div", { className: "list" }, [
+    el("div", { className: "list-row" }, [
+      el("div", { className: "list-row-main t-body", text: "Expected closing" }),
+      el("div", {
+        className: "list-row-value t-body t-numeric",
+        text: format(summary.expected_closing),
+      }),
+    ]),
+    el("div", { className: "list-row" }, [
+      el("div", { className: "list-row-main t-body", text: "Counted" }),
+      el("div", {
+        className: "list-row-value t-body t-numeric",
+        text: format(summary.actual_counted, { absent: "not counted" }),
+      }),
+    ]),
+    el("div", { className: "list-row" }, [
+      el("div", { className: "list-row-main t-body", text: "Variance" }),
+      el("div", {
+        className: `list-row-value t-body t-numeric ${variance.className}`,
+        text: variance.text,
+      }),
+    ]),
+  ]);
+}
+
 export function finaliseControls(summary, context) {
   if (!summary.is_finalised) {
     return el("div", { className: "card stack" }, [
+      el("div", { className: "t-micro", text: "Before you finalise" }),
+      closingRecap(summary),
       el("button", {
         className: "btn btn-primary btn-block",
         text: "Finalise this day",
@@ -89,6 +126,8 @@ export function finaliseControls(summary, context) {
   }
 
   return el("div", { className: "card stack" }, [
+    el("div", { className: "t-micro", text: "Finalised at" }),
+    closingRecap(summary),
     el("button", {
       className: "btn btn-block",
       text: "Unfinalise",
