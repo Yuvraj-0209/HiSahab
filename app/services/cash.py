@@ -406,7 +406,13 @@ class CashPosition:
     # SALES side -- never the cash side, since the money never entered the drawer.
     card_upi_credit_repayments: Decimal
     cash_shortfall_settlements: Decimal
+    # Every `mode = cash` expense, whoever paid it. This is the figure `day_totals` sums into
+    # §6.4's `expected_closing`, which is unaffected by Phase 17.
     cash_expenses: Decimal
+    # Phase 17. The part of `cash_expenses` that came out of the locker rather than the
+    # salesman's takings, and is therefore NOT subtracted from `accountable_cash`. Reported
+    # so the exclusion is visible rather than silently netted out (§13.33).
+    locker_funded_expenses: Decimal
     accountable_cash: Decimal
     declared_cash: Decimal | None
     gap: Decimal | None
@@ -420,16 +426,31 @@ def shift_cash_position(db: Session, *, shift: Shift) -> CashPosition:
     """Assemble §6.4's per-shift figures for one shift.
 
         accountable_cash = metered_fuel_sales + non_fuel_sales
+                         + card_upi_credit_repayments
                          - card - upi - wallet
                          - credit_sales
                          + cash_credit_repayments
                          + cash_shortfall_settlements
-                         - cash_expenses
+                         - shift_funded_cash_expenses   <- paid_from = shift_cash ONLY
 
-    **Cash repayments and settlements are added; cash expenses are subtracted**, because all
-    three physically pass through the salesman's hands during the shift and are therefore
-    already inside the figure he declares. Leave any of them out and the comparison below
-    manufactures a gap that nobody caused.
+    **Cash repayments and settlements are added; shift-funded cash expenses are subtracted**,
+    because all three physically pass through the salesman's hands during the shift and are
+    therefore already inside the figure he declares. Leave any of them out and the comparison
+    below manufactures a gap that nobody caused.
+
+    **A locker-funded cash expense passes through nobody's hands, and is excluded.** Phase 17,
+    and it was found on real money. On 30 July this shift took ₹302,827 of metered fuel,
+    ₹265,617 of it on card and Paytm, and issued ₹19,610 of udhaar -- leaving ₹17,600 of cash,
+    declared correctly. The day's ₹60,170 of bills were paid from the locker's opening
+    balance, because the day's own cash could not cover them. Subtracting them here drove this
+    figure to **-₹42,569** against a ₹17,600 declaration and reported the salesman ₹60,169 in
+    surplus: holding money nobody gave him. Same phantom the `card_upi_repayments` term above
+    exists to prevent, one term over (§5.2, §6.4, §14).
+
+    **`cash_expenses` on the returned row stays the full figure**, and `day_totals` sums that
+    one -- `expected_closing` subtracts every cash expense whoever paid it, because the locker
+    really is lighter by all of it. The two equations differ in exactly this term and nowhere
+    else. `locker_funded_expenses` carries the excluded amount so a reader can see why.
 
     **Priced with `price_only=True`** (§6.3). The cash question needs the rate, not the
     margin, and petrol and diesel margins have never been entered at this outlet (§14) -- so
@@ -458,7 +479,16 @@ def shift_cash_position(db: Session, *, shift: Shift) -> CashPosition:
         db, shift_id=shift.id
     )
     settlements = cash_settlements_total(db, shift_id=shift.id)
+    # Two figures, deliberately. `expenses_paid` is every cash expense and feeds
+    # `expected_closing` through `day_totals`; `shift_funded` is the subset the salesman paid
+    # out of his own takings and is the only one `accountable` may subtract (§6.4, Phase 17).
     expenses_paid = expense_service.cash_expenses_total(db, shift_id=shift.id)
+    shift_funded = expense_service.shift_funded_cash_expenses_total(
+        db, shift_id=shift.id
+    )
+    locker_funded = expense_service.locker_funded_cash_expenses_total(
+        db, shift_id=shift.id
+    )
 
     accountable = (
         metered
@@ -474,7 +504,9 @@ def shift_cash_position(db: Session, *, shift: Shift) -> CashPosition:
         - credit_sales
         + repayments
         + settlements
-        - expenses_paid
+        # NOT `expenses_paid`. A locker-funded bill is not this salesman's money -- see the
+        # 30 July example in the docstring, and §14's guardrail in both directions.
+        - shift_funded
     )
 
     declared = collection_service.declared_cash(db, shift_id=shift.id)
@@ -498,6 +530,7 @@ def shift_cash_position(db: Session, *, shift: Shift) -> CashPosition:
         card_upi_credit_repayments=card_upi_repayments,
         cash_shortfall_settlements=settlements,
         cash_expenses=expenses_paid,
+        locker_funded_expenses=locker_funded,
         accountable_cash=accountable,
         declared_cash=declared,
         gap=gap,

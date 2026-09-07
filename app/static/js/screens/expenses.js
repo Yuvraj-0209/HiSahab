@@ -50,6 +50,13 @@ const MODES = [
   { value: "bank_transfer", label: "Bank transfer" },
 ];
 
+// Phase 17. Which pile the cash came out of, which §6.4 needs and `mode` cannot say.
+// Only meaningful for a cash expense; the control hides itself for every other mode.
+const PAID_FROM = [
+  { value: "shift_cash", label: "This shift's cash" },
+  { value: "locker_cash", label: "The locker" },
+];
+
 export async function renderExpenses(container, { session, navigate, shiftId }) {
   const { shell } = session;
   shell.setTab("entry");
@@ -270,6 +277,16 @@ function expenseSheet(existing, context) {
     hint: "Only cash reduces what the salesman should be holding. A bank-paid bill is recorded but never subtracted from the drawer.",
   });
 
+  // Phase 17. Defaulted to this shift's cash, matching the server default — the ordinary
+  // case, and the one §5.2 declines to make anybody re-answer for a ₹20 chai run.
+  const paidFromSelect = select({
+    name: "paid_from",
+    label: "Which cash paid for it?",
+    options: PAID_FROM,
+    value: existing?.paid_from ?? "shift_cash",
+    hint: "Money taken from the locker isn't this salesman's to account for, so it won't count against what he should be holding.",
+  });
+
   const amount = field({
     name: "amount",
     label: "Amount",
@@ -299,10 +316,19 @@ function expenseSheet(existing, context) {
   const form = new Form({
     category_id: categorySelect,
     mode: modeSelect,
+    paid_from: paidFromSelect,
     amount,
     description,
     paid_to: paidTo,
   });
+
+  // Only a cash expense can come out of a pile; for every other mode the question is
+  // meaningless and the column is never read (§5.2, which is also why no CHECK ties them).
+  function updatePaidFromVisibility() {
+    paidFromSelect.hidden = modeSelect._input.value !== "cash";
+  }
+  modeSelect._input.addEventListener("change", updatePaidFromVisibility);
+  updatePaidFromVisibility();
 
   /* --- the receipt --------------------------------------------------------- */
 
@@ -391,6 +417,8 @@ function expenseSheet(existing, context) {
         // category_id is not editable (ExpenseUpdate forbids it) -- the category a row was
         // filed under is part of what history said.
         delete changes.category_id;
+        // Same rule as the create path below: the pile only means something for cash.
+        if (values.mode !== "cash") delete changes.paid_from;
         if (attachmentId && !existing.attachment_id) changes.attachment_id = attachmentId;
         if (Object.keys(changes).length === 0) {
           sheet.close();
@@ -404,6 +432,9 @@ function expenseSheet(existing, context) {
           amount: values.amount,
           description: values.description,
         };
+        // Phase 17. Sent only for a cash expense; for any other mode the server defaults it
+        // and nothing ever reads it, so posting a hidden control's value would be noise.
+        if (values.mode === "cash") body.paid_from = values.paid_from;
         if (values.paid_to) body.paid_to = values.paid_to;
         if (attachmentId) body.attachment_id = attachmentId;
         await submission.run(body);

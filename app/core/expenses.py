@@ -46,3 +46,27 @@ class ExpenseMode(StrEnum):
     card = "card"
     upi = "upi"
     bank_transfer = "bank_transfer"
+
+
+class ExpensePaidFrom(StrEnum):
+    """Whose pile the money left from. §5.2 / §6.4, Phase 17.
+
+    `ExpenseMode` above says *how* it left; this says *from where*, and §6.4's two equations
+    need both because they ask different questions:
+
+    * **`expected_closing`** -- what should be in the locker? Subtracts every `cash` expense
+      and never reads this column: the locker is lighter by all of it, whoever paid.
+    * **`accountable_cash`** -- what should this one salesman be holding? Subtracts
+      `shift_cash` rows only. A bill paid from the locker never passed through his hands.
+
+    Getting that second one wrong was a live defect: on 30 July a shift that had taken
+    ₹17,600 was charged ₹60,170 of locker-funded bills and reported the salesman ₹60,169 in
+    surplus -- holding money nobody gave him (§5.2's worked example).
+
+    Defaults to `shift_cash` at the database, which is both the ordinary case and exactly
+    what the pre-Phase-17 code assumed, so historical rows read correctly. §13.33 records
+    that nothing can check the answer.
+    """
+
+    shift_cash = "shift_cash"
+    locker_cash = "locker_cash"

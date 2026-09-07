@@ -74,6 +74,11 @@ class CashPositionResponse(BaseModel):
     card_upi_credit_repayments: Decimal
     cash_shortfall_settlements: Decimal
     cash_expenses: Decimal
+    # Phase 17. The part of `cash_expenses` paid out of the locker rather than this
+    # salesman's takings, and therefore excluded from `accountable_cash` below. Sent so the
+    # screen can show the exclusion rather than leaving a reader to wonder why the two
+    # figures disagree (§5.2, §6.4, §13.33).
+    locker_funded_expenses: Decimal
 
     accountable_cash: Decimal
     declared_cash: Decimal | None

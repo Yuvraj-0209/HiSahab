@@ -17,7 +17,7 @@ from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.core.expenses import ExpenseMode
+from app.core.expenses import ExpenseMode, ExpensePaidFrom
 from app.models.expense import Expense
 from app.models.expense_category import ExpenseCategory
 from app.models.shift import Shift
@@ -138,6 +138,47 @@ def cash_expenses_total(db: Session, *, shift_id: UUID) -> Decimal:
         select(func.coalesce(func.sum(Expense.amount), Decimal("0.00"))).where(
             Expense.shift_id == shift_id,
             Expense.mode == ExpenseMode.cash.value,
+        )
+    ).scalar_one()
+
+
+def shift_funded_cash_expenses_total(db: Session, *, shift_id: UUID) -> Decimal:
+    """§6.4's `accountable_cash` term -- **`mode = cash` AND `paid_from = shift_cash`.**
+
+    Phase 17. The narrower sibling of `cash_expenses_total` above, and the two are
+    deliberately separate functions rather than one with a flag: they answer different
+    questions and every call site should have to say which it means.
+
+    * `cash_expenses_total` feeds **`expected_closing`** -- what should be in the locker.
+      The locker is lighter by every cash expense, whoever handed the notes over.
+    * this one feeds **`accountable_cash`** -- what should this one salesman be holding.
+      Only what he paid out of his own takings reduces that; a bill paid from the locker
+      never passed through his hands, and subtracting it invents a surplus he is not
+      holding (§5.2's 30 July worked example, and §14's guardrail in both directions).
+
+    Reversals included, as above.
+    """
+    return db.execute(
+        select(func.coalesce(func.sum(Expense.amount), Decimal("0.00"))).where(
+            Expense.shift_id == shift_id,
+            Expense.mode == ExpenseMode.cash.value,
+            Expense.paid_from == ExpensePaidFrom.shift_cash.value,
+        )
+    ).scalar_one()
+
+
+def locker_funded_cash_expenses_total(db: Session, *, shift_id: UUID) -> Decimal:
+    """The complement of the function above: `mode = cash` AND `paid_from = locker_cash`.
+
+    Reported on the cash position so the excluded amount is **visible** rather than silently
+    netted out. §13.33's mitigation: a reader looking at a large gap has the term that
+    explains it in front of them, instead of having to know the column exists.
+    """
+    return db.execute(
+        select(func.coalesce(func.sum(Expense.amount), Decimal("0.00"))).where(
+            Expense.shift_id == shift_id,
+            Expense.mode == ExpenseMode.cash.value,
+            Expense.paid_from == ExpensePaidFrom.locker_cash.value,
         )
     ).scalar_one()
 
@@ -395,6 +436,11 @@ def reverse(
         shift_id=original.shift_id,
         category_id=original.category_id,
         mode=original.mode,
+        # Phase 17. Inherited, never defaulted. A reversal cancels the original from the
+        # same pile it came out of -- letting it fall back to `shift_cash` would credit a
+        # salesman with a locker-funded bill he never held, which is the exact phantom
+        # §6.4's Phase 17 note exists to remove, in the opposite direction.
+        paid_from=original.paid_from,
         amount=-original.amount,
         description=original.description,
         paid_to=original.paid_to,
@@ -428,6 +474,9 @@ def reverse(
             shift_id=original.shift_id,
             category_id=original.category_id,
             mode=original.mode,
+            # Inherited for the same reason the reversal above inherits it: the corrected
+            # row describes the same payment, out of the same pile.
+            paid_from=original.paid_from,
             amount=replacement_amount,
             description=original.description,
             paid_to=(
