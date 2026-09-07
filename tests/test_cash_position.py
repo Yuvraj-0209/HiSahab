@@ -83,8 +83,13 @@ async def test_the_full_per_shift_calculation_with_every_term_non_zero(
         - ₹5,000 udhaar
         + ₹2,000 cash repayment
         + ₹300 shortfall settlement
-        - ₹1,500 cash expense
-                                            = ₹65,300 accountable
+                                            = ₹66,800 accountable
+
+    **The ₹1,500 cash expense is deliberately absent from that sum** (§6.4, Phase 17). It is
+    still recorded, still asserted below, and still subtracted by `expected_closing` -- but a
+    bill the pump pays comes out of the locker, not out of what this salesman is accountable
+    for. Subtracting it here reported a ₹60,169 phantom surplus on 30 July; see
+    `tests/test_locker_expenses.py`.
     """
     manager = make_user("manager")
     attendant = make_user("attendant")
@@ -119,7 +124,8 @@ async def test_the_full_per_shift_calculation_with_every_term_non_zero(
     assert Decimal(body["cash_credit_repayments"]) == Decimal("2000.00")
     assert Decimal(body["cash_shortfall_settlements"]) == Decimal("300.00")
     assert Decimal(body["cash_expenses"]) == Decimal("1500.00")
-    assert Decimal(body["accountable_cash"]) == Decimal("65300.00")
+    # ₹65,300 before Phase 17, when the expense was subtracted here too.
+    assert Decimal(body["accountable_cash"]) == Decimal("66800.00")
     assert body["incomplete"] is False
 
 

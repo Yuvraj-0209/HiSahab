@@ -117,6 +117,9 @@ export async function renderCashPosition(container, { session, navigate, shiftId
         el("div", { className: "list" }, [
           term("Metered fuel sales", position.metered_fuel_sales),
           term("Non-fuel sales", position.non_fuel_sales),
+          // §6.4's twelfth term. Udhaar settled on the machine sits inside the card/UPI
+          // totals below and is not a sale, so it is added back on the sales side.
+          term("Udhaar settled on card/UPI", position.card_upi_credit_repayments),
           divider("less what did not arrive as cash"),
           term("Card", position.card_total, true),
           term("UPI", position.upi_total, true),
@@ -125,14 +128,28 @@ export async function renderCashPosition(container, { session, navigate, shiftId
           divider("plus cash that arrived from elsewhere"),
           term("Credit repayments in cash", position.cash_credit_repayments),
           term("Shortfall settlements in cash", position.cash_shortfall_settlements),
-          divider("less cash that left"),
-          term("Cash expenses", position.cash_expenses, true),
         ]),
         el("p", {
           className: "t-caption",
-          text: "Only cash-mode expenses and repayments appear here. A bank-paid bill is on the record but never leaves the drawer.",
+          text: "This is what his sales should have put in his hands. Expenses are not subtracted here — the pump's bills come out of the locker, not out of what one salesman is accountable for.",
         }),
       ]),
+
+      // Phase 17. Shown BESIDE the figure rather than inside it. Expenses no longer build
+      // `accountable_cash` (§6.4), but a reader looking at a gap needs to see them: if the
+      // salesman paid a bill from his own hand, this is the number that explains it (§13.33).
+      isZero(position.cash_expenses)
+        ? null
+        : el("div", { className: "card stack" }, [
+            el("div", { className: "t-micro", text: "Paid out during this shift" }),
+            el("div", { className: "list" }, [
+              term("Cash expenses", position.cash_expenses),
+            ]),
+            el("p", {
+              className: "t-caption",
+              text: "Not part of the figure above. If he paid these from the cash in his hand, expect the gap to be about this much — the locker is lighter by it either way, and the day's expected closing subtracts it in full.",
+            }),
+          ]),
 
       el("div", { className: "card stack" }, [
         el("div", { className: "t-micro", text: "Booked against this shift" }),

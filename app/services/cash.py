@@ -420,16 +420,35 @@ def shift_cash_position(db: Session, *, shift: Shift) -> CashPosition:
     """Assemble §6.4's per-shift figures for one shift.
 
         accountable_cash = metered_fuel_sales + non_fuel_sales
+                         + card_upi_credit_repayments
                          - card - upi - wallet
                          - credit_sales
                          + cash_credit_repayments
                          + cash_shortfall_settlements
-                         - cash_expenses
 
-    **Cash repayments and settlements are added; cash expenses are subtracted**, because all
-    three physically pass through the salesman's hands during the shift and are therefore
-    already inside the figure he declares. Leave any of them out and the comparison below
-    manufactures a gap that nobody caused.
+    **Cash repayments and settlements are added**, because both physically arrive in the
+    salesman's hands during the shift and are therefore already inside the figure he declares.
+    Leave either out and the comparison below manufactures a gap that nobody caused.
+
+    **There is no expense term, and its absence is the rule (§6.4, Phase 17).** He is
+    accountable for the cash his *sales* generated. What the pump then spends is a locker
+    question: cash goes in, expenses come out, and `expected_closing` already subtracts every
+    one of them. Whether a rupee leaves before it reaches the locker or after, the locker
+    lands in the same place -- which is why this figure changes and the day equation does not.
+
+    It was found on real money. On 30 July this shift took ₹302,827 of metered fuel, ₹265,617
+    of it on card and Paytm, and issued ₹19,610 of udhaar -- leaving ₹17,600 of cash, declared
+    correctly. The day's ₹60,170 of bills were paid out of cash carried from *earlier* days.
+    Subtracting them here computed `17,600 - 60,170 = -42,569` and reported the salesman
+    ₹60,169 in **surplus**: holding money nobody gave him. Same phantom the
+    `card_upi_repayments` term above exists to prevent, one term over.
+
+    **`cash_expenses` is still computed and still returned**, because it is a real expense and
+    `day_totals` sums it into `expected_closing`. It is simply not part of *this* figure.
+
+    §13.33 is the cost: a salesman who pays a bill from his own hand hands over less, so the
+    gap equals what he paid. That gap is true, the expense rows beside it say why, and §5.2
+    means it is a debt only if a manager books one.
 
     **Priced with `price_only=True`** (§6.3). The cash question needs the rate, not the
     margin, and petrol and diesel margins have never been entered at this outlet (§14) -- so
@@ -474,7 +493,9 @@ def shift_cash_position(db: Session, *, shift: Shift) -> CashPosition:
         - credit_sales
         + repayments
         + settlements
-        - expenses_paid
+        # No expense term (§6.4, Phase 17). `expenses_paid` is computed above and reported on
+        # the row, but it belongs to the locker and to `expected_closing` -- not to what one
+        # salesman is accountable for. See the docstring's 30 July example.
     )
 
     declared = collection_service.declared_cash(db, shift_id=shift.id)
