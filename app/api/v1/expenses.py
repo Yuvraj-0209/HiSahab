@@ -41,7 +41,7 @@ from app.core import idempotency
 from app.core.audit import AuditAction
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
-from app.core.expenses import ExpenseMode, ExpensePaidFrom
+from app.core.expenses import ExpenseMode
 from app.core.roles import Role, satisfies
 from app.core.shifts import ShiftStatus
 from app.db.session import get_db
@@ -91,8 +91,6 @@ class ExpenseResponse(BaseModel):
     category_id: UUID
     category_code: str
     mode: ExpenseMode
-    # Phase 17. Read by §6.4's `accountable_cash` only, and only when `mode == cash`.
-    paid_from: ExpensePaidFrom
     amount: Decimal
     description: str
     paid_to: str | None
@@ -131,10 +129,6 @@ class ExpenseCreate(BaseModel):
 
     category_id: UUID
     mode: ExpenseMode
-    # Phase 17. Defaulted rather than required: `shift_cash` is the ordinary case, and
-    # §5.2 explains why forcing the answer on every ₹20 chai entry would be the friction
-    # §6.11 warns teaches staff to fake input. §13.33 records what that costs.
-    paid_from: ExpensePaidFrom = ExpensePaidFrom.shift_cash
     amount: MoneyValue
     description: DescriptionValue
     paid_to: str | None = Field(default=None, max_length=200)
@@ -151,11 +145,6 @@ class ExpenseUpdate(BaseModel):
     # it is a different row -- and allowing it here would let a PATCH silently move an
     # expense out of the category group §6.7's aggregate rule already flagged it under.
     mode: ExpenseMode | None = None
-    # Phase 17. PATCHable, unlike `category_id` above: this is a classification of a payment
-    # that already happened, not a change to what the money was for or how much it was, so
-    # §6.9's reversal path would be disproportionate. It re-runs nothing -- it feeds neither
-    # §6.11's receipt rule nor §6.7's aggregate, only §6.4's per-shift comparison.
-    paid_from: ExpensePaidFrom | None = None
     amount: MoneyValue | None = None
     description: DescriptionValue | None = None
     paid_to: str | None = Field(default=None, max_length=200)
@@ -239,7 +228,6 @@ def _to_response(
         category_id=expense.category_id,
         category_code=category_code,
         mode=ExpenseMode(expense.mode),
-        paid_from=ExpensePaidFrom(expense.paid_from),
         amount=expense.amount,
         description=expense.description,
         paid_to=expense.paid_to,
@@ -264,9 +252,6 @@ def _audit_snapshot(expense: Expense) -> dict[str, object]:
     return {
         "category_id": str(expense.category_id),
         "mode": expense.mode,
-        # Phase 17. In the snapshot because a PATCH may change it, and §6.4 reads it:
-        # an unexplained move between piles must be legible in the trail.
-        "paid_from": expense.paid_from,
         "amount": expense.amount,
         "description": expense.description,
         "paid_to": expense.paid_to,
@@ -426,7 +411,6 @@ def create_expense(
             shift_id=shift.id,
             category_id=category.id,
             mode=payload.mode.value,
-            paid_from=payload.paid_from.value,
             amount=payload.amount,
             description=payload.description,
             paid_to=payload.paid_to,
@@ -543,11 +527,10 @@ def update_expense(
         # collections.py and readings.py.
         if value is None:
             continue
-        if field in ("mode", "paid_from"):
+        if field == "mode":
             # `Mapped[str]` expects the raw label, matching `create_expense`'s
             # `payload.mode.value` -- explicit, rather than relying on StrEnum's
             # str-inheritance to make an enum instance quietly acceptable to psycopg.
-            # `paid_from` (Phase 17) is the same shape and needs the same unwrapping.
             value = value.value
         setattr(expense, field, value)
 

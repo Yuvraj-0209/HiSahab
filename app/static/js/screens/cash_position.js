@@ -125,27 +125,12 @@ export async function renderCashPosition(container, { session, navigate, shiftId
           divider("plus cash that arrived from elsewhere"),
           term("Credit repayments in cash", position.cash_credit_repayments),
           term("Shortfall settlements in cash", position.cash_shortfall_settlements),
-          divider("less cash that left his hands"),
+          divider("less cash that left"),
           term("Cash expenses", position.cash_expenses, true),
-          // Phase 17. Added BACK, because the line above is the whole cash-expense figure
-          // and only the shift-funded part came out of this salesman's takings. Shown as
-          // its own line rather than netted into the one above, so a reader can see why
-          // the arithmetic stops short of the full figure (§13.33).
-          //
-          // Rendered only when it is non-zero: on an ordinary day the distinction does not
-          // arise and a permanent ₹0.00 line would be noise on every screen.
-          isZero(position.locker_funded_expenses)
-            ? null
-            : term(
-                "Paid from the locker, not his cash",
-                position.locker_funded_expenses,
-              ),
         ]),
         el("p", {
           className: "t-caption",
-          text: isZero(position.locker_funded_expenses)
-            ? "Only cash-mode expenses and repayments appear here. A bank-paid bill is on the record but never leaves the drawer."
-            : "Money taken from the locker is not this salesman's to account for, so it is added back here. The locker is still lighter by it — the day's expected closing subtracts it in full.",
+          text: "Only cash-mode expenses and repayments appear here. A bank-paid bill is on the record but never leaves the drawer.",
         }),
       ]),
 

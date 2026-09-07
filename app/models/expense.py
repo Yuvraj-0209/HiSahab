@@ -76,12 +76,6 @@ _expense_mode_enum = postgresql.ENUM(
     "cash", "card", "upi", "bank_transfer", name="expense_mode", create_type=False
 )
 
-# Phase 17. Its own type, not shared with `expense_mode` -- §5.2 makes that argument for
-# `credit_repayment_mode`, and these two enums have nothing to do with each other.
-_expense_paid_from_enum = postgresql.ENUM(
-    "shift_cash", "locker_cash", name="expense_paid_from", create_type=False
-)
-
 
 class Expense(Base):
     __tablename__ = "expenses"
@@ -142,22 +136,6 @@ class Expense(Base):
         sa.UUID(), sa.ForeignKey("expense_categories.id"), nullable=False
     )
     mode: Mapped[str] = mapped_column(_expense_mode_enum, nullable=False)
-    # Phase 17. `mode` says how the money left; this says whose pile it left from.
-    #
-    # Read by §6.4's per-shift `accountable_cash` ONLY, which subtracts `shift_cash` rows
-    # alone: a bill paid from the locker never passed through the salesman's hands, and
-    # charging it to him invents a surplus he is not holding (§5.2's 30 July worked example).
-    # `expected_closing` ignores this column and subtracts every cash expense, because the
-    # locker is genuinely lighter by all of it.
-    #
-    # Server default rather than a required field: `shift_cash` is the ordinary case and is
-    # exactly what the pre-Phase-17 code assumed, so every existing row backfills correctly.
-    # §13.33 records the cost -- nothing can check this answer.
-    paid_from: Mapped[str] = mapped_column(
-        _expense_paid_from_enum,
-        nullable=False,
-        server_default=sa.text("'shift_cash'::expense_paid_from"),
-    )
     amount: Mapped[Decimal] = mapped_column(sa.Numeric(12, 2), nullable=False)
     description: Mapped[str] = mapped_column(sa.Text(), nullable=False)
     paid_to: Mapped[str | None] = mapped_column(sa.Text(), nullable=True)

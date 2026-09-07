@@ -786,9 +786,6 @@ collections and deposits are also cash flows)
 - `category_id` — FK to `expense_categories`, NOT NULL. **Phase 8 amendment** — replaces the
   `category` enum; see §5.1 for why
 - `mode` — enum: `cash` | `card` | `upi` | `bank_transfer`. **Phase 7 amendment.**
-- `paid_from` — enum: `shift_cash` | `locker_cash`, NOT NULL, **DEFAULT `shift_cash`**.
-  **Phase 17 amendment** — where a cash expense's money physically came from. Read only by
-  §6.4's `accountable_cash`; `expected_closing` subtracts every cash expense regardless
 - `amount` — NUMERIC(12,2). **Sign rule, not a bare `CHECK > 0`** — see the note below
 - `description` — text, NOT NULL, 3–500 chars
 - `paid_to` — text nullable
@@ -838,34 +835,6 @@ collections and deposits are also cash flows)
 > when assembling §6.4's equation; a `card`/`upi`/`bank_transfer` expense is on the record but
 > never subtracted from the drawer.
 >
-> **Why `paid_from` was added. Phase 17 amendment.** `mode` says *how* the money left; this
-> says *whose pile it left from*, and §6.4 needs both. Until Phase 17 the shift cash position
-> subtracted every cash expense from `accountable_cash`, on the stated assumption that a cash
-> expense "physically passes through the salesman's hands during the shift and is therefore
-> already inside the figure he declares." That is true of the ordinary case and false of a
-> bill paid out of the locker.
->
-> It was found on real money. On 30 July this outlet took ₹302,827 of metered fuel, of which
-> ₹265,617 arrived on card and Paytm and ₹19,610 went out as udhaar — leaving ₹17,600 of cash,
-> which the salesman declared correctly. The day's ₹60,170 of bills were then paid from the
-> **locker's ₹79,790 opening balance**, because the day's own cash could not cover them.
-> Charging all ₹60,170 to a shift that took ₹17,600 drove `accountable_cash` to **−₹42,569**
-> and reported a **₹60,169 surplus** — a salesman holding money nobody gave him, which is
-> precisely the phantom §6.4's Phase 16 note describes for card-settled udhaar. Same shape,
-> one term over.
->
-> **The default is `shift_cash`, and it is a server default rather than a required field.**
-> Every pre-Phase-17 row backfills to it *correctly*, because that is exactly the assumption
-> the old code encoded — so by §5.0's derivability rule this column could legitimately wait,
-> and did. It is deliberately **not** §6.8's "an answer, never an omission": that rule governs
-> figures nothing else can check, and here the common case is genuinely `shift_cash`. Forcing
-> the choice on every ₹20 chai entry is the friction §6.11 warns teaches staff to fake input.
->
-> **No CHECK ties it to `mode`.** It is meaningful only when `mode = cash`; a non-cash expense
-> carries the default and nothing reads it. A CHECK asserting otherwise would be the kind §5.2
-> already rejects on `credit_opening_balances` — one that has to be true and cannot usefully
-> be stated.
-
 > **Why the sign rule replaces `CHECK > 0`.** §6.9 corrections are negative rows, which a
 > bare `CHECK > 0` makes impossible the moment the first expense needs reversing. The rule
 > is the same shape as `collections`: `(reverses_id IS NULL AND amount > 0) OR (reverses_id
@@ -1269,38 +1238,6 @@ variance          = actual_counted − expected_closing
   `bank_transfer` expense is on the record for reporting but contributes nothing to this
   equation, the same way a `card`/`upi`/`wallet` collection contributes nothing to
   `cash_sales` except through the subtraction already shown.
-- **The two equations read `cash_expenses` differently, and must. Phase 17 amendment.**
-  `expected_closing` above subtracts **every** cash expense — the locker paid it, whoever
-  handed the notes over. The per-shift `accountable_cash` (§5.2's declaration check)
-  subtracts only those with `paid_from = shift_cash`. See below.
-
-> **`accountable_cash` and the one term it does not share. Phase 17 amendment.**
->
-> §5.2 defines the `cash` collection row as a *declaration* to be checked against a derived
-> figure, and this is that figure — a per-shift question, not a per-day one:
->
-> ```
-> accountable_cash = metered_fuel_sales + non_fuel_sales
->                  + card_upi_credit_repayments
->                  − card − upi − wallet − credit_sales
->                  + cash_credit_repayments
->                  + cash_shortfall_settlements
->                  − shift_funded_cash_expenses   ← paid_from = shift_cash ONLY
->
-> gap = accountable_cash − declared_cash          (positive short, negative surplus)
-> ```
->
-> Cash repayments, settlements and shift-funded expenses all pass through the salesman's
-> hands during the shift, so they are already inside the figure he declares and must be
-> mirrored here or the comparison manufactures a gap nobody caused. **A locker-funded
-> expense passes through nobody's hands.** It is money the office took out of the locker,
-> and subtracting it from what one salesman is accountable for invents a surplus he is not
-> holding — §5.2 works the 30 July arithmetic through in full.
->
-> **`expected_closing` is unaffected and stays exactly as written above.** The locker really
-> is lighter by the whole ₹60,170, whichever pile it came from. That is the entire distinction:
-> `accountable_cash` asks *what should this one person be holding*, `expected_closing` asks
-> *what should be in the locker*, and only the first cares who paid.
 
 > **`other_cash_income` was renamed and moved, Phase 10.** It read
 > `+ other_cash_income ← non-fuel sales (V1: manual entry)`, on the *cash* side. That is
@@ -2272,29 +2209,6 @@ ahead — no empty modules for later phases.
     **Not the WhatsApp module.** The owner intends reminders on bill creation in V2/V3; §12
     scopes it out and says what V1 owes it, which is the phone number and the balance it
     already has.
-17. **Where a cash expense's money came from** — one migration, one column, one term of one
-    equation. Like Phases 15 and 16 this was written after somebody entered a real trading day
-    and found a figure that could not be true, and like Phase 16 the defect was live on real
-    money rather than hypothetical.
-
-    On 30 July the shift cash position reported the salesman **₹60,169 in surplus** — holding
-    money nobody had given him. §5.2 works the arithmetic through: ₹302,827 of metered fuel,
-    ₹265,617 of it on card and Paytm, ₹19,610 of udhaar, leaving ₹17,600 of cash which he
-    declared correctly. The day's ₹60,170 of bills were paid from the **locker's** ₹79,790
-    opening balance, because the day's own cash could not cover them — and `accountable_cash`
-    charged every rupee of that to a shift that had taken ₹17,600, driving it to −₹42,569.
-
-    **The arithmetic was never wrong; the model had no word for what happened.** `expenses`
-    recorded *how* money left (`mode`) and not *whose pile it left from*, so the cash position
-    had to assume, and the assumption it made — stated plainly in its own docstring — is true
-    of an ordinary day and false of this one. `paid_from` (§5.2) is that missing word.
-
-    **The correction is confined to one term.** `accountable_cash` subtracts `shift_cash` rows
-    only; `expected_closing` goes on subtracting every cash expense, because the locker really
-    is lighter by all of it. §6.4 states both and why they differ. **No stored figure moves** —
-    unlike §13.32 nothing in `daily_cash_summaries` reads the new column, so there is no
-    backfill and nothing to flag, and the 30 July rows are re-tagged by hand because only the
-    owner knows which bills came from where.
 
 ---
 
@@ -2700,26 +2614,6 @@ future reader must be able to tell the difference.
     The consequence: a flagged day's stored total is knowably understated by its new column, and
     a human decides what to do about it. §5.2, §6.4, §13.16
 
-33. **An expense's source of funds is a human declaration with a default, so a mis-defaulted
-    bill still distorts one shift's gap.** Phase 17. `expenses.paid_from` defaults to
-    `shift_cash`, which is right for the ordinary case and is why every pre-Phase-17 row
-    backfills correctly (§5.2). But nothing in the system can *check* it: a ₹60,000 bill
-    actually paid from the locker, left on the default, reproduces the exact phantom surplus
-    this column was added to remove.
-
-    That is deliberate rather than overlooked. The alternative — making it a required field —
-    is the friction §6.11 refuses on receipts for tea, and §4.7's own argument cuts here:
-    forcing an answer nobody has a reason to think about produces a *reflexive* answer, which
-    is worse than a default because it looks considered.
-
-    Two things blunt it. `accountable_cash` and `expected_closing` disagree by exactly the
-    locker-funded total, so the shift screen shows the excluded amount as its own line rather
-    than silently netting it — a reader who sees a large gap has the term that explains it in
-    front of them. And a gap is still never a debt until a manager books it (§5.2, §13.14),
-    which is the same protection §4.7 relies on everywhere else. **Unlike §13.32 there is
-    nothing to backfill or flag**: no stored `daily_cash_summaries` component reads this
-    column, so no reconciled day's figures move. §5.2, §6.4, §6.11, §13.14
-
 ---
 
 ## 14. Guardrails for Claude Code
@@ -2823,13 +2717,6 @@ to occur on this specific project.
   `upi` repayment that **does** carry a shift: it is inside that shift's collections total,
   which §6.4 subtracts, so leaving it out shows the salesman a surplus he is not holding. The
   presence of the shift is the whole test (§5.2, §6.4)
-- **Subtract a *locker-funded* cash expense from `accountable_cash`.** It never passed through
-  the salesman's hands, so charging it to him invents a surplus he is not holding — the same
-  phantom the line above describes for card-settled udhaar, one term over, and it was found the
-  same way: on real money. `accountable_cash` subtracts `paid_from = shift_cash` rows only.
-  **The mirror-image mistake is just as wrong:** do not drop a locker-funded expense from
-  `expected_closing`, which subtracts every cash expense whoever paid it — the locker is
-  genuinely lighter by all of it (§5.2, §6.4)
 - **Recompute a reconciled day's stored components to backfill the card/UPI fix.** Flag it
   (§13.32). Same rule, same reason as §13.16 — and §6.5 chains days, so the rewrite would not
   stay local

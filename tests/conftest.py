@@ -1216,9 +1216,6 @@ def make_expense(engine: Engine) -> Iterator[Callable[..., UUID]]:
         category: str = "maintenance",
         category_id: UUID | None = None,
         mode: str = "cash",
-        # Phase 17. Defaulted here exactly as the database defaults it, so every existing
-        # fixture call keeps meaning what it meant before the column existed (§5.2).
-        paid_from: str = "shift_cash",
         amount: str = "500.00",
         description: str = "Test expense",
         paid_to: str | None = None,
@@ -1251,12 +1248,11 @@ def make_expense(engine: Engine) -> Iterator[Callable[..., UUID]]:
                 ).scalar_one()
             connection.execute(
                 text(
-                    "INSERT INTO expenses (id, shift_id, category_id, mode, paid_from, "
-                    "amount, description, paid_to, reverses_id, reversal_reason, "
+                    "INSERT INTO expenses (id, shift_id, category_id, mode, amount, "
+                    "description, paid_to, reverses_id, reversal_reason, "
                     "requires_review, created_by, attachment_id, receipt_required) "
                     "VALUES (:id, :shift_id, "
                     ":category_id, CAST(:mode AS expense_mode), "
-                    "CAST(:paid_from AS expense_paid_from), "
                     "CAST(:amount AS numeric), :description, :paid_to, :reverses_id, "
                     ":reversal_reason, :requires_review, :created_by, :attachment_id, "
                     ":receipt_required)"
@@ -1265,7 +1261,6 @@ def make_expense(engine: Engine) -> Iterator[Callable[..., UUID]]:
                     shift_id=shift_id,
                     category_id=category_id,
                     mode=mode,
-                    paid_from=paid_from,
                     amount=amount,
                     description=description,
                     paid_to=paid_to,
