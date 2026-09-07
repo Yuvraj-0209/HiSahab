@@ -623,6 +623,12 @@ unambiguous: there is always exactly one closing reading to carry forward.
 > name (§14). Same shape as §4.7's chain — the system predicts, a human confirms, **both
 > values are stored**, and a disagreement leaves a trace instead of being absorbed.
 >
+> **Note what the residual does not contain: expenses.** Phase 17. It is sales cash against
+> counted cash, and the bills the pump pays are a locker matter that `expected_closing`
+> settles (§6.4). A salesman who paid one from his hand therefore shows a gap the size of that
+> bill — true, explained by the expense rows beside it, and never a debt until a manager books
+> one (§13.33).
+>
 > **Never sum the `cash` row together with derived `cash_sales`.** Doing so double-counts
 > the entire day's cash, and the result is plausible.
 
@@ -1238,6 +1244,43 @@ variance          = actual_counted − expected_closing
   `bank_transfer` expense is on the record for reporting but contributes nothing to this
   equation, the same way a `card`/`upi`/`wallet` collection contributes nothing to
   `cash_sales` except through the subtraction already shown.
+- **`cash_expenses` belongs to `expected_closing` and to nothing else. Phase 17 amendment.**
+  The per-shift `accountable_cash` below does **not** subtract it. See the note.
+
+> **The locker pays the bills, not the salesman. Phase 17 amendment.**
+>
+> §5.2 defines the `cash` collection row as a *declaration* checked against a derived figure.
+> This is that figure — a question about one person, not about the day:
+>
+> ```
+> accountable_cash = metered_fuel_sales + non_fuel_sales
+>                  + card_upi_credit_repayments
+>                  − card − upi − wallet − credit_sales
+>                  + cash_credit_repayments
+>                  + cash_shortfall_settlements
+>
+> gap = accountable_cash − declared_cash      (positive short, negative surplus)
+> ```
+>
+> **There is no expense term, and its absence is the rule.** The salesman is accountable for
+> the cash his sales generated. Money the pump then spends is a *locker* question: cash goes
+> in, expenses come out, and `expected_closing` above already subtracts every one of them.
+>
+> Whether a rupee leaves before it reaches the locker or after, **the locker lands in the same
+> place** — which is why this changes `accountable_cash` alone and leaves the day equation
+> byte-identical.
+>
+> **It was found on real money.** On 30 July this outlet took ₹302,827 of metered fuel,
+> ₹265,617 of it on card and Paytm, and issued ₹19,610 of udhaar — leaving ₹17,600 of cash,
+> which the salesman declared correctly. The day's ₹60,170 of bills were paid out of cash
+> carried from *earlier* days. Subtracting them here computed `17,600 − 60,170 = −₹42,569`
+> and reported him **₹60,169 in surplus**: holding money nobody gave him. The same phantom
+> `card_upi_credit_repayments` exists to prevent, one term over.
+>
+> The rejected alternative was a per-expense column naming which pile paid — it worked, and
+> nothing could check the answer, so a mis-entered bill reproduced the bug it was added to
+> remove. **A rule with nothing to fill in cannot be filled in wrongly.** §13.33 records what
+> this costs instead.
 
 > **`other_cash_income` was renamed and moved, Phase 10.** It read
 > `+ other_cash_income ← non-fuel sales (V1: manual entry)`, on the *cash* side. That is
@@ -2209,6 +2252,25 @@ ahead — no empty modules for later phases.
     **Not the WhatsApp module.** The owner intends reminders on bill creation in V2/V3; §12
     scopes it out and says what V1 owes it, which is the phone number and the balance it
     already has.
+17. **Expenses come out of the locker** — no migration, no new table, no new column, and one
+    term deleted from one equation. The third phase in a row caused by somebody entering real
+    trading days, and the second whose defect was live on real money.
+
+    On 30 July the cash position reported the salesman **₹60,169 in surplus**. §6.4 works the
+    figures through: ₹17,600 of cash sales, declared correctly, against ₹60,170 of bills paid
+    out of cash carried from earlier days — and `accountable_cash` charged every rupee of it to
+    a shift that had taken ₹17,600.
+
+    **The first attempt asked which pile paid each bill** (`expenses.paid_from`). It was built,
+    tested and reverted: it worked, but nothing could check the answer, so a mis-entered bill
+    reproduced the phantom. The owner's model removes the question instead — *whether it gets
+    subtracted before entering the locker or after, it's one and the same thing.* Cash goes in,
+    expenses come out, and `accountable_cash` simply stops subtracting them.
+
+    **`expected_closing` is untouched**, which is the whole reason this is safe: it already
+    subtracts every cash expense and must, because the locker really is lighter. §13.33 records
+    the cost — a salesman who pays from his own hand now shows a gap the size of that bill,
+    true and explained rather than netted silently away.
 
 ---
 
@@ -2614,6 +2676,32 @@ future reader must be able to tell the difference.
     The consequence: a flagged day's stored total is knowably understated by its new column, and
     a human decides what to do about it. §5.2, §6.4, §13.16
 
+33. **A salesman who pays a bill out of his own hand shows a gap the size of that bill.**
+    Phase 17, and it is the price of §6.4's locker model — paid deliberately, with the
+    alternative tried and rejected first.
+
+    `accountable_cash` credits him with all the cash his sales generated. The owner confirmed
+    that bills are in fact *mostly* paid by the salesman mid-shift — *"if we need to pay
+    something while their shift is on we take money from them and they write that expense up
+    in the register."* So on such a day he hands over less than his sales imply, and the
+    screen reports a gap equal to what he paid out.
+
+    **That gap is true.** He really is holding less, and the expense rows on the same shift
+    say exactly why. It is not a silent error; it is an explained discrepancy, and §5.2's rule
+    still holds that a gap becomes a debt only when a manager books one — so nothing lands on
+    a name automatically.
+
+    **The alternative was built and reverted.** A per-expense `paid_from` column made the gap
+    zero by naming which pile paid each bill. It worked, and its own §13 entry had to concede
+    that nothing could verify the answer: a big bill left on the default reproduced the exact
+    phantom the column existed to remove. Trading a field that can be quietly wrong for a
+    figure that is visibly explained is the better bargain, and it is one fewer thing to teach
+    somebody at 10pm with a register in front of them.
+
+    Revisit if the gap stops being read as "look at the expense list" and starts being read as
+    noise — which is the failure mode §5.2 names for any flag nobody acts on. §5.2, §6.4,
+    §13.14
+
 ---
 
 ## 14. Guardrails for Claude Code
@@ -2717,6 +2805,12 @@ to occur on this specific project.
   `upi` repayment that **does** carry a shift: it is inside that shift's collections total,
   which §6.4 subtracts, so leaving it out shows the salesman a surplus he is not holding. The
   presence of the shift is the whole test (§5.2, §6.4)
+- **Subtract `cash_expenses` from `accountable_cash`.** Phase 17. The salesman is accountable
+  for the cash his *sales* generated; the bills come out of the locker. Subtracting them there
+  invents a surplus on any day the bills exceed that day's cash takings — on 30 July it
+  reported a man holding ₹60,169 nobody had given him. **The mirror is equally wrong:** do not
+  remove `− cash_expenses` from `expected_closing`, which is the one equation that must
+  subtract them, because the locker really is lighter (§5.2, §6.4, §13.33)
 - **Recompute a reconciled day's stored components to backfill the card/UPI fix.** Flag it
   (§13.32). Same rule, same reason as §13.16 — and §6.5 chains days, so the rewrite would not
   stay local
