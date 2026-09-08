@@ -2047,3 +2047,48 @@ def test_the_audit_read_index_is_ascending_and_not_an_expression(
 
     assert "(outlet_id, changed_at, id)" in definition
     assert "DESC" not in definition
+
+
+# --- Phase 18: a password containing '%' must survive alembic.Config ------------------
+#
+# Found on a real deployment, not in review. The pre-deploy migration crashed with
+#
+#     ValueError: invalid interpolation syntax in
+#     'postgresql+psycopg://postgres:...%25HA%40M...' at position 32
+#
+# alembic.Config wraps configparser, where '%' is the interpolation escape character, so
+# set_main_option() treats a percent-encoded password as a broken substitution and raises
+# before a single migration runs. The outlet's real Supabase password contains '%'.
+#
+# The fix is set_section_option's raw sibling: write into the underlying ConfigParser with
+# the value escaped as '%%'. Both callers -- alembic/env.py and tests/conftest.py -- go
+# through app.db.alembic_url.set_alembic_url so the escaping cannot be applied in one place
+# and forgotten in the other, which is how this class of bug survives (CLAUDE.md §6.9's
+# argument about _CONSTRAINT_ERRORS being forgotten twice).
+
+
+def test_set_alembic_url_accepts_a_password_containing_percent() -> None:
+    """The regression. A '%' in the password must not raise, and must round-trip."""
+    from app.db.alembic_url import set_alembic_url
+
+    # The exact shape that failed in production: percent-encoded reserved characters.
+    url = "postgresql+psycopg://postgres:Y2%5C9%5C05%24D%25HA%40M%26I%24JA@db.example.co:5432/postgres"
+
+    config = Config("alembic.ini")
+    set_alembic_url(config, url)
+
+    # Round-trips byte for byte -- the escaping is an artefact of configparser's storage,
+    # never something a caller has to know about or undo.
+    assert config.get_main_option("sqlalchemy.url") == url
+
+
+def test_set_alembic_url_handles_a_password_with_no_percent() -> None:
+    """The ordinary case still works -- the escape must not corrupt a plain password."""
+    from app.db.alembic_url import set_alembic_url
+
+    url = "postgresql+psycopg://user:plainpassword@localhost:5432/db"
+
+    config = Config("alembic.ini")
+    set_alembic_url(config, url)
+
+    assert config.get_main_option("sqlalchemy.url") == url

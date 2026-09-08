@@ -17,6 +17,8 @@ from zoneinfo import ZoneInfo
 import pytest
 from alembic import command
 from alembic.config import Config
+
+from app.db.alembic_url import set_alembic_url
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import Engine, create_engine, text
 
@@ -44,7 +46,10 @@ os.environ.setdefault("SUPABASE_URL", TEST_SUPABASE_URL)
 
 def _alembic_config(url: str) -> Config:
     config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", url)
+    # See app/db/alembic_url.py -- a '%' in the password would otherwise be read as
+    # configparser interpolation and raise. Shared with alembic/env.py deliberately, so
+    # the escaping cannot be right in one caller and wrong in the other.
+    set_alembic_url(config, url)
     return config
 
 

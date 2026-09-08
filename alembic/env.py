@@ -13,6 +13,7 @@ from sqlalchemy import engine_from_config, pool
 
 import app.models  # noqa: F401 -- registers every model on Base.metadata
 from app.core.config import get_settings
+from app.db.alembic_url import set_alembic_url
 from app.db.base import Base
 
 config = context.config
@@ -34,7 +35,10 @@ if config.config_file_name is not None:
 # Injected by the test suite so migrations can be run against hisahab_test without
 # mutating the developer's environment. Falls back to the configured DATABASE_URL.
 _url = config.get_main_option("sqlalchemy.url") or str(get_settings().DATABASE_URL)
-config.set_main_option("sqlalchemy.url", _url)
+# NOT config.set_main_option: alembic.Config wraps configparser, where '%' is the
+# interpolation escape, so a percent-encoded password raises ValueError before any
+# migration runs. Phase 18 found that on a real deployment. See app/db/alembic_url.py.
+set_alembic_url(config, _url)
 
 # Models become visible to `alembic revision --autogenerate` by virtue of the
 # `import app.models` above, which is why that import exists despite looking unused.
