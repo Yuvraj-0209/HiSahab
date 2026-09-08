@@ -19,3 +19,11 @@ coverage.xml
 
 # macOS
 .DS_Store
+
+# Node — deploy tooling only (Phase 18).
+# The `railway` package exists solely to evaluate .railway/railway.ts when running
+# `railway config plan/apply` from a developer machine. It is NOT part of the
+# application and NOT part of the build: Railpack detects Python before Node
+# (pyproject.toml wins), so package.json is inert at build time and nothing here is
+# ever served to a browser. CLAUDE.md §2's no-build-step rule for the frontend stands.
+node_modules/

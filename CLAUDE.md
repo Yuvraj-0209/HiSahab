@@ -3063,6 +3063,17 @@ alembic revision --autogenerate -m "description"
 alembic upgrade head
 alembic downgrade -1
 
+# Production runs the upgrade automatically: .railway/railway.ts declares
+# `preDeploy: "bash scripts/migrate.sh"`, which Railway runs between the build and the
+# deploy. A failed migration exits non-zero, and Railway then does NOT proceed -- the new
+# container never takes traffic and the previous deployment keeps serving. That is
+# deliberate: serving new code against a half-migrated schema yields silently wrong money
+# figures, which is a worse outcome than an outage (Phase 18).
+
+# Preview / apply the deploy configuration itself (Railway IaC):
+railway config plan
+railway config apply
+
 # Cleanup orphaned attachments
 python -m app.jobs.cleanup_attachments
 ```
@@ -3073,6 +3084,13 @@ python -m app.jobs.cleanup_attachments
 
 ```
 DATABASE_URL
+MIGRATION_DATABASE_URL        # Phase 18. Deploy-only and OPTIONAL, read by
+                              # scripts/migrate.sh and never by Settings -- no application
+                              # code consumes it. Supabase's transaction pooler (6543)
+                              # breaks DDL and prepared statements, so where DATABASE_URL
+                              # is pooled this must be the direct URL (5432). Falls back
+                              # to DATABASE_URL when unset, which is correct for local
+                              # development and CI where one URL serves both.
 SUPABASE_URL
 SUPABASE_SERVICE_KEY          # server-side only, never exposed to frontend. Phase 14:
                               # REQUIRED when ENV=prod, which it was not before. Two callers

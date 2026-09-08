@@ -1,0 +1,8 @@
+{
+  "name": "hisahab-railway-config",
+  "private": true,
+  "description": "Deploy-time tooling only. Evaluates .railway/railway.ts (Railway Infrastructure as Code). Nothing here is served to a browser or imported by the application -- see the note at the top of .railway/railway.ts and CLAUDE.md §2.",
+  "devDependencies": {
+    "railway": "^3.11.0"
+  }
+}

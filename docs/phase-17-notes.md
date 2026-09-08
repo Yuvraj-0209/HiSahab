@@ -124,6 +124,10 @@ That is the failure mode §5.2 names for any flag nobody acts on.
 migration so it did not bite, but the next schema change will deploy against an unmigrated
 database. Raised and deliberately left alone rather than bundled into an unrelated change.
 
+> **Closed in Phase 18** — `.railway/railway.ts` declares a pre-deploy command running
+> `scripts/migrate.sh`, so the database is migrated between build and deploy and a failed
+> migration stops the deployment. See `docs/phase-18-notes.md`.
+
 **Railway did not auto-deploy the push, and that is now a known fact rather than a
 suspicion.** The service is configured to build `main` from GitHub, the push landed
 (`git ls-remote` confirmed the SHA), and four minutes later `get-status` still reported
@@ -135,6 +139,11 @@ commit while looking like a fix. And **verify a deploy by asking the app, not th
 `get-status` said SUCCESS while my first three asset checks came back empty, which turned out
 to be my own wrong URL (`/static/js/...`; the mount is at `/`). A green status plus a failing
 fetch is ambiguous, and only the fetch against the right path resolves it.
+
+> **Diagnosed in Phase 18.** The service's `source` block reads perfectly healthy
+> (`{repo, branch: "main"}`) while nothing deploys, which is the trap: Railway keeps that
+> block even when the GitHub App has lost access to the repository. See
+> `docs/phase-18-notes.md`.
 
 **Three user-caused phases in a row.** The pattern each time: a figure the system was
 confident about, that somebody with the physical facts could see was impossible. Worth asking
