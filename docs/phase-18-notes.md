@@ -226,6 +226,11 @@ somebody still has to apply it. Railway publishes a GitHub Action
 (`railwayapp/config`) that plans on a PR and applies on merge — worth adopting when this repo
 gets CI, which is the next item.
 
+**Autodeploy verification, 8 September.** The pipeline was proven end to end at 05:33 UTC:
+`migrate.sh` logged all four markers against the direct connection and the deploy reached
+SUCCESS. Four earlier deployments failed and the app stayed online throughout -- the
+fail-closed design caught every one before it reached production.
+
 **There is still no CI.** With no `.github/workflows`, nothing runs the 1537 tests before a
 deploy; the pipeline now migrates automatically but takes the code's word that it works. That
 is a larger decision than this phase, and Railway's *Wait for CI* only becomes available once
