@@ -53,6 +53,7 @@ import { renderCash } from "./screens/cash.js";
 import { renderCashPosition } from "./screens/cash_position.js";
 import { renderDay, renderDays } from "./screens/days.js";
 import { renderAlerts, renderReports } from "./screens/reports.js";
+import { renderSummary } from "./screens/summary.js";
 import {
   renderAdmin,
   renderCategories,
@@ -322,6 +323,15 @@ function registerRoutes() {
     tab: "credit",
     role: "manager",
   });
+
+  // Phase 19. The window lives in the query string so a range survives a reload and can be
+  // shared as a link; `renderSummary` reads `from`/`to` off it and omits them when absent,
+  // letting the server pick §13.30's default.
+  route(
+    "/summary",
+    (_params, query) => renderSummary(session.shell.screen, { session, navigate }, query),
+    { tab: "summary", role: "manager" },
+  );
 
   route("/daily-summaries", () => redirect("#/days"), { tab: "cash", role: "manager" });
   route("/daily-summaries/:businessDate", (params) => redirect(`#/days/${params.businessDate}`), {

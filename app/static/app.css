@@ -1004,6 +1004,135 @@ select.field-input {
   stroke: var(--surplus);
 }
 
+/* --- 9c. The categorical palette, and the shapes that use it (Phase 19) ------
+   §12 rules out a second palette and a theme toggle, and this is neither: the shell keeps
+   its one dark look and the COLOUR IS IN THE DATA. A dashboard needs categories to be
+   distinguishable, and a fuel must keep the same colour in every chart on the page or the
+   reader has to re-learn the legend per panel.
+
+   Six hues, spaced around the wheel and lifted to carry on a near-black ground. They are
+   deliberately near the existing accent/warning/success family rather than a new system --
+   the tab should still look like the app.
+
+   The assignment is by INDEX, decided once in the screen (screens/summary.js::colourOf) and
+   held stable across renders. A colour that moves between reloads is worse than a long bar,
+   because the eye trusts it. */
+
+:root {
+  --cat-1: #0a84ff; /* the accent itself -- the largest series usually lands here */
+  --cat-2: #ff9f0a;
+  --cat-3: #32d74b;
+  --cat-4: #bf5af2;
+  --cat-5: #64d2ff;
+  --cat-6: #ff6482;
+}
+
+.cat-1 { --cat: var(--cat-1); }
+.cat-2 { --cat: var(--cat-2); }
+.cat-3 { --cat: var(--cat-3); }
+.cat-4 { --cat: var(--cat-4); }
+.cat-5 { --cat: var(--cat-5); }
+.cat-6 { --cat: var(--cat-6); }
+
+/* The donut. The hole holds the total, so a figure and its decomposition are read together
+   rather than in two places that can be quoted apart from each other. */
+.donut-wrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-2) 0;
+}
+
+.donut {
+  width: 10.5rem;
+  height: 10.5rem;
+  max-width: 100%;
+}
+
+.donut-slice {
+  fill: var(--cat);
+  stroke: var(--ground);
+  stroke-width: 1.5;
+}
+
+/* A `circle` is used for the single-slice case, where fill would paint the hole shut. */
+circle.donut-slice {
+  fill: none;
+  stroke: var(--cat);
+}
+
+.donut-center {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* Share bars, for the cases a donut cannot carry: many categories, or values lopsided
+   enough that the small slices become unreadable slivers. */
+.sharebars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.sharebar-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  align-items: baseline;
+}
+
+.sharebar-track {
+  height: 0.5rem;
+  margin-top: var(--sp-1);
+  background: var(--surface-high);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+/* The WIDTH is never set here -- it arrives from the server as a percentage string, for the
+   reason the bar height does (§14). The stylesheet owns everything except the number. */
+.sharebar-fill {
+  height: 100%;
+  background: var(--cat);
+  border-radius: var(--radius-pill);
+  transition: width var(--t-base) var(--ease-out);
+}
+
+/* A legend row, doubling as the accessible table the charts above are hidden in favour of. */
+.legend-swatch {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 3px;
+  background: var(--cat);
+  flex: none;
+}
+
+/* The headline figures. Bigger than a list row, smaller than `t-amount`, because four of
+   them sit side by side and one must not dominate the other three. */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.5rem), 1fr));
+  gap: var(--sp-3);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stat-value {
+  font-size: 1.375rem;
+  font-weight: 680;
+  letter-spacing: -0.012em;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ==========================================================================
    10. Utility
    ========================================================================== */

@@ -958,10 +958,17 @@ async def test_shares_are_server_computed_strings_that_close_to_a_hundred(
     # Strings the client can only assign -- a percentage, not a number to divide again.
     assert isinstance(by_code["APIFUEL"]["share_pct"], str)
 
-    total = sum(
-        Decimal(line["share_pct"].rstrip("%")) for line in body["fuel"]
-    )
-    assert total == Decimal("100.00")
+    # The shares account for the whole, to within the rounding each one carries.
+    #
+    # **Not asserted as exactly 100.00**, deliberately. Each share is independently quantised
+    # to two places, so n shares can sum to 100.0n -- July 2026's real payment mix does
+    # exactly this. Forcing them to close (largest-remainder, or absorbing the drift into the
+    # biggest slice) would mean a displayed percentage that is not this value's actual share,
+    # which is a worse lie than a hundredth of a point: the number beside a figure would no
+    # longer be that figure's share of the total. The geometry is unaffected -- 0.01% is
+    # sub-pixel on any bar or arc.
+    total = sum(Decimal(line["share_pct"].rstrip("%")) for line in body["fuel"])
+    assert abs(total - Decimal("100.00")) <= Decimal("0.05"), total
 
 
 async def test_a_window_reports_how_its_days_were_arrived_at(

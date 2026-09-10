@@ -32,6 +32,10 @@ export const TABS = [
   // Opening balances live inside this tab but are admin-gated on their own route -- §8's
   // usual read/write split, and the reason the tab itself does not sit at the admin floor.
   { id: "credit", label: "Credit", glyph: "◈", route: "#/credit", role: "manager" },
+  // Phase 19. Manager floor, like Cash and Credit and for §8's same sentence -- "Read all
+  // shifts / reports" has never been an attendant's business. It sits after Credit because
+  // the tabs run entry-first: what you do today, then what you owe, then how it went.
+  { id: "summary", label: "Summary", glyph: "◱", route: "#/summary", role: "manager" },
   { id: "admin", label: "Admin", glyph: "⚙", route: "#/admin", role: "admin" },
 ];
 

@@ -1607,3 +1607,23 @@ def test_a_cached_lookup_still_raises_when_no_rate_exists(
                     session, outlet_id=_outlet(), fuel_type_id=fuel, at=BEFORE, cache=cache
                 )
             assert raised.value.code == "NO_PRICE_FOR_DATE"
+
+
+def test_independently_rounded_shares_need_not_close_exactly() -> None:
+    """Pinned because it looks like a bug and is not (Phase 19).
+
+    Three equal thirds each round to 33.33% and sum to 99.99%; July 2026's real payment mix
+    sums to 100.01%. Both are correct: each share is that value's own proportion, quantised
+    once, and `share_pct` promises nothing about the set.
+
+    Making them close -- largest-remainder, or dumping the drift into the biggest slice --
+    would mean a printed percentage that is **not** the share of the figure printed beside
+    it. That is a worse lie than a hundredth of a point, and in a system whose entire premise
+    is that plausible-but-wrong numbers are the enemy, it is the wrong trade. The visual cost
+    is nil: 0.01% is sub-pixel on any bar or arc.
+    """
+    third = Decimal("100.00") / 3
+    shares = [reporting.share_pct(Decimal("1.00"), total=Decimal("3.00")) for _ in range(3)]
+    assert shares == ["33.33%", "33.33%", "33.33%"]
+    assert sum(Decimal(s.rstrip("%")) for s in shares) == Decimal("99.99")
+    assert third  # the exact value is irrational in base 10; the quantised one is the answer
