@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from decimal import Decimal
+from collections.abc import Callable
 from typing import TypeVar
 from uuid import UUID
 
@@ -35,6 +36,50 @@ logger = logging.getLogger(__name__)
 _Row = TypeVar("_Row", FuelPrice, FuelMargin)
 
 
+class LookupCache:
+    """A per-request memo for the two effective-dated lookups (Phase 19, §13.34).
+
+    **Why this exists.** A rate is constant within a trading day, but `readings.shift_sales`
+    asks for one per nozzle per shift. That is right for a single shift and wasteful over a
+    window: §13.34 records that a year of days repeats one identical indexed lookup a few
+    thousand times, purely because a report walks shifts (and it must walk them -- §6.3
+    values each at its own instant, so there is no `SUM` to write instead).
+
+    **Why it is safe to memoise at all.** `fuel_prices` and `fuel_margins` are append-only
+    (§5.1) and no report writes, so within one request the answer to
+    `(outlet, fuel, instant)` cannot change. The key is the exact tuple the lookup is a
+    function of, so two different instants never share an entry -- which is the property
+    that keeps a backdated revision (§11 phase 11) visible rather than cached over.
+
+    **Scope is one call, never a module global.** A process-lifetime cache would outlive the
+    append that invalidates it, and §4.1 is explicit about what a stale price does: it
+    "silently corrupts every historical report". Passing it in means it dies with the report.
+
+    Callers that do not supply one are unchanged -- `cache=None` means every lookup hits the
+    database, which is what every write path does and should keep doing.
+    """
+
+    __slots__ = ("_rows",)
+
+    def __init__(self) -> None:
+        self._rows: dict[tuple[str, UUID, UUID, datetime], object] = {}
+
+    def fetch(
+        self,
+        key: tuple[str, UUID, UUID, datetime],
+        load: "Callable[[], object]",
+    ) -> object:
+        """Return the memoised row, loading it once on first ask.
+
+        A `None` result is cached too, deliberately: "no rate has ever been entered for this
+        fuel" is as stable an answer as a row is, and not caching it would leave the miss
+        path -- the one that raises -- as the only uncached case.
+        """
+        if key not in self._rows:
+            self._rows[key] = load()
+        return self._rows[key]
+
+
 def _effective_row_at(
     db: Session,
     model: type[_Row],
@@ -42,6 +87,7 @@ def _effective_row_at(
     outlet_id: UUID,
     fuel_type_id: UUID,
     at: datetime,
+    cache: LookupCache | None = None,
 ) -> _Row | None:
     """The row in effect for this fuel, at this outlet, at this instant.
 
@@ -55,21 +101,37 @@ def _effective_row_at(
 
     This is a single indexed lookup, not a scan: the unique constraint on
     (outlet_id, fuel_type_id, effective_from) backs an index that serves it exactly.
+
+    `cache`, when supplied, memoises that lookup for the life of one report -- see
+    `LookupCache`. Omitted everywhere else, so every write path is byte-for-byte unchanged.
     """
-    return db.execute(
-        select(model)
-        .where(
-            model.outlet_id == outlet_id,
-            model.fuel_type_id == fuel_type_id,
-            model.effective_from <= at,
-        )
-        .order_by(model.effective_from.desc())
-        .limit(1)
-    ).scalar_one_or_none()
+
+    def load() -> _Row | None:
+        return db.execute(
+            select(model)
+            .where(
+                model.outlet_id == outlet_id,
+                model.fuel_type_id == fuel_type_id,
+                model.effective_from <= at,
+            )
+            .order_by(model.effective_from.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    if cache is None:
+        return load()
+    # The model name is part of the key: a price and a margin for the same fuel at the same
+    # instant are two different questions, and sharing a slot would answer one with the other.
+    return cache.fetch((model.__name__, outlet_id, fuel_type_id, at), load)  # type: ignore[return-value]
 
 
 def rate_at(
-    db: Session, *, outlet_id: UUID, fuel_type_id: UUID, at: datetime
+    db: Session,
+    *,
+    outlet_id: UUID,
+    fuel_type_id: UUID,
+    at: datetime,
+    cache: LookupCache | None = None,
 ) -> Decimal:
     """The rate per unit (₹/litre or ₹/kg, per the fuel's unit) in effect at `at`.
 
@@ -83,7 +145,7 @@ def rate_at(
     makes the request unanswerable. The fix is to enter the price, then retry.
     """
     row = _effective_row_at(
-        db, FuelPrice, outlet_id=outlet_id, fuel_type_id=fuel_type_id, at=at
+        db, FuelPrice, outlet_id=outlet_id, fuel_type_id=fuel_type_id, at=at, cache=cache
     )
     if row is None:
         logger.warning(
@@ -106,7 +168,12 @@ def rate_at(
 
 
 def margin_at(
-    db: Session, *, outlet_id: UUID, fuel_type_id: UUID, at: datetime
+    db: Session,
+    *,
+    outlet_id: UUID,
+    fuel_type_id: UUID,
+    at: datetime,
+    cache: LookupCache | None = None,
 ) -> Decimal:
     """The dealer margin per unit in effect at `at`.
 
@@ -119,7 +186,7 @@ def margin_at(
     profit, which is a perfectly plausible number and completely wrong.
     """
     row = _effective_row_at(
-        db, FuelMargin, outlet_id=outlet_id, fuel_type_id=fuel_type_id, at=at
+        db, FuelMargin, outlet_id=outlet_id, fuel_type_id=fuel_type_id, at=at, cache=cache
     )
     if row is None:
         logger.warning(

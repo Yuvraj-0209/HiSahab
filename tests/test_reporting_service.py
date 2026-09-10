@@ -1330,3 +1330,280 @@ async def test_another_outlets_day_is_invisible(
 
     assert cash.source is DaySource.no_trading
     assert cash.shift_count == 0
+
+
+# --- the window aggregate (Phase 19) ------------------------------------------
+
+
+def test_share_pct_is_a_string_and_null_is_not_zero() -> None:
+    """§14's rule reaching the geometry: a share is arithmetic on money.
+
+    And §6.8's, one layer further out -- an unknowable share is `None`, never "0.00%",
+    because a wedge drawn at zero asserts "this sold nothing", which is a different claim.
+    """
+    assert reporting.share_pct(Decimal("25.00"), total=Decimal("100.00")) == "25.00%"
+    assert reporting.share_pct(Decimal("100.00"), total=Decimal("100.00")) == "100.00%"
+
+    # Repeating decimals quantise rather than drifting: 1/3 of 100 is 33.33%.
+    assert reporting.share_pct(Decimal("1.00"), total=Decimal("3.00")) == "33.33%"
+
+    assert reporting.share_pct(None, total=Decimal("100.00")) is None
+    assert reporting.share_pct(Decimal("5.00"), total=None) is None
+    assert reporting.share_pct(Decimal("5.00"), total=Decimal("0.00")) is None
+
+    # A net-negative value clamps rather than inverting -- `bar_height`'s stated reason.
+    assert reporting.share_pct(Decimal("-5.00"), total=Decimal("100.00")) == "0.00%"
+
+
+def test_the_window_fuel_breakdown_sums_days_at_their_own_historical_rates(
+    engine: Engine,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_nozzle: Callable[..., UUID],
+    make_reading: Callable[..., UUID],
+    make_fuel_type,
+    make_fuel_price,
+    clean_shifts: None,
+) -> None:
+    """The rule that makes a `SUM` impossible, asserted (§4.1, §6.3, §13.34).
+
+    Day 1 trades at ₹100, the rate is revised to ₹120 overnight, day 2 trades at ₹120. The
+    window is ₹1,00,000 + ₹1,20,000 = ₹2,20,000 -- NOT 2,000 L x either single rate. A query
+    that multiplied a summed quantity by one price would give ₹2,00,000 or ₹2,40,000, and
+    both are plausible, which is the point.
+    """
+    admin = make_user("admin")
+    attendant = make_user("attendant")
+    fuel = make_fuel_type(code="WINFUEL", unit_of_measure="litre")
+    nozzle = make_nozzle(fuel, label="DU-9/N-1")
+
+    day_two = DAY + timedelta(days=1)
+    make_fuel_price(fuel, "100.00", BEFORE, entered_by=admin)
+    # Revised between the two trading days.
+    make_fuel_price(
+        fuel,
+        "120.00",
+        datetime(day_two.year, day_two.month, day_two.day, 0, 0, tzinfo=timezone.utc),
+        entered_by=admin,
+    )
+
+    for day, opening, closing in ((DAY, "0.00", "1000.00"), (day_two, "1000.00", "2000.00")):
+        started, ended = _window(day)
+        shift = make_shift(attendant, business_date=day, started_at=started, ended_at=ended)
+        make_reading(shift, nozzle, opening_reading=opening, closing_reading=closing)
+
+    breakdown = _call(
+        reporting.fuel_breakdown_range,
+        outlet_id=_outlet(),
+        date_from=DAY,
+        date_to=day_two,
+    )
+
+    line = next(l for l in breakdown.lines if str(l.fuel_type.code) == "WINFUEL")
+    assert line.quantity == Decimal("2000.000")
+    assert line.sale_value == Decimal("220000.00")
+    # Two rates contributed, so there is no single honest label -- the total is still exact.
+    assert line.rate_per_unit is None
+    assert breakdown.sale_value_total == Decimal("220000.00")
+
+
+def test_the_window_breakdown_never_sums_across_units(
+    engine: Engine,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_nozzle: Callable[..., UUID],
+    make_reading: Callable[..., UUID],
+    make_fuel_type,
+    make_fuel_price,
+    clean_shifts: None,
+) -> None:
+    """§4.5: litres and kilograms do not add, over a window as over a day."""
+    admin = make_user("admin")
+    attendant = make_user("attendant")
+    litre_fuel = make_fuel_type(code="UNITL", unit_of_measure="litre")
+    kilo_fuel = make_fuel_type(code="UNITK", unit_of_measure="kilogram")
+    make_fuel_price(litre_fuel, "100.00", BEFORE, entered_by=admin)
+    make_fuel_price(kilo_fuel, "80.00", BEFORE, entered_by=admin)
+
+    started, ended = _window(DAY)
+    shift = make_shift(attendant, business_date=DAY, started_at=started, ended_at=ended)
+    make_reading(shift, make_nozzle(litre_fuel, label="DU-8/N-1"),
+                 opening_reading="0.00", closing_reading="1000.00")
+    make_reading(shift, make_nozzle(kilo_fuel, label="DU-8/N-2"),
+                 opening_reading="0.00", closing_reading="100.00")
+
+    breakdown = _call(
+        reporting.fuel_breakdown_range,
+        outlet_id=_outlet(),
+        date_from=DAY,
+        date_to=DAY,
+    )
+
+    assert breakdown.quantity_by_unit == {
+        "litre": Decimal("1000.000"),
+        "kilogram": Decimal("100.000"),
+    }
+
+
+def test_a_window_with_no_shifts_is_zero_rather_than_an_error(
+    engine: Engine, clean_shifts: None
+) -> None:
+    """An outlet that was shut all month reports nothing sold, not a refusal."""
+    breakdown = _call(
+        reporting.fuel_breakdown_range,
+        outlet_id=_outlet(),
+        date_from=DAY,
+        date_to=DAY + timedelta(days=6),
+    )
+    assert breakdown.lines == []
+    assert breakdown.sale_value_total == Decimal("0.00")
+    assert breakdown.quantity_by_unit == {}
+
+
+def test_window_cash_skips_nulls_and_says_the_window_is_partial(
+    engine: Engine,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_nozzle: Callable[..., UUID],
+    make_reading: Callable[..., UUID],
+    make_fuel_type,
+    make_fuel_price,
+    clean_shifts: None,
+    clean_cash: None,
+) -> None:
+    """§13.35: a skipped day is never counted as zero, and the reader is told.
+
+    The window is one traded day plus a day whose reading was never entered. The second
+    contributes nothing -- but `partial` says so, so the total reads as a floor rather than
+    as a complete figure.
+    """
+    admin = make_user("admin")
+    attendant = make_user("attendant")
+    fuel = make_fuel_type(code="PARTFUEL", unit_of_measure="litre")
+    make_fuel_price(fuel, "100.00", BEFORE, entered_by=admin)
+    nozzle = make_nozzle(fuel, label="DU-7/N-1")
+
+    started, ended = _window(DAY)
+    shift = make_shift(attendant, business_date=DAY, started_at=started, ended_at=ended)
+    make_reading(shift, nozzle, opening_reading="0.00", closing_reading="1000.00")
+
+    # A second shift with no closing reading at all.
+    day_two = DAY + timedelta(days=1)
+    started2, ended2 = _window(day_two)
+    make_shift(attendant, business_date=day_two, started_at=started2, ended_at=ended2)
+
+    days = _call(
+        reporting.range_report,
+        outlet_id=_outlet(),
+        date_from=DAY,
+        date_to=day_two,
+        threshold=THRESHOLD,
+    )
+    window = reporting.window_cash(days)
+
+    assert window.trading_days == 2
+    assert window.partial is True
+    # The entered day's fuel is counted; the un-entered one contributed nothing.
+    assert window.metered_fuel_sales == Decimal("100000.00")
+
+
+def test_window_cash_counts_each_day_by_how_it_was_arrived_at(
+    engine: Engine,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_nozzle: Callable[..., UUID],
+    make_reading: Callable[..., UUID],
+    make_fuel_type,
+    make_fuel_price,
+    make_daily_summary: Callable[..., UUID],
+    clean_shifts: None,
+    clean_cash: None,
+) -> None:
+    """§13.20's distinction surviving aggregation, which is the whole of §13.35."""
+    admin = make_user("admin")
+    attendant = make_user("attendant")
+    fuel = make_fuel_type(code="SRCFUEL", unit_of_measure="litre")
+    make_fuel_price(fuel, "100.00", BEFORE, entered_by=admin)
+    nozzle = make_nozzle(fuel, label="DU-6/N-1")
+
+    # Day 1: traded and reconciled -> snapshot. Day 2: traded, not reconciled -> computed.
+    day_two = DAY + timedelta(days=1)
+    for day, opening, closing in ((DAY, "0.00", "1000.00"), (day_two, "1000.00", "1500.00")):
+        started, ended = _window(day)
+        shift = make_shift(attendant, business_date=day, started_at=started, ended_at=ended)
+        make_reading(shift, nozzle, opening_reading=opening, closing_reading=closing)
+    make_daily_summary(business_date=DAY, expected_closing="100000.00")
+
+    days = _call(
+        reporting.range_report,
+        outlet_id=_outlet(),
+        date_from=DAY,
+        date_to=day_two + timedelta(days=1),  # a third day with no trading
+        threshold=THRESHOLD,
+    )
+    window = reporting.window_cash(days)
+
+    assert window.days_by_source["snapshot"] == 1
+    assert window.days_by_source["computed"] == 1
+    assert window.days_by_source["no_trading"] == 1
+    assert window.trading_days == 2
+
+
+def test_the_lookup_cache_answers_from_one_query_and_keeps_instants_apart(
+    engine: Engine,
+    make_user: Callable[..., UUID],
+    make_fuel_type,
+    make_fuel_price,
+) -> None:
+    """§13.34's memo: correct first, cheap second.
+
+    The dangerous failure would be a cache keyed loosely enough that two different instants
+    shared a slot -- which is precisely how a backdated revision (§11 phase 11) would become
+    invisible. So this asserts both halves: repeated asks hit the database once, and two
+    instants still get their own answers.
+    """
+    from app.db.session import SessionLocal
+    from app.services import pricing
+
+    admin = make_user("admin")
+    fuel = make_fuel_type(code="CACHEFUEL", unit_of_measure="litre")
+    make_fuel_price(fuel, "100.00", BEFORE, entered_by=admin)
+    later = BEFORE + timedelta(days=30)
+    make_fuel_price(fuel, "120.00", later, entered_by=admin)
+
+    cache = pricing.LookupCache()
+    with SessionLocal() as session:
+        before_rate = pricing.rate_at(
+            session, outlet_id=_outlet(), fuel_type_id=fuel, at=BEFORE, cache=cache
+        )
+        again = pricing.rate_at(
+            session, outlet_id=_outlet(), fuel_type_id=fuel, at=BEFORE, cache=cache
+        )
+        after_rate = pricing.rate_at(
+            session, outlet_id=_outlet(), fuel_type_id=fuel, at=later, cache=cache
+        )
+
+    assert before_rate == Decimal("100.00")
+    assert again == Decimal("100.00")
+    # The later instant is a different key, so the revision is visible rather than cached over.
+    assert after_rate == Decimal("120.00")
+
+
+def test_a_cached_lookup_still_raises_when_no_rate_exists(
+    engine: Engine, make_fuel_type
+) -> None:
+    """A miss is memoised too, and must keep refusing rather than returning zero (§6.3)."""
+    from app.core.errors import AppError
+    from app.db.session import SessionLocal
+    from app.services import pricing
+
+    fuel = make_fuel_type(code="NORATEFUEL", unit_of_measure="litre")
+    cache = pricing.LookupCache()
+
+    with SessionLocal() as session:
+        for _ in range(2):
+            with pytest.raises(AppError) as raised:
+                pricing.rate_at(
+                    session, outlet_id=_outlet(), fuel_type_id=fuel, at=BEFORE, cache=cache
+                )
+            assert raised.value.code == "NO_PRICE_FOR_DATE"

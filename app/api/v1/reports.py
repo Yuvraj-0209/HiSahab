@@ -47,6 +47,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import AppError
 from app.core.roles import Role
 from app.db.session import get_db
+from app.services import expenses as expense_service
 from app.services import reporting
 from app.services import shifts as shift_service
 from app.services.reporting import AlertKind, DaySource
@@ -60,6 +61,13 @@ _MAX_REPORT_RANGE_DAYS = 31
 
 # §11's "7-day rolling view", as the default window when the caller names neither end.
 _DEFAULT_WINDOW_DAYS = 7
+
+# Phase 19. The summary dashboard walks readings rather than re-running a §6.4 cash pass per
+# unreconciled day, so its ceiling is a different cost from the one above and matches
+# `/expenses/summary`'s 366 rather than inheriting 31. §13.34 records what a full year costs,
+# and why the two caps must not be collapsed into one number: they bound different work.
+_MAX_SUMMARY_RANGE_DAYS = 366
+_DEFAULT_SUMMARY_WINDOW_DAYS = 30
 
 _PROFIT_BASIS = (
     "Gross fuel margin on quantity sold: quantity x margin_at(fuel, shift start). This is "
@@ -83,6 +91,17 @@ _CASH_BASIS = (
     "different kinds of claim and must not be compared as though they were the same "
     "(§13.20). Null is never zero: a null expected_closing means the §6.5 chain has no "
     "anchor, and a null variance means nobody counted."
+)
+
+_WINDOW_BASIS = (
+    "Every figure here is a sum over the days in the window, and each day contributed "
+    "whatever kind of claim it already was: a reconciled day contributes the figures the "
+    "manager was shown on the day, an unreconciled one contributes an estimate derived just "
+    "now. days_by_source is the only thing that can say how much of a total is which, and "
+    "two windows are only comparable when their compositions are (§13.20, §13.35). "
+    "partial=true means at least one day could not be computed or is still missing readings, "
+    "so the totals are a floor rather than a complete figure -- a skipped day is never "
+    "counted as zero."
 )
 
 _ALERTS_BASIS = (
@@ -221,6 +240,90 @@ class RangeReportResponse(BaseModel):
     basis: str = _CASH_BASIS
 
 
+class SummaryFuelLineResponse(BaseModel):
+    """One fuel's contribution to the whole window.
+
+    `share_pct` is a ready-made CSS percentage string, for the reason `bar_height_pct` is
+    (§14): a pie slice is `value / total`, which is arithmetic on money, and the client is
+    forbidden from performing it. `None` means the share is unknowable -- never "0.00%",
+    which would draw a wedge asserting this fuel sold nothing.
+    """
+
+    fuel_type_id: UUID
+    code: str
+    display_name: str
+    unit_of_measure: str
+    quantity: Decimal | None
+    rate_per_unit: Decimal | None
+    sale_value: Decimal | None
+    margin_per_unit: Decimal | None
+    gross_fuel_margin: Decimal | None
+    margin_unavailable_reason: str | None
+    share_pct: str | None
+
+
+class SummaryCategoryResponse(BaseModel):
+    code: str
+    amount: Decimal
+    share_pct: str | None
+
+
+class SummaryTrendDayResponse(BaseModel):
+    """One column of the trend chart. A thinner `RangeDayResponse` -- the dashboard plots the
+    day and links to it, and the full per-day figures already have their own endpoint."""
+
+    business_date: date
+    source: DaySource
+    total_sales: Decimal | None
+    bar_height_pct: str
+    alert: bool
+
+
+class SummaryResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_: str = Field(alias="from")
+    to: str
+
+    # §13.35. A window mixing reconciled and unreconciled days is part record and part live
+    # estimate, and the totals below cannot say which. These two fields are the only thing
+    # that can, which is why they are part of the contract rather than a debugging aid.
+    days_by_source: dict[str, int]
+    trading_days: int
+    partial: bool
+
+    fuel: list[SummaryFuelLineResponse]
+    fuel_sales_total: Decimal | None
+    gross_fuel_margin_total: Decimal | None
+    fuels_missing_margin: list[str]
+    quantity_by_unit: dict[str, Decimal]
+
+    metered_fuel_sales: Decimal
+    non_fuel_sales_total: Decimal
+    total_sales: Decimal
+
+    cash_sales: Decimal
+    card_total: Decimal
+    upi_total: Decimal
+    wallet_total: Decimal
+    credit_sales_total: Decimal
+    cash_credit_repayments: Decimal
+    card_upi_credit_repayments: Decimal
+    payment_mix: list[SummaryCategoryResponse]
+
+    expenses_by_category: list[SummaryCategoryResponse]
+    expenses_total: Decimal
+    bank_deposits_total: Decimal
+    shortfalls_booked: Decimal
+
+    trend: list[SummaryTrendDayResponse]
+
+    cash_basis: str = _CASH_BASIS
+    fuel_basis: str = _FUEL_BASIS
+    profit_basis: str = _PROFIT_BASIS
+    window_basis: str = _WINDOW_BASIS
+
+
 class AlertResponse(BaseModel):
     kind: AlertKind
     business_date: date
@@ -249,6 +352,9 @@ def _resolve_window(
     settings: Settings,
     db: Session,
     outlet_id: UUID,
+    *,
+    max_days: int = _MAX_REPORT_RANGE_DAYS,
+    default_days: int = _DEFAULT_WINDOW_DAYS,
 ) -> tuple[date, date]:
     """Fill in the defaults, then refuse the three bad windows.
 
@@ -277,7 +383,7 @@ def _resolve_window(
         # asked for, and never fire on a default this function chose for itself.
         date_to = min(latest.business_date, today) if latest is not None else today
     if date_from is None:
-        date_from = date_to - timedelta(days=_DEFAULT_WINDOW_DAYS - 1)
+        date_from = date_to - timedelta(days=default_days - 1)
 
     if date_from > date_to:
         raise AppError(
@@ -285,13 +391,13 @@ def _resolve_window(
             code="INVALID_DATE_RANGE",
             detail="`from` must not be after `to`.",
         )
-    if (date_to - date_from).days + 1 > _MAX_REPORT_RANGE_DAYS:
+    if (date_to - date_from).days + 1 > max_days:
         raise AppError(
             status_code=422,
             code="INVALID_DATE_RANGE",
             detail=(
-                f"The range cannot exceed {_MAX_REPORT_RANGE_DAYS} days. A longer window "
-                "would recompute a full day's cash for every unreconciled date in it."
+                f"The range cannot exceed {max_days} days. A longer window would cost more "
+                "to compute than a report should (§13.24, §13.34)."
             ),
         )
     if date_to > today:
@@ -391,6 +497,147 @@ def read_range_report(
                 requires_review=day.cash.requires_review,
                 alert=day.alert,
                 bar_height_pct=day.bar_height_pct,
+            )
+            for day in days
+        ],
+    )
+
+
+@router.get("/reports/summary", response_model=SummaryResponse)
+def read_summary(
+    date_from: date | None = Query(default=None, alias="from"),
+    date_to: date | None = Query(default=None, alias="to"),
+    actor: Actor = Depends(require_role(Role.manager)),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+) -> SummaryResponse:
+    """Phase 19's dashboard: one window, every figure, in one pass.
+
+    **Why this is one endpoint and not four.** Every cross-panel figure a dashboard shows --
+    a fuel's share of sales, a category's share of expenses -- is a division of money, which
+    §14 forbids in the client. So the shares are computed here, in `Decimal`, beside the
+    values they are shares *of*. Four endpoints stitched together in JavaScript would be four
+    passes free to disagree, and the disagreement would surface as percentages that do not
+    sum to 100 with no obvious cause.
+
+    **The window is capped at 366 days, not 31.** This walks readings; `/reports/range`
+    re-runs a full §6.4 cash pass per unreconciled day. Different work, different ceiling --
+    §13.34. The rate lookup is memoised for the life of this call (`pricing.LookupCache`),
+    which is what makes a year affordable at all.
+
+    **It writes nothing**, like every other route in this module.
+    """
+    start, end = _resolve_window(
+        date_from,
+        date_to,
+        settings,
+        db,
+        actor.outlet_id,
+        max_days=_MAX_SUMMARY_RANGE_DAYS,
+        default_days=_DEFAULT_SUMMARY_WINDOW_DAYS,
+    )
+    threshold = settings.VARIANCE_ALERT_THRESHOLD
+
+    days = reporting.range_report(
+        db,
+        outlet_id=actor.outlet_id,
+        date_from=start,
+        date_to=end,
+        threshold=threshold,
+    )
+    cash = reporting.window_cash(days)
+
+    fuel = reporting.fuel_breakdown_range(
+        db, outlet_id=actor.outlet_id, date_from=start, date_to=end
+    )
+    by_category = expense_service.totals_by_category_range(
+        db, outlet_id=actor.outlet_id, date_from=start, date_to=end
+    )
+    expenses_total = sum(by_category.values(), Decimal("0.00"))
+
+    # Shares are taken against the fuel total rather than against total sales, so the slices
+    # of the fuel chart sum to 100% of *fuel*. Mixing non-fuel income into that denominator
+    # would make a pie of four fuels that visibly does not close.
+    fuel_lines = [
+        SummaryFuelLineResponse(
+            fuel_type_id=line.fuel_type.id,
+            code=str(line.fuel_type.code),
+            display_name=str(line.fuel_type.display_name),
+            unit_of_measure=line.unit_of_measure,
+            quantity=line.quantity,
+            rate_per_unit=line.rate_per_unit,
+            sale_value=line.sale_value,
+            margin_per_unit=line.margin_per_unit,
+            gross_fuel_margin=line.gross_fuel_margin,
+            margin_unavailable_reason=line.margin_unavailable_reason,
+            share_pct=reporting.share_pct(
+                line.sale_value, total=fuel.sale_value_total
+            ),
+        )
+        for line in fuel.lines
+    ]
+
+    # §6.4's five ways money arrives, as the client will draw them. Ordered largest-first is
+    # deliberately NOT done here: a stable order across reloads makes the chart comparable
+    # between two windows, and a colour that moves between renders is worse than a long bar.
+    mix_rows = [
+        ("cash", cash.cash_sales),
+        ("card", cash.card_total),
+        ("upi", cash.upi_total),
+        ("wallet", cash.wallet_total),
+        ("credit", cash.credit_sales_total),
+    ]
+    payment_mix = [
+        SummaryCategoryResponse(
+            code=code,
+            amount=amount,
+            share_pct=reporting.share_pct(amount, total=cash.total_sales),
+        )
+        for code, amount in mix_rows
+    ]
+
+    expenses = [
+        SummaryCategoryResponse(
+            code=code,
+            amount=amount,
+            share_pct=reporting.share_pct(amount, total=expenses_total),
+        )
+        for code, amount in sorted(by_category.items())
+    ]
+
+    return SummaryResponse(
+        from_=start.isoformat(),
+        to=end.isoformat(),
+        days_by_source=cash.days_by_source,
+        trading_days=cash.trading_days,
+        partial=cash.partial,
+        fuel=fuel_lines,
+        fuel_sales_total=fuel.sale_value_total,
+        gross_fuel_margin_total=fuel.gross_fuel_margin_total,
+        fuels_missing_margin=fuel.fuels_missing_margin,
+        quantity_by_unit=fuel.quantity_by_unit,
+        metered_fuel_sales=cash.metered_fuel_sales,
+        non_fuel_sales_total=cash.non_fuel_sales_total,
+        total_sales=cash.total_sales,
+        cash_sales=cash.cash_sales,
+        card_total=cash.card_total,
+        upi_total=cash.upi_total,
+        wallet_total=cash.wallet_total,
+        credit_sales_total=cash.credit_sales_total,
+        cash_credit_repayments=cash.cash_credit_repayments,
+        card_upi_credit_repayments=cash.card_upi_credit_repayments,
+        payment_mix=payment_mix,
+        expenses_by_category=expenses,
+        expenses_total=expenses_total,
+        bank_deposits_total=cash.bank_deposits_total,
+        shortfalls_booked=cash.shortfalls_booked,
+        trend=[
+            SummaryTrendDayResponse(
+                business_date=day.business_date,
+                source=day.cash.source,
+                total_sales=day.cash.total_sales,
+                bar_height_pct=day.bar_height_pct,
+                alert=day.alert,
             )
             for day in days
         ],

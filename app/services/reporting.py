@@ -169,6 +169,7 @@ def _margin_or_none(
     fuel_type_id: UUID,
     at: object,
     cache: dict[tuple[UUID, object], tuple[Decimal | None, str | None]],
+    rows: pricing.LookupCache | None = None,
 ) -> tuple[Decimal | None, str | None]:
     """`margin_at`, with 409 `NO_MARGIN_FOR_DATE` turned into a reported gap.
 
@@ -185,7 +186,7 @@ def _margin_or_none(
 
     try:
         margin = pricing.margin_at(
-            db, outlet_id=outlet_id, fuel_type_id=fuel_type_id, at=at
+            db, outlet_id=outlet_id, fuel_type_id=fuel_type_id, at=at, cache=rows
         )
         result: tuple[Decimal | None, str | None] = (margin, None)
     except AppError as exc:
@@ -195,6 +196,27 @@ def _margin_or_none(
 
     cache[key] = result
     return result
+
+
+def _priced_lines(
+    db: Session, *, shift: Shift, cache: pricing.LookupCache
+) -> list[reading_service.SalesLine]:
+    """`shift_sales(price_only=True)`, with the rate lookup memoised per process call.
+
+    Phase 19, and it exists for §13.34's reason. `shift_sales` calls `pricing.rate_at` once
+    per nozzle per shift and caches nothing, which is right for a single shift and wasteful
+    over a window: a rate is constant within a trading day, so a year of days repeats one
+    identical indexed lookup a few thousand times.
+
+    The memo is keyed on `(outlet, fuel, instant)` -- the exact tuple `rate_at` is a function
+    of -- and lives only for the duration of one report. It cannot go stale, because
+    `fuel_prices` is append-only (§5.1) and no report writes.
+
+    **It patches nothing.** An earlier draft monkeypatched `pricing.rate_at` for the duration
+    of the walk; that is a lie to every other caller sharing the module and would have made a
+    concurrent request read a cache built for a different window.
+    """
+    return reading_service.shift_sales(db, shift=shift, price_only=True, cache=cache)
 
 
 def fuel_breakdown(
@@ -210,15 +232,28 @@ def fuel_breakdown(
     shifts = cash_service.shifts_on(
         db, outlet_id=outlet_id, business_date=business_date
     )
+    return _accumulate_fuel(db, outlet_id=outlet_id, shifts=shifts)
 
+
+def _accumulate_fuel(
+    db: Session, *, outlet_id: UUID, shifts: list[Shift]
+) -> FuelBreakdown:
+    """Group priced nozzle lines by fuel type, over whatever set of shifts it is given.
+
+    Extracted in Phase 19 so one day and a 366-day window share one accumulator. Two copies
+    of this would be two answers to "what did petrol earn", and §6.4 already records what
+    that costs: *"two implementations of one equation is the shape that drifts."*
+    """
     # fuel_type_id -> accumulator. `dict` preserves insertion order, so the output is ordered
     # by first appearance (shift sequence, then nozzle) rather than arbitrarily.
     acc: dict[UUID, dict[str, object]] = {}
     margin_cache: dict[tuple[UUID, object], tuple[Decimal | None, str | None]] = {}
+    # One memo for the whole walk, dying with it (§13.34, `pricing.LookupCache`).
+    rate_cache = pricing.LookupCache()
     incomplete = False
 
     for shift in shifts:
-        for line in reading_service.shift_sales(db, shift=shift, price_only=True):
+        for line in _priced_lines(db, shift=shift, cache=rate_cache):
             fuel = line.fuel_type
             entry = acc.setdefault(
                 fuel.id,
@@ -253,6 +288,7 @@ def fuel_breakdown(
                 fuel_type_id=fuel.id,
                 at=shift.started_at,
                 cache=margin_cache,
+                rows=rate_cache,
             )
             if margin is None:
                 entry["margin_known"] = False
@@ -319,6 +355,41 @@ def fuel_breakdown(
         quantity_by_unit=quantity_by_unit,
         incomplete=incomplete,
     )
+
+
+def fuel_breakdown_range(
+    db: Session, *, outlet_id: UUID, date_from: date, date_to: date
+) -> FuelBreakdown:
+    """`fuel_breakdown`, widened from one business date to a window (Phase 19).
+
+    **Why this is a walk and not a `SUM`.** §6.3 values a shift at the rate effective at its
+    own `started_at`, and §4.1 keeps that rate in an effective-dated table rather than in a
+    column on the reading -- so there is no `price` to multiply a summed quantity by. A query
+    that appeared to do this in one pass would have found a *current* rate somewhere and
+    silently revalued history with it, which is the corruption §4.1 exists to prevent. So each
+    shift is priced at its own instant and the results are added, which is arithmetic on
+    already-correct figures rather than a shortcut around the rule.
+
+    **The cost, and the memo that makes it bearable (§13.34).** This is O(shifts x nozzles),
+    and `readings.shift_sales` looks a rate up per nozzle per shift with no caching of its
+    own. Over a year that repeats one identical query a few thousand times, because a price is
+    constant within a trading day. `_priced_lines` below memoises on `(fuel_type, instant)`,
+    which collapses it to roughly one lookup per fuel per revision.
+
+    **`shift_sales` is deliberately not changed.** §6.4 makes the argument for `day_totals`
+    and it holds here: two implementations of one valuation is the shape that drifts, and the
+    one that drifts would be the one the cash engine depends on. The cache lives out here.
+
+    Every rule `fuel_breakdown` follows is followed identically, because it is the same
+    accumulator: a `None` quantity marks the window incomplete rather than counting as zero,
+    a single rate or margin label survives only if every contributing shift agreed, quantities
+    are grouped by unit and never summed across units (§4.5), and one fuel without a margin
+    withholds the *window's* margin total and names the gap (§13.21).
+    """
+    shifts = _shifts_in_range(
+        db, outlet_id=outlet_id, date_from=date_from, date_to=date_to
+    )
+    return _accumulate_fuel(db, outlet_id=outlet_id, shifts=shifts)
 
 
 # --- one day's cash ------------------------------------------------------------
@@ -664,7 +735,7 @@ class RangeDay:
         return self.cash.business_date
 
 
-def _bar_height(value: Decimal | None, *, largest: Decimal) -> str:
+def bar_height(value: Decimal | None, *, largest: Decimal) -> str:
     """A CSS percentage string, computed in `Decimal` on this side of the wire (§14).
 
     A bar chart is `value / max x height`, which is arithmetic on money -- and §3 rule 1 does
@@ -680,6 +751,32 @@ def _bar_height(value: Decimal | None, *, largest: Decimal) -> str:
         return "0.00%"
     clamped = value if value > 0 else _ZERO
     pct = (clamped / largest * Decimal(100)).quantize(
+        _MONEY_PLACES, rounding=ROUND_HALF_UP
+    )
+    return f"{pct}%"
+
+
+def share_pct(value: Decimal | None, *, total: Decimal | None) -> str | None:
+    """One value's share of a total, as a ready-made CSS percentage string (Phase 19).
+
+    `bar_height`'s rule applied to a different shape, and it exists for the identical reason:
+    a pie slice, a share bar and a "% of total" label are all `value / total`, which is
+    **arithmetic on money**, and §3 rule 1 does not stop at the API boundary (§14). The client
+    turns this string into an arc or a width and divides nothing.
+
+    Returns `None`, never `"0.00%"`, when the share is unknowable -- an absent value or an
+    absent/zero total. §6.8's rule reaches the geometry too: a slice drawn at zero says "this
+    fuel sold nothing", which is a different claim from "we cannot say", and a reader cannot
+    tell them apart once it is a wedge.
+
+    Negatives clamp to zero for `bar_height`'s stated reason: a net-negative total is a
+    reversal artefact, and an inverted slice has no meaning at all. The table beside it still
+    carries the real signed figure.
+    """
+    if value is None or total is None or total <= 0:
+        return None
+    clamped = value if value > 0 else _ZERO
+    pct = (clamped / total * Decimal(100)).quantize(
         _MONEY_PLACES, rounding=ROUND_HALF_UP
     )
     return f"{pct}%"
@@ -716,7 +813,7 @@ def range_report(
         RangeDay(
             cash=day,
             alert=variance_is_alerting(day.variance, threshold=threshold),
-            bar_height_pct=_bar_height(day.total_sales, largest=largest),
+            bar_height_pct=bar_height(day.total_sales, largest=largest),
         )
         for day in days
     ]
@@ -726,6 +823,106 @@ def _dates_between(date_from: date, date_to: date) -> list[date]:
     """Inclusive at both ends. Small enough to materialise -- the router caps the span."""
     span = (date_to - date_from).days
     return [date.fromordinal(date_from.toordinal() + offset) for offset in range(span + 1)]
+
+
+@dataclass(frozen=True)
+class WindowCash:
+    """§6.4's terms summed across a window, with the composition that qualifies them.
+
+    Phase 19. Every field here is a sum over `RangeDay.cash`, which means it inherits each
+    day's provenance rather than recomputing anything -- a `snapshot` day contributes the
+    figures the manager was shown, a `computed` day contributes a live estimate, and
+    `days_by_source` is the only thing that can say how much of the total is which (§13.35).
+
+    **Nulls are skipped, not zeroed, and `partial` records that they were.** A day whose cash
+    could not be computed (§13.20's `unavailable`) contributes nothing to these sums -- but
+    silently dropping it would report a smaller total as though it were a complete one, which
+    is §14's "?? 0" one aggregation level up. A reader who sees `partial` knows the window is
+    a floor rather than a figure.
+    """
+
+    metered_fuel_sales: Decimal
+    non_fuel_sales_total: Decimal
+    total_sales: Decimal
+    card_total: Decimal
+    upi_total: Decimal
+    wallet_total: Decimal
+    credit_sales_total: Decimal
+    cash_credit_repayments: Decimal
+    card_upi_credit_repayments: Decimal
+    cash_expenses: Decimal
+    bank_deposits_total: Decimal
+    shortfalls_booked: Decimal
+
+    days_by_source: dict[str, int]
+    trading_days: int
+    partial: bool
+
+    @property
+    def cash_sales(self) -> Decimal:
+        """§6.4's residual, over the window.
+
+        Deliberately derived here rather than summed from a per-day field, because there is
+        no per-day `cash_sales` column to sum -- §6.4 defines it as a residual and §5.2 is
+        emphatic that the `cash` collection row is the *declaration* it gets checked against,
+        never a term in it. Summing that row instead would double-count the day's cash.
+        """
+        return (
+            self.total_sales
+            - self.card_total
+            - self.upi_total
+            - self.wallet_total
+            - self.credit_sales_total
+        )
+
+
+def window_cash(days: list[RangeDay]) -> WindowCash:
+    """Sum §6.4's terms across the window, counting how each day was arrived at."""
+    fields = (
+        "metered_fuel_sales",
+        "non_fuel_sales_total",
+        "card_total",
+        "upi_total",
+        "wallet_total",
+        "credit_sales_total",
+        "cash_credit_repayments",
+        "card_upi_credit_repayments",
+        "cash_expenses",
+        "bank_deposits_total",
+        "shortfalls_booked",
+    )
+    totals = {name: _ZERO for name in fields}
+    total_sales = _ZERO
+    by_source: dict[str, int] = {source.value: 0 for source in DaySource}
+    trading = 0
+    partial = False
+
+    for day in days:
+        by_source[day.cash.source.value] += 1
+        if day.cash.shift_count:
+            trading += 1
+        if day.cash.source is DaySource.unavailable or day.cash.incomplete:
+            partial = True
+
+        for name in fields:
+            value = getattr(day.cash, name)
+            if value is None:
+                # Not zero. See WindowCash's docstring -- the day is skipped and the window
+                # is marked partial, so the shortfall is legible rather than absorbed.
+                partial = True
+                continue
+            totals[name] = totals[name] + value
+
+        if day.cash.total_sales is not None:
+            total_sales = total_sales + day.cash.total_sales
+
+    return WindowCash(
+        total_sales=total_sales,
+        days_by_source=by_source,
+        trading_days=trading,
+        partial=partial,
+        **totals,
+    )
 
 
 def variance_is_alerting(variance: Decimal | None, *, threshold: Decimal) -> bool:

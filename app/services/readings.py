@@ -260,7 +260,11 @@ def quantity_if_known(reading: NozzleReading, nozzle: Nozzle) -> Decimal | None:
 
 
 def shift_sales(
-    db: Session, *, shift: Shift, price_only: bool = False
+    db: Session,
+    *,
+    shift: Shift,
+    price_only: bool = False,
+    cache: pricing.LookupCache | None = None,
 ) -> list[SalesLine]:
     """Value every nozzle on a shift (§6.3).
 
@@ -306,6 +310,9 @@ def shift_sales(
     """
     readings = readings_for_shift(db, shift_id=shift.id)
     lines: list[SalesLine] = []
+    # Per shift, not per call: the approximation is a property of (shift, fuel), so two
+    # nozzles on the same fuel must not warn -- or query -- twice. See the helper.
+    seen_revision_warnings: set[UUID] = set()
 
     for nozzle, fuel_type in nozzles_in_scope(db, shift=shift):
         reading = readings.get(nozzle.id)
@@ -345,6 +352,7 @@ def shift_sales(
             outlet_id=shift.outlet_id,
             fuel_type_id=fuel_type.id,
             at=shift.started_at,
+            cache=cache,
         )
         # Not looked up at all when the caller only wants value -- not looked up and
         # discarded. `margin_at` *raises*, so a lookup here would refuse the whole shift
@@ -357,9 +365,10 @@ def shift_sales(
                 outlet_id=shift.outlet_id,
                 fuel_type_id=fuel_type.id,
                 at=shift.started_at,
+                cache=cache,
             )
         )
-        _warn_on_mid_shift_revision(db, shift=shift, fuel_type=fuel_type)
+        _warn_on_mid_shift_revision(db, shift=shift, fuel_type=fuel_type, seen=seen_revision_warnings)
 
         lines.append(
             SalesLine(
@@ -379,16 +388,26 @@ def shift_sales(
 
 
 def _warn_on_mid_shift_revision(
-    db: Session, *, shift: Shift, fuel_type: FuelType
+    db: Session, *, shift: Shift, fuel_type: FuelType, seen: set[UUID] | None = None
 ) -> None:
     """Log when §13.1's approximation is actually being applied (§6.3).
 
     §6.3 requires this warning and requires that it not be deleted on the strength of this
     outlet's convenient 06:00 start. A 24-hour outlet's night shift straddles the revision
     and the approximation applies to it in full.
+
+    `seen` de-duplicates **per fuel within one shift** (Phase 19). Two nozzles dispensing
+    petrol on one shift are one commercial fact and one approximation, so the second nozzle
+    was repeating both the query and the log line. The warning itself is untouched: it still
+    fires once for every (shift, fuel) the approximation is applied to, which is the unit
+    §6.3 actually describes.
     """
     if shift.ended_at is None:
         return
+    if seen is not None:
+        if fuel_type.id in seen:
+            return
+        seen.add(fuel_type.id)
     revisions = pricing.revisions_within(
         db,
         outlet_id=shift.outlet_id,

@@ -767,3 +767,350 @@ async def test_calling_the_daily_report_twice_gives_the_same_answer(
     second = await _get(client, f"/reports/daily/{DAY.isoformat()}", auth_headers(manager))
 
     assert first == second
+
+
+# --- GET /reports/summary (Phase 19) ------------------------------------------
+
+
+async def test_the_summary_totals_a_window_and_splits_it_by_fuel(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_nozzle: Callable[..., UUID],
+    make_reading: Callable[..., UUID],
+    priced_fuel,
+    margined_fuel,
+    make_expense: Callable[..., UUID],
+    make_non_fuel_sale: Callable[..., UUID],
+    auth_headers,
+    clean_cash: None,
+    clean_expenses: None,
+) -> None:
+    """Two trading days, two fuels, summed across the window.
+
+        day 1:  1,000 L x ₹100 = ₹1,00,000  |  100 kg x ₹80 = ₹8,000
+        day 2:    500 L x ₹100 =   ₹50,000  |   50 kg x ₹80 = ₹4,000
+                                 ----------                   ------
+                                 ₹1,50,000                    ₹12,000   = ₹1,62,000 fuel
+        + ₹500 non-fuel                                                 = ₹1,62,500 sales
+    """
+    manager = make_user("manager")
+    attendant = make_user("attendant")
+    petrol = make_nozzle(priced_fuel, label="DU-1/N-1")
+    gas = make_nozzle(margined_fuel, label="DU-2/N-1")
+
+    day_two = DAY + timedelta(days=1)
+    for day, litres, kilos in ((DAY, "1000.00", "100.00"), (day_two, "1500.00", "150.00")):
+        started, ended = _window(day)
+        shift = make_shift(attendant, business_date=day, started_at=started, ended_at=ended)
+        # Readings chain: day 2 opens where day 1 closed (§4.7).
+        opening_l = "0.00" if day == DAY else "1000.00"
+        opening_k = "0.00" if day == DAY else "100.00"
+        make_reading(shift, petrol, opening_reading=opening_l, closing_reading=litres)
+        make_reading(shift, gas, opening_reading=opening_k, closing_reading=kilos)
+        if day == DAY:
+            make_non_fuel_sale(shift, amount="500.00")
+            make_expense(shift, mode="cash", amount="300.00")
+
+    body = await _get(
+        client,
+        "/reports/summary",
+        auth_headers(manager),
+        **{"from": DAY.isoformat(), "to": day_two.isoformat()},
+    )
+
+    assert body["from"] == DAY.isoformat()
+    assert body["to"] == day_two.isoformat()
+    assert body["trading_days"] == 2
+
+    by_code = {line["code"]: line for line in body["fuel"]}
+    assert Decimal(by_code["APIFUEL"]["quantity"]) == Decimal("1500.000")
+    assert Decimal(by_code["APIFUEL"]["sale_value"]) == Decimal("150000.00")
+    assert Decimal(by_code["APIGAS"]["quantity"]) == Decimal("150.000")
+    assert Decimal(by_code["APIGAS"]["sale_value"]) == Decimal("12000.00")
+
+    assert Decimal(body["fuel_sales_total"]) == Decimal("162000.00")
+    assert Decimal(body["metered_fuel_sales"]) == Decimal("162000.00")
+    assert Decimal(body["non_fuel_sales_total"]) == Decimal("500.00")
+    assert Decimal(body["total_sales"]) == Decimal("162500.00")
+    assert Decimal(body["expenses_total"]) == Decimal("300.00")
+
+    # §4.5: litres and kilograms are reported separately and never added together.
+    assert body["quantity_by_unit"] == {"litre": "1500.000", "kilogram": "150.000"}
+    assert "total_quantity" not in body
+
+
+async def test_one_unmargined_fuel_withholds_the_windows_margin_total(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_nozzle: Callable[..., UUID],
+    make_reading: Callable[..., UUID],
+    priced_fuel,
+    margined_fuel,
+    auth_headers,
+    clean_cash: None,
+) -> None:
+    """§13.21 over a window: unknowable, not smaller -- and never 0.00."""
+    manager = make_user("manager")
+    attendant = make_user("attendant")
+    started, ended = _window(DAY)
+    shift = make_shift(attendant, business_date=DAY, started_at=started, ended_at=ended)
+    make_reading(shift, make_nozzle(priced_fuel, label="DU-1/N-1"),
+                 opening_reading="0.00", closing_reading="1000.00")
+    make_reading(shift, make_nozzle(margined_fuel, label="DU-2/N-1"),
+                 opening_reading="0.00", closing_reading="100.00")
+
+    body = await _get(
+        client, "/reports/summary", auth_headers(manager),
+        **{"from": DAY.isoformat(), "to": DAY.isoformat()},
+    )
+
+    by_code = {line["code"]: line for line in body["fuel"]}
+    # The margined fuel still reports its own figure...
+    assert Decimal(by_code["APIGAS"]["gross_fuel_margin"]) == Decimal("228.00")
+    # ...while the unmargined one is null with a reason, never zero.
+    assert by_code["APIFUEL"]["gross_fuel_margin"] is None
+    assert by_code["APIFUEL"]["margin_unavailable_reason"] == "NO_MARGIN_FOR_DATE"
+
+    assert body["gross_fuel_margin_total"] is None
+    assert body["fuels_missing_margin"] == ["APIFUEL"]
+
+
+async def test_every_fuel_margined_gives_a_window_margin_total(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_nozzle: Callable[..., UUID],
+    make_reading: Callable[..., UUID],
+    make_fuel_type,
+    make_fuel_price,
+    make_fuel_margin,
+    auth_headers,
+    clean_cash: None,
+) -> None:
+    """The owner's real state since the margins were entered: the total computes.
+
+    Builds its own two fuels rather than adding a margin to the shared `priced_fuel`
+    fixture: `fuel_margins` is append-only, so a margin attached to a fixture-owned fuel
+    outlives the test that added it and breaks the next one's teardown.
+    """
+    admin = make_user("admin")
+    priced_fuel = make_fuel_type(code="MARGFUEL", unit_of_measure="litre")
+    make_fuel_price(priced_fuel, "100.00", BEFORE, entered_by=admin)
+    make_fuel_margin(priced_fuel, "3.99", BEFORE, entered_by=admin)
+    margined_fuel = make_fuel_type(code="MARGGAS", unit_of_measure="kilogram")
+    make_fuel_price(margined_fuel, "80.00", BEFORE, entered_by=admin)
+    make_fuel_margin(margined_fuel, "2.28", BEFORE, entered_by=admin)
+
+    manager = make_user("manager")
+    attendant = make_user("attendant")
+    started, ended = _window(DAY)
+    shift = make_shift(attendant, business_date=DAY, started_at=started, ended_at=ended)
+    make_reading(shift, make_nozzle(priced_fuel, label="DU-1/N-1"),
+                 opening_reading="0.00", closing_reading="1000.00")
+    make_reading(shift, make_nozzle(margined_fuel, label="DU-2/N-1"),
+                 opening_reading="0.00", closing_reading="100.00")
+
+    body = await _get(
+        client, "/reports/summary", auth_headers(manager),
+        **{"from": DAY.isoformat(), "to": DAY.isoformat()},
+    )
+
+    # 1000 L x ₹3.99 = ₹3,990 ; 100 kg x ₹2.28 = ₹228
+    assert body["fuels_missing_margin"] == []
+    assert Decimal(body["gross_fuel_margin_total"]) == Decimal("4218.00")
+
+
+async def test_shares_are_server_computed_strings_that_close_to_a_hundred(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_nozzle: Callable[..., UUID],
+    make_reading: Callable[..., UUID],
+    priced_fuel,
+    margined_fuel,
+    auth_headers,
+    clean_cash: None,
+) -> None:
+    """§14: a slice is `value / total`, so the server sends it ready-made.
+
+    ₹1,00,000 petrol + ₹8,000 CBG = ₹1,08,000, so the shares are 92.59% / 7.41%.
+    """
+    manager = make_user("manager")
+    attendant = make_user("attendant")
+    started, ended = _window(DAY)
+    shift = make_shift(attendant, business_date=DAY, started_at=started, ended_at=ended)
+    make_reading(shift, make_nozzle(priced_fuel, label="DU-1/N-1"),
+                 opening_reading="0.00", closing_reading="1000.00")
+    make_reading(shift, make_nozzle(margined_fuel, label="DU-2/N-1"),
+                 opening_reading="0.00", closing_reading="100.00")
+
+    body = await _get(
+        client, "/reports/summary", auth_headers(manager),
+        **{"from": DAY.isoformat(), "to": DAY.isoformat()},
+    )
+
+    by_code = {line["code"]: line for line in body["fuel"]}
+    assert by_code["APIFUEL"]["share_pct"] == "92.59%"
+    assert by_code["APIGAS"]["share_pct"] == "7.41%"
+
+    # Strings the client can only assign -- a percentage, not a number to divide again.
+    assert isinstance(by_code["APIFUEL"]["share_pct"], str)
+
+    total = sum(
+        Decimal(line["share_pct"].rstrip("%")) for line in body["fuel"]
+    )
+    assert total == Decimal("100.00")
+
+
+async def test_a_window_reports_how_its_days_were_arrived_at(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_nozzle: Callable[..., UUID],
+    make_reading: Callable[..., UUID],
+    priced_fuel,
+    auth_headers,
+    clean_cash: None,
+) -> None:
+    """§13.35: a total that mixes record and estimate must say so."""
+    manager = make_user("manager")
+    attendant = make_user("attendant")
+    started, ended = _window(DAY)
+    shift = make_shift(attendant, business_date=DAY, started_at=started, ended_at=ended)
+    make_reading(shift, make_nozzle(priced_fuel, label="DU-1/N-1"),
+                 opening_reading="0.00", closing_reading="1000.00")
+
+    # A three-day window containing one traded day and two the outlet was shut.
+    body = await _get(
+        client, "/reports/summary", auth_headers(manager),
+        **{"from": DAY.isoformat(), "to": (DAY + timedelta(days=2)).isoformat()},
+    )
+
+    assert body["days_by_source"]["computed"] == 1
+    assert body["days_by_source"]["no_trading"] == 2
+    assert body["days_by_source"]["snapshot"] == 0
+    assert body["trading_days"] == 1
+    assert len(body["trend"]) == 3
+
+
+@pytest.mark.parametrize(
+    ("span_days", "expected_status"),
+    [(366, 200), (367, 422)],
+)
+async def test_the_summary_cap_is_366_days_inclusive(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    auth_headers,
+    span_days: int,
+    expected_status: int,
+) -> None:
+    """Deliberately looser than /reports/range's 31 -- different work, different bound."""
+    manager = make_user("manager")
+    end = DAY
+    start = end - timedelta(days=span_days - 1)
+
+    response = await client.get(
+        "/api/v1/reports/summary",
+        headers=auth_headers(manager),
+        params={"from": start.isoformat(), "to": end.isoformat()},
+    )
+    assert response.status_code == expected_status, response.text
+    if expected_status == 422:
+        assert response.json()["code"] == "INVALID_DATE_RANGE"
+
+
+async def test_the_range_report_still_caps_at_thirty_one(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    """The looser summary cap must not have leaked into the endpoint it shares a helper with."""
+    manager = make_user("manager")
+    response = await client.get(
+        "/api/v1/reports/range",
+        headers=auth_headers(manager),
+        params={
+            "from": (DAY - timedelta(days=31)).isoformat(),
+            "to": DAY.isoformat(),
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "INVALID_DATE_RANGE"
+
+
+async def test_the_summary_refuses_a_backwards_or_future_window(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    manager = make_user("manager")
+
+    backwards = await client.get(
+        "/api/v1/reports/summary",
+        headers=auth_headers(manager),
+        params={"from": DAY.isoformat(), "to": (DAY - timedelta(days=1)).isoformat()},
+    )
+    assert backwards.status_code == 422
+    assert backwards.json()["code"] == "INVALID_DATE_RANGE"
+
+    ahead = date.today() + timedelta(days=2)
+    future = await client.get(
+        "/api/v1/reports/summary",
+        headers=auth_headers(manager),
+        params={"from": ahead.isoformat(), "to": ahead.isoformat()},
+    )
+    assert future.status_code == 422
+    assert future.json()["code"] == "BUSINESS_DATE_IN_FUTURE"
+
+
+async def test_the_summary_is_manager_floor(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    auth_headers,
+) -> None:
+    attendant = make_user("attendant")
+    response = await client.get(
+        "/api/v1/reports/summary", headers=auth_headers(attendant)
+    )
+    assert response.status_code == 403, response.text
+    assert response.json()["code"] == "INSUFFICIENT_ROLE"
+
+    anonymous = await client.get("/api/v1/reports/summary")
+    assert anonymous.status_code == 401
+    assert anonymous.json()["code"] == "NOT_AUTHENTICATED"
+
+
+async def test_the_summary_writes_nothing(
+    client: AsyncClient,
+    engine: Engine,
+    make_user: Callable[..., UUID],
+    make_shift: Callable[..., UUID],
+    make_nozzle: Callable[..., UUID],
+    make_reading: Callable[..., UUID],
+    priced_fuel,
+    auth_headers,
+    clean_cash: None,
+) -> None:
+    """§8 calls this a report. A report that wrote would be Phase 15's defect returning."""
+    manager = make_user("manager")
+    attendant = make_user("attendant")
+    started, ended = _window(DAY)
+    shift = make_shift(attendant, business_date=DAY, started_at=started, ended_at=ended)
+    make_reading(shift, make_nozzle(priced_fuel, label="DU-1/N-1"),
+                 opening_reading="0.00", closing_reading="1000.00")
+
+    def counts() -> tuple[int, int]:
+        with engine.begin() as conn:
+            return (
+                conn.execute(text("SELECT count(*) FROM daily_cash_summaries")).scalar_one(),
+                conn.execute(text("SELECT count(*) FROM audit_logs")).scalar_one(),
+            )
+
+    before = counts()
+    await _get(
+        client, "/reports/summary", auth_headers(manager),
+        **{"from": DAY.isoformat(), "to": DAY.isoformat()},
+    )
+    assert counts() == before
