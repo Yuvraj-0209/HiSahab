@@ -61,6 +61,25 @@ export function businessDate(value, { absent = "—" } = {}) {
   return `${Number(day)} ${MONTHS[Number(month) - 1] ?? month} ${year}`;
 }
 
+/**
+ * A business date without its year, for a chart axis where space is the scarce thing.
+ *
+ * Returns the two parts separately rather than one string, because the label stacks them on
+ * two lines and joining them here would only mean splitting them again in the caller.
+ *
+ * Parts, never a `Date` -- `businessDate` above and the module header both explain why, and
+ * the reason does not weaken just because the year is being dropped.
+ *
+ * @param {string|null} value  "2026-08-23"
+ * @returns {{day: string, month: string}}  {day: "23", month: "Aug"}
+ */
+export function businessDateShort(value) {
+  if (!value) return { day: "", month: "" };
+  const [, month, day] = String(value).slice(0, 10).split("-");
+  if (!month || !day) return { day: String(value), month: "" };
+  return { day: String(Number(day)), month: MONTHS[Number(month) - 1] ?? month };
+}
+
 /** The weekday for a business date, again without constructing an instant in another zone.
  *
  * Uses UTC accessors on a UTC-anchored date so the arithmetic cannot drift: the point is only

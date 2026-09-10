@@ -918,15 +918,141 @@ select.field-input {
    (§14: `value / max` is arithmetic on money, and JS has no decimal type), so the stylesheet
    owns everything about a bar except how tall it is. */
 
-.chart {
+/* --- the paged chart (Phase 19b) ---------------------------------------------
+   The Phase 13 original was one flex row with `flex: 1 1 0` columns, sized for a SEVEN-day
+   window. Phase 19 began handing it up to 366, and a bar became a hairline -- the chart
+   stopped carrying information at exactly the window sizes the Summary tab exists for.
+
+   So the days are cut into pages and the rail slides between them. The rail is positioned in
+   PAGE UNITS (`translate3d(-100% * n)`) rather than pixels, deliberately: pixels would need a
+   measured frame width, which is unknown until layout and changes on every resize. Never
+   knowing the width means never getting it wrong. */
+
+.chart-shell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.chart-frame {
+  position: relative;
+  overflow: hidden;
+  /* Room at each edge for the arrows to sit over without covering a bar. */
+  padding-inline: 2.25rem;
+}
+
+.chart-rail {
+  display: flex;
+  /* The one animated property, driven by a Spring in ui/chart.js. §13.29: continuous motion
+     is `transform` on the compositor, never a redraw. */
+  will-change: transform;
+}
+
+/* Each page is exactly the frame's width, so `-100%` per page lands true. */
+.chart-page {
+  flex: 0 0 100%;
   display: flex;
   align-items: flex-end;
   gap: var(--sp-2);
   min-height: 8rem;
+  /* The depth. One `data-active` write per turn drives both, so the drum effect costs a
+     single attribute change rather than a per-frame style write. */
+  transform-origin: center bottom;
+  transition:
+    transform var(--t-base) var(--ease-out),
+    opacity var(--t-base) var(--ease-out);
+}
+
+.chart-page[data-active="false"] {
+  transform: scale(0.88);
+  opacity: 0.35;
+}
+
+.chart-arrow {
+  position: absolute;
+  top: 2.25rem;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  /* A 44px touch target from a 32px circle, without the ring looking heavy. */
+  padding: 0;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: var(--text-primary);
+  background: var(--surface-high);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  z-index: 1;
+}
+
+.chart-arrow::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+
+.chart-arrow.is-prev { left: 0; }
+.chart-arrow.is-next { right: 0; }
+
+.chart-arrow:active {
+  transform: scale(0.92);
+}
+
+.chart-arrow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chart-pager-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.chart-dots {
+  display: flex;
+  gap: var(--sp-1);
+}
+
+.chart-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-high);
+}
+
+.chart-dot.is-current {
+  background: var(--accent);
+}
+
+/* The detail panel. Height is reserved so filling it never shifts the page under a finger
+   that is still moving. */
+.chart-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 4.25rem;
+  padding: var(--sp-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+}
+
+.chart-detail-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  align-items: flex-start;
 }
 
 .chart-col {
   flex: 1 1 0;
+  /* A floor, so a bar can never go back to being the hairline this phase was written to fix.
+     Ten columns fit any phone; the min only bites if a caller raises `perPage`. */
+  min-width: 1.25rem;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -938,6 +1064,18 @@ select.field-input {
   color: inherit;
   cursor: pointer;
   border-radius: var(--radius-sm);
+}
+
+/* Occupies a column's width on a short final page and draws nothing -- see ui/chart.js. */
+.chart-col-spacer {
+  flex: 1 1 0;
+  min-width: 1.25rem;
+}
+
+/* The selected day keeps its ring after the pointer leaves, so the panel below always has a
+   visible owner -- otherwise the figures belong to nothing the eye can find. */
+.chart-col.is-selected .chart-track {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
 .chart-col:focus-visible {
@@ -973,9 +1111,28 @@ select.field-input {
   background: var(--warning);
 }
 
+/* Two lines, because the owner asked for the actual date rather than the weekday and a
+   date does not fit on one line at ten columns wide. The day number carries the weight --
+   it is what the eye scans for -- and the month sits under it, repeated but cheap. */
 .chart-col-label {
   text-align: center;
   color: var(--text-tertiary);
+  line-height: 1.15;
+}
+
+.chart-col-day {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.chart-col-month {
+  color: var(--text-tertiary);
+}
+
+.chart-col.is-selected .chart-col-day {
+  color: var(--text-primary);
 }
 
 .variance-strip {

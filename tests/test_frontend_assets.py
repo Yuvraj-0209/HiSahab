@@ -253,6 +253,45 @@ def test_no_money_value_is_parsed_into_a_float() -> None:
     assert offenders == [], f"float parsing in the money path: {offenders}"
 
 
+def test_chart_geometry_is_assigned_from_the_server_never_derived() -> None:
+    """The regression Phase 19b was one step away from, pinned (§14, §3 rule 1).
+
+    A chart is the one place client-side maths looks harmless, because the output is a pixel
+    rather than a rupee. `bar_height_pct` and `share_pct` exist so it never happens: the
+    server divides in `Decimal` and the client **assigns a string**.
+
+    Paging the chart (Phase 19b) made the temptation concrete -- it would have been easy to
+    re-scale each page to its own tallest bar, which is `value / max` in JavaScript *and* a
+    lie, since every page's tallest bar would then reach 100% and a quiet week would look
+    like a record one.
+
+    So: the only `height`/`width` a chart module may set is one of the server's percentage
+    fields. A literal, a template string doing arithmetic, or a division fails here.
+    """
+    chart = _STATIC / "js" / "ui" / "chart.js"
+    assert chart.exists(), "js/ui/chart.js moved -- update this test"
+
+    allowed = ("bar_height_pct", "share_pct")
+    offenders: list[str] = []
+
+    for number, line in _code_lines(chart):
+        stripped = line.strip()
+        # Only style assignments are interesting; a CSS class doing layout is fine.
+        if "height:" not in stripped and "width:" not in stripped:
+            continue
+        if any(name in stripped for name in allowed):
+            continue
+        # A bare `height: "100%"`-style constant is layout, not arithmetic -- but anything
+        # with an operator in it is deriving a size and must be justified.
+        if any(operator in stripped for operator in ("/", "*", "+")):
+            offenders.append(f"chart.js:{number}: {stripped}")
+
+    assert offenders == [], (
+        "chart geometry derived in the client rather than assigned from a server-computed "
+        f"percentage: {offenders}"
+    )
+
+
 # --- the rule that produces a silently dead button ----------------------------
 
 
