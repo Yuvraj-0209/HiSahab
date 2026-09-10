@@ -1734,6 +1734,7 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | Read the daily report (§13.20) | ❌ | ✅ | ✅ |
 | Read the rolling range report | ❌ | ✅ | ✅ |
 | Read the variance alerts (§13.23) | ❌ | ✅ | ✅ |
+| Read the range summary dashboard (§13.34) | ❌ | ✅ | ✅ |
 | List expense categories (to fill a dropdown) | ✅ | ✅ | ✅ |
 | List credit customers (to fill a dropdown — **name and vehicles only**, §9) | ✅ | ✅ | ✅ |
 | Read one customer's detail, outstanding balance, or ledger | ❌ | ✅ | ✅ |
@@ -2271,6 +2272,48 @@ ahead — no empty modules for later phases.
     subtracts every cash expense and must, because the locker really is lighter. §13.33 records
     the cost — a salesman who pays from his own hand now shows a gap the size of that bill,
     true and explained rather than netted silently away.
+18. **Deploy** — Railway, `preDeploy` migrations, and the two traps that cost a day each. Not a
+    feature phase; recorded in §15 and `docs/phase-18-notes.md` rather than here.
+19. **The Summary tab** — a sixth tab, one new read endpoint, **no migration and no new table**.
+    Like Phases 13, 14 and 15, every figure this phase shows already exists; the phase is about
+    *presenting* it, and about presenting it over a **window** rather than a day.
+
+    Eighteen phases built screens that answer questions about **one business date or one
+    shift**. The Cash tab is a worklist of days needing attention (Phase 15); `/reports/range`
+    shows at most 31 days of *cash* totals with no per-fuel split; `fuel_breakdown` splits by
+    product but only for a single date. So there was nowhere to ask *did petrol outsell diesel
+    this quarter, is udhaar growing, are expenses creeping up, is the CBG cascade worth its
+    floor space* — which are the questions the owner actually makes decisions on.
+
+    **(a) One endpoint, not four.** `GET /reports/summary` lands in the existing
+    `app/api/v1/reports.py`. Every cross-panel figure a dashboard shows — a fuel's share of
+    sales, a category's share of expenses — is a **division of money**, forbidden in the client
+    by §14, so it must come from **one server-side pass**. Four endpoints stitched together in
+    JavaScript would be four passes that can disagree, which is precisely the failure
+    `ui/chart.js` already avoids by having the server send `bar_height_pct` beside the figures
+    it was derived from.
+
+    **(b) Fuel cannot be aggregated in SQL, and that is what set the cap.** A shift is valued
+    at `rate_at(fuel_type, shift.started_at)` — an effective-dated lookup (§4.1, §6.3), never a
+    column on the reading — so `SUM(quantity × price)` cannot be written. Any per-fuel total
+    walks shifts, which is exactly why `/reports/range` caps at 31 days (§13.24). Reaching a
+    year therefore needed a **price and margin memo** in the reporting layer;
+    `readings.shift_sales` is left alone, because two implementations of one valuation is the
+    shape that drifts (§6.4's own argument for `day_totals`).
+
+    **The cap here is 366 days, and `/reports/range` keeps its 31.** The two are different
+    costs: that endpoint runs a full §6.4 cash pass per unreconciled day, this one walks
+    readings. `_resolve_window` gains a parameterised maximum rather than being copied.
+
+    **(c) The window's default anchors on trading, not on the calendar** — §13.30's rule,
+    inherited rather than re-argued. An outlet catching up on July in late August must not open
+    a dashboard onto thirty days of `no_trading`.
+
+    **(d) §13.20's distinction has to survive aggregation.** A window mixing reconciled and
+    unreconciled days is partly *record* and partly *estimate*, and a single total silently
+    blends the two. So the response carries `days_by_source` and the screen says so in words.
+    A number that is half snapshot and half live estimate, presented as one figure with no
+    provenance, is the plausible-but-wrong shape this document opens by warning about.
 
 ---
 
@@ -2702,6 +2745,47 @@ future reader must be able to tell the difference.
     noise — which is the failure mode §5.2 names for any flag nobody acts on. §5.2, §6.4,
     §13.14
 
+34. **The summary dashboard walks every shift in its window, and a year is not free.** Phase 19.
+    §13.24 recorded the same cost for `/reports/range` and capped it at 31 days; this endpoint
+    goes to 366, so the cost deserves restating rather than inheriting quietly.
+
+    A per-fuel total cannot be a `SUM`. §6.3 values a shift at the rate effective at its
+    `started_at`, and that rate lives in an effective-dated table, so the only honest way to
+    total petrol across ninety days is to walk the shifts and price each one. The mitigation is
+    a **memo on `rate_at` / `margin_at` keyed by `(fuel_type, instant)`** — the same shape as
+    `_margin_or_none`'s existing cache, and effective because a price is constant within a
+    trading day, so a year of one-shift days collapses to roughly one lookup per fuel per
+    revision instead of one per nozzle per shift.
+
+    What is left is still linear in shifts × nozzles. For this outlet — one shift a day, a
+    handful of nozzles — a full year is a second or so; for a 24-hour outlet with three shifts
+    it is three times that. **The honest move is to name the bound and revisit it with a real
+    query count**, which is what §13.17 and §13.24 both say about their own guesses.
+
+    The cheap escape, if it ever bites, is not a wider cache but **materialising the per-fuel
+    day totals** — which is a new table, and therefore a decision about storing a derived
+    figure that §14 is generally hostile to. Not needed yet, and named here so the next person
+    does not reach for it first. §6.3, §13.17, §13.24
+
+35. **A window total mixes reconciled and unreconciled days, and only `days_by_source` says
+    so.** Phase 19, and it is §13.20 one aggregation level up.
+
+    A single day is honest about itself: `source` is `snapshot` or `computed`, and §13.20 is
+    emphatic that the two are *different kinds of claim* — one a record of what a manager was
+    told, the other an estimate of a day still in motion. Sum thirty such days and that
+    distinction has nowhere to live: the total is one number, part record and part estimate,
+    and nothing in the figure itself can say which part.
+
+    Refusing to total a mixed window was considered and rejected — it would refuse almost every
+    window this outlet will ever ask for, since §4.7's *typed in after the fact* means
+    unreconciled days are the normal case here. So the total is produced, and the composition
+    is reported beside it: `days_by_source` counts the four kinds, and the screen renders it in
+    words rather than leaving a reader to assume.
+
+    The consequence to be honest about: a manager comparing two windows may be comparing a
+    settled month against a half-entered one. That is visible rather than hidden, which is the
+    most this can do without refusing to answer. §13.20, §13.24
+
 ---
 
 ## 14. Guardrails for Claude Code
@@ -2931,6 +3015,27 @@ to occur on this specific project.
   pixel rather than a rupee. The server computes bar heights in `Decimal` and sends a CSS
   percentage string the client can only assign — which also makes the chart provably consistent
   with the table beneath it, since both come from one pass (§3 rule 1, §13.18)
+- **Compute a pie or donut slice in JavaScript.** Phase 19. A slice is `value / total`, which
+  is the bar-height rule one shape over and no more permissible for being circular. The server
+  sends `share_pct` as a ready-made percentage string; the client turns it into an arc and
+  divides nothing. The same goes for a share bar, a stacked segment, and any "% of total" label
+  — if it needed a division, it should have arrived already divided (§3 rule 1, §13.18)
+- **Assemble a dashboard from several endpoints and total it in the client.** Phase 19. Every
+  cross-panel figure — a fuel's share of sales, a category's share of expenses — is a division
+  of money, so a dashboard must come from **one server-side pass**. Stitching four responses
+  together in JavaScript is four passes that can disagree with each other, and the disagreement
+  will be a percentage that does not sum to 100 with no obvious cause (§6.4, §13.34)
+- **Write SQL that sums fuel sales over a date range.** Phase 19. It cannot be done: §6.3 values
+  a shift at the rate effective at its `started_at`, and that rate is an effective-dated row,
+  not a column on the reading — so `SUM(quantity × price)` has no price to multiply by. Walk the
+  shifts and price each one, memoising the lookup. A query that appears to work is one that
+  found a *current* price column somewhere and silently revalued history with it, which is the
+  exact corruption §4.1 exists to prevent (§4.1, §6.3, §13.34)
+- **Present a window total without saying what it is made of.** Phase 19. A window mixing
+  reconciled and unreconciled days is part record and part live estimate (§13.20), and the total
+  cannot say which. Report `days_by_source` beside it and render it in words. Dropping
+  unreconciled days from the window instead is worse — that is a report lying by omission, and
+  §13.20 already refuses it for exactly this reason (§13.20, §13.35)
 - **Accept `user_profiles.id` from a client, or generate one.** It must equal `auth.users.id`
   — it *is* the JWT's `sub` claim — so it is copied from whatever the identity provider
   returned, never invented. A wrong value produces a person who authenticates successfully and
