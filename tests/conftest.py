@@ -413,10 +413,10 @@ def make_user(engine: Engine) -> Iterator[Callable[..., UUID]]:
                     "DELETE FROM outlet_shift_templates WHERE created_by = ANY(:ids)"
                 ).bindparams(ids=created)
             )
-            # Phase 9: credit_customers.created_by points at a user, and the sales and
-            # repayments that pointed at the customer went two blocks up.
-            # Phase 20: bank_sender_aliases points at both a user and a customer, so it has
-            # to go before either can be deleted.
+            # Phase 20: the bank tables reference users from five columns -- created_by on
+            # all four, plus classified_by and expense_decided_by on bank_transactions. They
+            # are deleted innermost-first (transactions, then imports, then accounts), and
+            # before credit_customers below because an alias points at both.
             connection.execute(
                 text(
                     "DELETE FROM bank_sender_aliases WHERE created_by = ANY(:ids) "
@@ -424,6 +424,28 @@ def make_user(engine: Engine) -> Iterator[Callable[..., UUID]]:
                     "(SELECT id FROM credit_customers WHERE created_by = ANY(:ids))"
                 ).bindparams(ids=created)
             )
+            connection.execute(
+                text(
+                    "DELETE FROM bank_transactions WHERE created_by = ANY(:ids) "
+                    "OR classified_by = ANY(:ids) OR expense_decided_by = ANY(:ids) "
+                    "OR bank_account_id IN "
+                    "(SELECT id FROM bank_accounts WHERE created_by = ANY(:ids))"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM bank_statement_imports WHERE created_by = ANY(:ids) "
+                    "OR bank_account_id IN "
+                    "(SELECT id FROM bank_accounts WHERE created_by = ANY(:ids))"
+                ).bindparams(ids=created)
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM bank_accounts WHERE created_by = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            # Phase 9: credit_customers.created_by points at a user, and the sales and
+            # repayments that pointed at the customer went two blocks up.
             connection.execute(
                 text(
                     "DELETE FROM credit_customers WHERE created_by = ANY(:ids)"
@@ -1510,6 +1532,16 @@ def make_credit_customer(engine: Engine) -> Iterator[Callable[..., UUID]]:
             connection.execute(
                 text(
                     "DELETE FROM bank_sender_aliases WHERE credit_customer_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
+            # A confirmed statement line points at the repayment it produced, so that link
+            # has to be broken before the repayment can go. Cleared rather than deleted: the
+            # statement line belongs to a bank account, not to this customer.
+            connection.execute(
+                text(
+                    "UPDATE bank_transactions SET credit_repayment_id = NULL "
+                    "WHERE credit_repayment_id IN "
+                    "(SELECT id FROM credit_repayments WHERE credit_customer_id = ANY(:ids))"
                 ).bindparams(ids=created)
             )
             for table in ("credit_sales", "credit_repayments"):

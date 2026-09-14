@@ -11,6 +11,7 @@ from fastapi import APIRouter
 from app.api.v1 import (
     attachments,
     audit_logs,
+    bank_statements,
     bank_deposits,
     cash_position,
     client_config,
@@ -142,6 +143,13 @@ api_router.include_router(daily_summaries.router)
 # pinned by a test asserting its read routes never recompute (§5.2, §13.20). These routes
 # compute, for the days that have no record. Two contracts, two modules.
 api_router.include_router(reports.router)
+
+# Phase 20 -- bank statements. Note the module declares its own static-before-parameterised
+# ordering internally: /bank-transactions/confirm-repayments must come before
+# /bank-transactions/{transaction_id}, or FastAPI tries to parse "confirm-repayments" as a
+# UUID. Same trap as fuel_prices.py's "/current"; kept inside the module because both routes
+# live there and the fix belongs next to what it fixes.
+api_router.include_router(bank_statements.router)
 
 # Phase 11 -- reading the audit trail. A single static path, /audit-logs, which collides with
 # nothing above and has no parameterised sibling, so the static-before-parameterised hazard

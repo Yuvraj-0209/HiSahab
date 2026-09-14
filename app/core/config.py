@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     # the one booked as udhaar against a salesman's own name -- never surfaces at all.
     VARIANCE_ALERT_THRESHOLD: Decimal = Decimal("100.00")
     MAX_UPLOAD_BYTES: int = 5_242_880
+    # Phase 20, §5.3a. A **separate** dial from the line above, which governs receipt
+    # photographs. A month's statement CSV is around 10KB and a year's is well under this;
+    # the two are kept apart because they answer different questions -- how big may a photo
+    # be, and how big may a text file be -- and sharing one value would mean a 5MB CSV, which
+    # is half a million lines nobody meant to upload, sails through.
+    MAX_STATEMENT_BYTES: int = 2_097_152
     MAX_FLOW_RATE_LPM: int = 60
     SIGNED_URL_TTL_SECONDS: int = 300
 
