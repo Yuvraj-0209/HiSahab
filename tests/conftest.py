@@ -415,6 +415,15 @@ def make_user(engine: Engine) -> Iterator[Callable[..., UUID]]:
             )
             # Phase 9: credit_customers.created_by points at a user, and the sales and
             # repayments that pointed at the customer went two blocks up.
+            # Phase 20: bank_sender_aliases points at both a user and a customer, so it has
+            # to go before either can be deleted.
+            connection.execute(
+                text(
+                    "DELETE FROM bank_sender_aliases WHERE created_by = ANY(:ids) "
+                    "OR credit_customer_id IN "
+                    "(SELECT id FROM credit_customers WHERE created_by = ANY(:ids))"
+                ).bindparams(ids=created)
+            )
             connection.execute(
                 text(
                     "DELETE FROM credit_customers WHERE created_by = ANY(:ids)"
@@ -1496,6 +1505,13 @@ def make_credit_customer(engine: Engine) -> Iterator[Callable[..., UUID]]:
     if created:
         with engine.begin() as connection:
             # Children first -- nothing here has ON DELETE CASCADE, deliberately.
+            # Phase 20: bank_sender_aliases is a child too, and it has no reversal shape, so
+            # it is deleted outright rather than in the two passes below.
+            connection.execute(
+                text(
+                    "DELETE FROM bank_sender_aliases WHERE credit_customer_id = ANY(:ids)"
+                ).bindparams(ids=created)
+            )
             for table in ("credit_sales", "credit_repayments"):
                 for clause in ("reverses_id IS NOT NULL", "TRUE"):
                     connection.execute(
