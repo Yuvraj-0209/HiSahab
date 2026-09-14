@@ -46,6 +46,7 @@ const SECTIONS = [
   { label: "Expense categories", hint: "What an expense can be filed under, and which need a receipt", route: "#/admin/categories" },
   { label: "Credit customers", hint: "Who may take udhaar, and their limit", route: "#/admin/customers" },
   { label: "Shift templates", hint: "The hours this outlet usually trades", route: "#/admin/shift-templates" },
+  { label: "Bank accounts", hint: "Where statements are imported against", route: "#/admin/bank-accounts" },
   { label: "Users", hint: "Who may sign in, and what they may do", route: "#/admin/users" },
   { label: "Audit log", hint: "Who changed what, and what it was before", route: "#/admin/audit" },
 ];
@@ -692,6 +693,119 @@ function templateSheet(existing, onDone) {
 
   sheet = openSheet({
     title: existing ? existing.label : "New shift template",
+    body: el("div", { className: "stack" }, form.nodes()),
+    footer: sheetFooter(submit),
+  });
+}
+
+/* --- bank accounts ---------------------------------------------------------------- */
+
+/* Phase 20. Admin-managed like every other reference table (§8): a statement is imported
+ * against one account, so there has to be one before the Bank screens do anything.
+ *
+ * **Only the last four digits of the account number.** §5.3a: the full number reconciles
+ * nothing and storing it makes the table worth stealing. The form says so rather than
+ * silently truncating, because an admin who pastes the whole number deserves to know why it
+ * was refused. */
+export function renderBankAccounts(container, context) {
+  const reload = () => renderBankAccounts(container, context);
+
+  return loadInto(container, {
+    title: "Bank accounts",
+    session: context.session,
+    navigate: context.navigate,
+    fetch: () => api.get("/bank-accounts"),
+    action: el("button", {
+      className: "btn btn-primary",
+      text: "Add",
+      attrs: { type: "button" },
+      on: { click: () => bankAccountSheet(null, reload) },
+    }),
+    build: (accounts) =>
+      el("div", { className: "stack" }, [
+        accounts.length
+          ? el("div", { className: "grid" }, accounts.map((account) =>
+              el("div", { className: "card stack" }, [
+                el("div", { className: "row-between" }, [
+                  el("div", {}, [
+                    el("div", { className: "t-headline", text: account.label }),
+                    el("div", {
+                      className: "t-caption",
+                      text: account.account_number_last4
+                        ? `${account.bank_name} · ••••${account.account_number_last4}`
+                        : account.bank_name,
+                    }),
+                  ]),
+                  activePill(account),
+                ]),
+                el("button", {
+                  className: "btn btn-block",
+                  text: "Edit",
+                  attrs: { type: "button" },
+                  on: { click: () => bankAccountSheet(account, reload) },
+                }),
+              ]),
+            ))
+          : empty("No bank accounts yet. Add the one your statements come from."),
+      ]),
+  });
+}
+
+function bankAccountSheet(existing, onDone) {
+  const fields = {
+    label: field({
+      name: "label",
+      label: "Label",
+      value: existing?.label ?? "",
+      required: true,
+      hint: "What you call this account — it appears on the import form.",
+    }),
+    bank_name: field({
+      name: "bank_name",
+      label: "Bank",
+      value: existing?.bank_name ?? "",
+      required: true,
+    }),
+    account_number_last4: field({
+      name: "account_number_last4",
+      label: "Last four digits",
+      value: existing?.account_number_last4 ?? "",
+      hint: "Four digits only. The full number is never stored — it reconciles nothing and would make this table worth stealing.",
+    }),
+  };
+
+  if (existing) {
+    fields.is_active = checkbox({
+      name: "is_active",
+      label: "Active",
+      checked: existing.is_active,
+    });
+  }
+
+  const form = new Form(fields);
+  const submit = el("button", {
+    className: "btn btn-primary btn-block",
+    text: existing ? "Save" : "Create",
+    attrs: { type: "button" },
+  });
+
+  let sheet;
+  wireSubmit(submit, form, {
+    sheet: () => sheet,
+    onDone,
+    run: async (f) => {
+      if (existing) {
+        const changes = f.changes();
+        if (!Object.keys(changes).length) return;
+        await api.patch(`/bank-accounts/${existing.id}`, changes);
+      } else {
+        await api.post("/bank-accounts", f.values());
+      }
+    },
+  });
+
+  sheet = openSheet({
+    title: existing ? existing.label : "New bank account",
     body: el("div", { className: "stack" }, form.nodes()),
     footer: sheetFooter(submit),
   });

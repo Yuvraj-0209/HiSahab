@@ -44,6 +44,13 @@ export async function renderCreditHub(container, { session, navigate }) {
       attrs: { type: "button" },
       on: { click: () => navigate("#/credit/repayments") },
     }),
+    // Phase 20. The way in to the statement screens, from the tab whose ledger they feed.
+    el("button", {
+      className: "btn btn-plain",
+      text: "Bank",
+      attrs: { type: "button" },
+      on: { click: () => navigate("#/credit/bank") },
+    }),
   );
 
   render(container, el("div", { className: "t-caption", text: "Loading…" }));

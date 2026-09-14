@@ -48,6 +48,11 @@ import {
 } from "./screens/credit_repayments.js";
 import { renderCreditHub, renderCustomerLedger as renderLedger } from "./screens/credit.js";
 import { renderOpeningBalances } from "./screens/credit_opening_balances.js";
+import {
+  renderBankHub,
+  renderBankReconciliation,
+  renderBankReview,
+} from "./screens/bank.js";
 import { renderBankDeposits } from "./screens/bank_deposits.js";
 import { renderCash } from "./screens/cash.js";
 import { renderCashPosition } from "./screens/cash_position.js";
@@ -56,6 +61,7 @@ import { renderAlerts, renderReports } from "./screens/reports.js";
 import { renderSummary } from "./screens/summary.js";
 import {
   renderAdmin,
+  renderBankAccounts,
   renderCategories,
   renderFuelTypes,
   renderNozzles,
@@ -319,6 +325,17 @@ function registerRoutes() {
     tab: "credit",
     role: "admin",
   });
+  // Phase 20. Inside the Credit tab rather than a seventh one: this feeds the udhaar
+  // ledger, and §8 already puts both at the manager floor.
+  route("/credit/bank", creditScreen(renderBankHub), { tab: "credit", role: "manager" });
+  route("/credit/bank/review", creditScreen(renderBankReview), {
+    tab: "credit",
+    role: "manager",
+  });
+  route("/credit/bank/reconciliation", creditScreen(renderBankReconciliation), {
+    tab: "credit",
+    role: "manager",
+  });
   route("/credit/customers/:customerId", creditScreen(renderLedger), {
     tab: "credit",
     role: "manager",
@@ -375,6 +392,10 @@ function registerRoutes() {
     role: "admin",
   });
   route("/admin/categories", adminScreen(renderCategories), { tab: "admin", role: "admin" });
+  route("/admin/bank-accounts", adminScreen(renderBankAccounts), {
+    tab: "admin",
+    role: "admin",
+  });
   route("/admin/customers", adminScreen(renderCustomers), { tab: "admin", role: "admin" });
   // Phase 16. The ledger moved to the Credit tab, where a manager can reach it -- it lived
   // under Admin only because that was the one screen that had ever shown a balance. This

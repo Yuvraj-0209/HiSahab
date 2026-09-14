@@ -286,21 +286,29 @@ export class Submission {
  * and that carries a key.
  */
 export async function uploadReceipt(file, shiftId) {
-  const form = new FormData();
-  form.append("file", file);
-  form.append("shift_id", shiftId);
+  return postMultipart("/uploads/receipt", { file, shift_id: shiftId });
+}
 
-  const headers = {};
+/**
+ * POST a multipart form. The one path that cannot go through `request()`, because that
+ * helper sets a JSON content type and `FormData` must be allowed to set its own boundary.
+ *
+ * Phase 20 generalised this out of `uploadReceipt`: the statement importer needs the same
+ * shape, and a second copy would be a second place to forget the Authorization header.
+ * `extraHeaders` carries the `Idempotency-Key` the import requires (§6.10) -- receipts
+ * deliberately take none (§6.10's closing note).
+ */
+export async function postMultipart(path, fields, { extraHeaders = {} } = {}) {
+  const form = new FormData();
+  for (const [name, value] of Object.entries(fields)) form.append(name, value);
+
+  const headers = { ...extraHeaders };
   const token = getAccessToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
   let response;
   try {
-    response = await fetch(`${BASE}/uploads/receipt`, {
-      method: "POST",
-      headers,
-      body: form,
-    });
+    response = await fetch(`${BASE}${path}`, { method: "POST", headers, body: form });
   } catch (cause) {
     throw new NetworkError(cause);
   }

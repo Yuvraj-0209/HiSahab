@@ -387,6 +387,12 @@ def test_every_router_is_reachable_from_a_screen() -> None:
         "shortfalls": "shortfall",
         "daily_summaries": "/daily-summaries",
         "audit_logs": "/audit-logs",
+        # Phase 20. The module serves three prefixes -- /bank-accounts,
+        # /bank-statements and /bank-transactions -- and this map takes one, so it takes
+        # the one only this router can satisfy. /bank-accounts would be matched by
+        # bank_deposits.js's "/bank-deposits" under a looser check; "/bank-statements/"
+        # cannot be reached by any other screen.
+        "bank_statements": "/bank-statements",
         "reports": "/reports",
         "users": "/users",
     }
