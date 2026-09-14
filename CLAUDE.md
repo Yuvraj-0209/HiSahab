@@ -324,6 +324,10 @@ Per-phase landing schedule:
 | 10 | `daily_cash_summaries` | **Yes** |
 | ~~11~~ | ~~`audit_logs`~~ | Built in Phase 4 instead — see the row above |
 | 16 | `credit_opening_balances` | No — derivable via `credit_customer_id` |
+| 20 | `bank_accounts` | **Yes** — no parent row; nothing else says which outlet a bank account belongs to |
+| 20 | `bank_statement_imports` | No — derivable via `bank_account_id` |
+| 20 | `bank_transactions` | No — derivable via `bank_account_id` |
+| 20 | `bank_sender_aliases` | No — derivable via `credit_customer_id` |
 
 **Unique constraints are the expensive part**, not the columns. Each one below is
 cheap now and horrible to change once there is data. They are written into §5.1–§5.3
@@ -1083,6 +1087,115 @@ never a raw URL string. Single authoritative representation of file knowledge (D
 > page, not a 404**. Nothing can tell the difference between "no such row" and "that row was
 > never changed", and inventing a 404 would claim knowledge the table does not have.
 
+### 5.3a Bank statement tables (Phase 20)
+
+The first tables in this schema that record **what someone else says happened**. Everything
+above is the outlet's own assertion about its own money; these are a copy of the bank's.
+That distinction drives every design decision below.
+
+**`bank_accounts`** — which accounts this outlet holds
+- `outlet_id` — FK to outlets, NOT NULL (§5.0 — no parent, not derivable)
+- `label` — text, e.g. `BoB Current`
+- `bank_name` — text
+- `account_number_last4` — text. **Never the full number** — it is not needed to reconcile
+  anything and storing it makes this table worth stealing
+- `is_active` — boolean, default true
+- Unique constraint on `(outlet_id, label)`
+
+> One row in V1. Modelled as a table rather than config because a second account is a fact
+> about the business, not a deployment setting — and §5.0's whole argument is that the cheap
+> moment to get a key right is before there is data behind it.
+
+**`bank_statement_imports`** — one row per uploaded file
+- `bank_account_id` — FK, NOT NULL
+- `period_from`, `period_to` — DATE, read from the file's own contents
+- `original_filename` — text, display label only
+- `row_count`, `imported_count`, `skipped_count` — smallint
+- `opening_balance`, `closing_balance` — NUMERIC(12,2), read from the first and last line
+- No `outlet_id` — derivable via `bank_account_id`
+
+> **The file itself is not stored**, and the two balance columns are why that is acceptable.
+> A statement's information content is its lines plus its endpoints; both are here, and the
+> bank keeps the original anyway. Storing the file would mean either widening
+> `ck_attachments_mime_type_allowed` — which exists so the API can never accept what the
+> database refuses (§5.3) — or building a second storage path for one file type.
+>
+> **`closing_balance` is the column Phase 21 cannot proceed without.** A bank balance exists
+> nowhere else in this schema; `bank_deposits` records flows, never a position.
+
+**`bank_transactions`** — one row per statement line. **Append-only in practice.**
+- `bank_account_id` — FK, NOT NULL
+- `import_id` — FK to `bank_statement_imports`, NOT NULL
+- `txn_date` — DATE
+- `narration` — text, stored verbatim as the bank wrote it
+- `amount` — NUMERIC(12,2), always positive; `direction` carries the sign
+- `direction` — enum `bank_txn_direction`: `credit` | `debit`
+- `running_balance` — NUMERIC(12,2) nullable — the statement's own balance column, **stored
+  as read and never used in arithmetic**
+- `classification` — enum `bank_txn_classification`: `udhaar_repayment` | `cash_deposit` |
+  `paytm_settlement` | `iocl_ms_hsd` | `iocl_cbg` | `bank_charge` | `loan` |
+  `self_transfer` | `other` | `unclassified`
+- `matched_business_date` — DATE nullable. For a `paytm_settlement`, the **trading day** it
+  settles (T−1); stored so the rule is a fact on the row rather than re-derived on every read
+- `is_expense` — enum `bank_txn_expense_flag`: `yes` | `no` | `undecided`, NOT NULL,
+  DEFAULT `undecided`. See below
+- `expense_decided_by`, `expense_decided_at` — nullable
+- `classified_by`, `classified_at` — nullable
+- `credit_repayment_id` — FK nullable. **The only link to a money row this table has**
+- `matched_bank_deposit_id` — FK nullable — reconciliation, never creation
+- `fingerprint` — text, NOT NULL
+- Unique constraint on `(bank_account_id, fingerprint)`
+- Indexes on `(bank_account_id, txn_date)`, `classification`, `import_id`
+- No `outlet_id` — derivable via `bank_account_id`
+
+> **No reversal shape here, and the omission is deliberate.** Every money table above carries
+> §6.9's `reverses_id` / `reversal_reason` pair, so its absence reads as a mistake unless it
+> is written down. §6.9 governs **rows the business asserts**: a collection, an expense, an
+> udhaar sale are all claims this outlet makes, and a claim is corrected by appending its
+> negation so both remain legible.
+>
+> A statement line asserts nothing. It is a copy of what the bank did, and the bank does not
+> revise history. Correcting a *misclassification* is an ordinary `UPDATE` precisely because
+> **no money moves when it happens** — the row's amount, date and narration are untouched and
+> the correction only changes what we think the line *was*. The money row a line may produce
+> (`credit_repayments`) already carries the reversal shape, and that is where a correction
+> with financial meaning belongs.
+>
+> **`is_expense` is a tri-state, and `undecided` is a real answer.** A debit is either money
+> that left the business (a cost) or money that moved between the owner's own pockets — an
+> IOCL top-up is the second, and §14 already forbids booking one as an expense. **The
+> statement cannot tell them apart**, so a human does, and the default is `undecided` rather
+> than `no` so that "nobody has looked at this yet" is distinguishable from "somebody decided
+> it is not an expense". §6.8's *"zero as an answer, never zero as an omission"*, one table
+> further out: a period total must report how many debits are still undecided rather than
+> silently treating them as nil.
+>
+> **`fingerprint` is what makes re-uploading safe**, and it is a unique constraint rather than
+> a service check because a concurrent double-upload should lose at the database and loudly.
+> SHA-256 over `(account_id, txn_date, amount, direction, normalised narration)`, whitespace
+> collapsed and upper-cased, so a reformatted re-export of the same month still matches.
+
+**`bank_sender_aliases`** — remembering who a narration belongs to
+- `credit_customer_id` — FK, NOT NULL
+- `fragment` — text, NOT NULL, normalised upper-case
+- Unique constraint on `(credit_customer_id, fragment)`
+- No `outlet_id` — derivable via `credit_customer_id`
+
+> Written **only when a human confirms a match**, never by the matcher itself. It is a hint
+> generator: next month the same fragment pre-selects that customer, and the line still sits
+> in the review list waiting for a tick. §4.7's rule — the system predicts, a human confirms —
+> and the reason a remembered sender must never auto-write is the one §4.7 gives: an assumed
+> answer erases the second independent observation that makes the first one worth having.
+
+**`credit_repayments` gains `bank_reference`** — text, nullable. **Phase 20 amendment.**
+
+> The column `bank_deposits` has had since Phase 10, arriving on the credit table for the same
+> reason: to tell two otherwise identical rows apart. Verifying a typed repayment against a
+> statement can only match on `business_date` + `amount`, and two customers paying ₹10,000 on
+> one day are indistinguishable without it. Optional, because a manager entering a repayment
+> from a phone call has no UTR to hand and refusing the entry would be worse than an
+> ambiguous match. Carried across a reversal like `bank_deposits.bank_reference` already is.
+
 ### 5.4 Relationship summary in plain English
 
 - A **shift** has many nozzle readings, collections, credit sales, expenses, deposits,
@@ -1098,6 +1211,11 @@ never a raw URL string. Single authoritative representation of file knowledge (D
 - A **daily cash summary** aggregates one business date across **every** shift on it — one at
   this outlet, three at a 24-hour one. (This line used to say "both shifts"; §4.7 removed the
   two-shift assumption and the sentence survived it.)
+- A **bank transaction** belongs to one bank account and one import. It may point at the one
+  `credit_repayment` it produced or verified, and at the `bank_deposit` it reconciles against —
+  but it **creates nothing**, and a classification never reaches a §6.4 term (§5.3a).
+- A **sender alias** belongs to one credit customer and is written only when a human confirms
+  a match.
 - Everything financial points to the user who created it and appears in `audit_logs`.
 
 ---
@@ -1735,6 +1853,8 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | Read the rolling range report | ❌ | ✅ | ✅ |
 | Read the variance alerts (§13.23) | ❌ | ✅ | ✅ |
 | Read the range summary dashboard (§13.34) | ❌ | ✅ | ✅ |
+| Upload a bank statement; classify lines; confirm repayments (§5.3a) | ❌ | ✅ | ✅ |
+| Manage bank accounts | ❌ | ❌ | ✅ |
 | List expense categories (to fill a dropdown) | ✅ | ✅ | ✅ |
 | List credit customers (to fill a dropdown — **name and vehicles only**, §9) | ✅ | ✅ | ✅ |
 | Read one customer's detail, outstanding balance, or ledger | ❌ | ✅ | ✅ |
@@ -2314,6 +2434,58 @@ ahead — no empty modules for later phases.
     blends the two. So the response carries `days_by_source` and the screen says so in words.
     A number that is half snapshot and half live estimate, presented as one figure with no
     provenance, is the plausible-but-wrong shape this document opens by warning about.
+20. **The bank statement verifies the books** — one migration, four new tables, one new column
+    on `credit_repayments`, and the first data in this system that **came from outside it**.
+
+    Every phase so far has made the books internally consistent. None has ever checked them
+    against anything. A manager types a bank-transfer repayment under a customer's name and the
+    system believes him; a day's card and UPI collections are declared and never confirmed
+    against money that actually arrived; deposits are entered per shift and nothing says whether
+    the bank agrees. §5.2's whole design philosophy is that a figure the system *predicts*
+    should be checked against one somebody *observes* — and until now the only observer was the
+    salesman, checking the system against himself.
+
+    A bank statement is an independent witness. This phase imports one, stores every line, and
+    reconciles three things:
+
+    **(a) Paytm's settlement against a day's card + UPI.** The owner's rule, confirmed and then
+    verified against a real July statement: card and UPI are both processed by Paytm and settle
+    **together, as one credit, T+1 at about 10am**. Thirty-two settlements for thirty-one days,
+    one per day with no gaps. It checks against a figure already in this document — §6.4's
+    worked example records 30 July taking ₹265,617 on card and Paytm, and the settlement dated
+    31 July is ₹265,617.77. **Sum every Paytm credit on a date before comparing**: 14 July
+    arrived as two rows, an IMPS and an RTGS, and assuming one row would invent a discrepancy.
+
+    **(b) `BY CASH` lines against `bank_deposits`.** Three outcomes — matched, in the bank but
+    not in the app, in the app but never in the bank. **No deposit row is ever created**: one
+    needs a `shift_id`, and §6.4 would move that day's expected cash on the strength of a file
+    somebody uploaded.
+
+    **(c) Named credits against `credit_repayments`, in both directions.** A statement credit
+    matching a repayment already typed **verifies** it — the headline request. Anything left
+    over is a **proposal**: a ranked list of customers with reasons, confirmed one tick at a
+    time, and confirmation writes through the Phase 16 endpoint that already exists rather than
+    a second path into the same table.
+
+    **Debits are classified by a human, and that is a Phase 21 term arriving early.** A debit is
+    either a real expense or an IOCL top-up — money moved between the owner's own pockets — and
+    the statement cannot tell them apart. `is_expense` defaults to `undecided` and only a person
+    sets it (§5.3a).
+
+    **The constraint that shapes the whole phase:** the only business table it writes is
+    `credit_repayments`. Not by discipline but by construction — no other classification has a
+    code path to any other table, and a structural test asserts it, because §14's IOCL rule has
+    always been a sentence and a sentence is what gets forgotten.
+21. **The profit bridge** — not built here; the destination Phase 20 was shaped for. The owner
+    verifies profit by proving where the money physically went between two dates: gross margin,
+    less cash **and bank** expenses, must equal the movement in five buckets — cash in hand,
+    bank balance, stock, credit outstanding, and **the IOCL balance**, which is a bucket and
+    never a cost (§12). Four known plus the profit makes the fifth solvable, so the bridge
+    reports what the IOCL balance *should* have done and the owner checks the portal.
+
+    Phase 20 supplies bank balance and bank expenses. Still to build: stock and IOCL balances
+    typed per period, and an **as-of-date** outstanding — `outstanding()` has no date filter
+    today and `credit_sales` has no date column, reaching one only through its shift.
 
 ---
 
@@ -2328,13 +2500,47 @@ and ask.
   Note this is not needed for profit: margin is constant, so profit comes from the
   totalizer alone (§4.6)
 - Fuel purchase / tanker delivery intake, including per-delivery invoice rates
-- **Bank balances, the IOCL virtual account / PAD statement ledger, and net-position
-  ("where is my money") reporting.** The PAD statement is **bank-only — it never touches
+- **The IOCL virtual account / PAD statement ledger, and net-position ("where is my money")
+  reporting. Narrowed in Phase 20 — see below; bank *statements* are now in scope, the IOCL
+  ledger is not.** The PAD statement is **bank-only — it never touches
   the cash drawer**, so an IOCL payment must *never* be recorded as an expense (§6.4
   would invent a daily cash shortage that never happened). The ledger balance is
   meaningless until bank balances exist, so these three are **one post-V1 module, built
-  together**. Recorded here rather than forgotten: the balance can be positive
-  (prepayment, because restocks are paid in rounded amounts) or negative (payable)
+  together**. Recorded here rather than forgotten: the balance can be positive or negative.
+
+  > **The sign, corrected in Phase 20 against the actual portal.** This line previously read
+  > *"positive (prepayment, because restocks are paid in rounded amounts) or negative
+  > (payable)"*, and it had the convention **backwards**. IOCL's customer portal
+  > (`sdms.indianoil.in`, "CCA wise Balance") shows **negative for money the dealer is
+  > holding with IOCL** — a prepayment — and **positive for what the dealer owes**. Observed
+  > directly: MS & HSD `992,286.15`, CNG `−59,135.47`, CBG `−9,220.00`, where the two
+  > negatives are the outlet's own advances.
+  >
+  > It is the rounded-payment habit that makes this matter. Restocks are paid in round
+  > figures, so an overpayment simply grows the float, and a reader who inverted the sign
+  > would book a growing advance as a growing debt. Nothing would crash; the number would
+  > just be wrong in the direction that looks responsible.
+  >
+  > There are **three** such balances, not one — separate Credit Control Areas for MS & HSD
+  > (C004), CNG (C031) and CBG (C035), each with its own running figure.
+
+  > **What Phase 20 moved into scope, and what stayed out.** This entry said the three
+  > belonged together *"because the ledger balance is meaningless until bank balances
+  > exist"*. Phase 20 makes bank balances exist — by importing a bank **statement**, which
+  > carries a running balance on every line — and so the premise for bundling them is gone
+  > for the first two.
+  >
+  > **In scope from Phase 20:** reading a bank statement, storing every line, classifying
+  > each, and reconciling three things the app already knows — Paytm's T+1 settlement
+  > against a day's card + UPI collections, `BY CASH` lines against `bank_deposits`, and
+  > named credits against `credit_repayments`. The opening and closing balance of an
+  > imported period are stored on the import row.
+  >
+  > **Still out of scope:** the IOCL/PAD ledger itself. Nothing polls or parses IOCL, and
+  > the CCA balances above are **typed by a human from the portal** when Phase 21 needs
+  > them. A statement debit paid to IOCL is *classified as such and left alone* — it
+  > produces no row anywhere else, which is how the rule one paragraph up stays true by
+  > construction rather than by discipline.
 - GST, invoicing, statutory reporting
 - Payroll, attendance
 - Multi-outlet *features* — switching UI, cross-outlet reporting, RLS policies.
@@ -2786,6 +2992,51 @@ future reader must be able to tell the difference.
     settled month against a half-entered one. That is visible rather than hidden, which is the
     most this can do without refusing to answer. §13.20, §13.24
 
+36. **The statement parser is written for one bank's export and refuses everything else.**
+    Phase 20. The file is Bank of Baroda's `OpTransactionHistory` CSV: nine preamble rows, a
+    header located by scanning for `TRAN DATE`, **separate `WITHDRAWAL(DR)` and `DEPOSIT(CR)`
+    columns**, `dd/mm/yyyy` dates, a `Cr`/`Dr` suffix on the balance, and quoted fields
+    containing commas *and* embedded newlines.
+
+    A tolerant parser that guessed at unfamiliar headers was rejected, because the failure is
+    silent and total: mistake the debit column for the credit column and every repayment enters
+    backwards while the ledger still balances and still looks plausible. So an unrecognised
+    layout raises `UNRECOGNISED_STATEMENT_FORMAT` and names the headers it did find. **A second
+    bank means writing a second parser**, deliberately, and that is cheaper than one parser
+    quietly misreading both.
+
+    The `.xls` alongside it is legacy OLE2 binary, which `openpyxl` cannot read at all. Parsing
+    it would mean `xlrd` — unmaintained for this purpose — for rows the CSV already gives us
+    through the standard library. **No new dependency.** §3 rule 1, §16
+
+37. **Verifying a typed repayment matches on date and amount, which is sometimes ambiguous.**
+    Phase 20. `credit_repayments` had no reference column until this phase added one, and it is
+    optional — a manager recording a repayment from a phone call has no UTR to hand. So where
+    `bank_reference` is absent on both sides, two customers paying the same amount on the same
+    day are **indistinguishable**.
+
+    The rule is to refuse rather than guess: a unique `(business_date, amount)` hit verifies,
+    and a collision auto-links **nothing** and shows every candidate to a human. An arbitrary
+    pick would put a verification tick against the wrong person's ledger — and a wrong tick is
+    worse than no tick, because it stops anybody looking. §5.3a, §6.9
+
+38. **The uploaded file is discarded; the parsed rows are the record.** Phase 20. Keeping it
+    would mean widening `ck_attachments_mime_type_allowed` — which exists so the API can never
+    accept what the database refuses — or building a second storage path for one file type.
+    The rows carry more than the file does anyway, since they also hold what each line was
+    classified as, and `bank_statement_imports` keeps the period's opening and closing balance.
+    The bank retains the original. §5.3, §5.3a
+
+39. **Classification is pattern-based, and an unfamiliar narration degrades to `unclassified`
+    rather than being filed wrongly.** Phase 20. The rules are drawn from one real month:
+    `PAYTM PAYMENTS SERVICE` and two variants, `BY CASH`, `INDIAN OIL CORPORATION`,
+    `IOCL CBG PAYMENT`, `Charges for PORD`, `Loan Recovery`. A bank that changes its narration
+    format, or a counterparty nobody has seen, falls through to `unclassified` and appears in
+    the review list — never into `other`, which would read as a decision somebody made.
+
+    The direction of the failure is the point: an unclassified line is visible work, a
+    misclassified one is invisible error. §4.7's principle, applied to a parser. §5.3a
+
 ---
 
 ## 14. Guardrails for Claude Code
@@ -3060,6 +3311,53 @@ to occur on this specific project.
   ordered pair of writes, a best-effort compensating delete, and a loud log if that fails. An
   orphaned auth user fails closed and is repaired with the CLI; a comment claiming the pair is
   transactional is worse than the orphan, because it stops the next person looking (§13.25)
+- **Write any business row from a statement line except a confirmed `credit_repayment`.**
+  Phase 20. Reading a file must not move money. A `cash_deposit` line reconciles against
+  `bank_deposits` and **never creates one** — a deposit needs a `shift_id`, so inventing one
+  would move §6.4's expected cash for a day already closed, on the strength of a file somebody
+  uploaded. A `paytm_settlement` compares against a day's card + UPI and writes nothing. An
+  `iocl_ms_hsd` or `iocl_cbg` debit is classified and left alone, which is how §12's rule
+  against booking an IOCL payment as an expense becomes structural instead of remembered. This
+  is pinned by a test asserting the bank modules contain no write to `expenses`, `collections`,
+  `bank_deposits`, `daily_cash_summaries` or any §6.4 term (§5.3a, §12)
+- **Infer a statement line's direction from a single amount column.** Phase 20. The export has
+  **separate `WITHDRAWAL(DR)` and `DEPOSIT(CR)` columns** and exactly one is filled. Swap them
+  and every repayment enters backwards — the ledger still balances, every total still looks
+  reasonable, and nothing fails. Read the column the value came from; never a sign, never a
+  guess, and never a generic "amount" fallback for a layout the parser does not recognise
+  (§13.36)
+- **Split a comma to parse the statement.** Phase 20. Quoted fields contain commas *and*
+  embedded newlines — the account holder's address spans three lines inside one cell. Python's
+  `csv` module handles it and hand-rolled splitting does not; this was demonstrated during
+  planning by a shell one-liner that returned confident garbage (§13.36)
+- **Assume one Paytm settlement per day.** Phase 20. 14 July 2026 arrived as two rows, an IMPS
+  and an RTGS, totalling the day's takings between them. **Sum every Paytm credit on a date**
+  before comparing to T−1's card + UPI, or a perfectly correct day reports a discrepancy the
+  size of one of the two rows (§11 phase 20)
+- **Auto-write a repayment because a sender was recognised.** Phase 20. `bank_sender_aliases`
+  pre-selects a customer; a human still ticks. §4.7's argument is exactly transferable — an
+  assumed answer erases the second independent observation that made the first worth having,
+  and here the cost is a payment landing on the wrong customer's ledger with a tick beside it
+  saying somebody checked (§5.3a)
+- **Resolve an ambiguous verification by picking one.** Phase 20. Two repayments of the same
+  amount on the same day, with no `bank_reference` to separate them, are genuinely
+  indistinguishable. Link **neither** and show both. A wrong verification is worse than a
+  missing one, because a tick stops anyone looking again (§13.37)
+- **Default `is_expense` to `no`, or let a rule set it.** Phase 20. The classification
+  *suggests* — `bank_charge` yes, IOCL and self-transfer no — but only a human decides, and the
+  default is `undecided` so that "nobody has looked" stays distinguishable from "somebody
+  decided it is not a cost". A period total must report the undecided count rather than
+  treating it as nil: §6.8's zero-as-an-answer rule, one table further out (§5.3a)
+- **Treat the IOCL balance as a cost, or invert its sign.** Phases 20–21. Money sent to IOCL
+  has not left the business — it sits with them as a float, which is why restocks are paid in
+  round figures. In the profit bridge it is a **bucket**, exactly like cash or bank. And the
+  portal shows **negative for money IOCL is holding for you**, positive for what you owe:
+  §12's original wording had this backwards and was corrected in Phase 20 (§12, §11 phase 21)
+- **Recompute a reconciled day's stored card or UPI total to make a Paytm settlement match.**
+  Phase 20. §14 already forbids recomputing a snapshot and §6.5 chains days, so the rewrite
+  would not stay local. Read the stored component where the day is reconciled, compute live
+  only where there is no snapshot, and say which — §13.20's `source` distinction, unchanged
+  (§5.2, §13.20)
 - "Improve" the schema mid-implementation without flagging it first
 
 **Do:**
@@ -3092,9 +3390,21 @@ to occur on this specific project.
   `testing_quantity` defaults to 0 and Phase 5 requires it to be an *answer*, not an
   omission. If nothing is recorded on paper, every row will carry 0 and §4.2's small,
   permanent, daily cash shortfall reappears with the field looking correctly filled in.
-- What are the petrol and diesel dealer commissions per litre? Needed to enter
+- ~~What are the petrol and diesel dealer commissions per litre? Needed to enter
   `fuel_margins` rows for them; CBG's ₹2.28 is known. Until entered, profit reporting
-  covers CBG only.
+  covers CBG only.~~ **Answered — and this line was stale for some time before anyone
+  noticed.** All four margins are entered and effective-dated from 29–30 June 2026:
+  PETROL ₹3.99/L, DIESEL ₹2.57/L, PREMIUM_PETROL ₹4.49/L, CBG ₹2.28/kg. Profit reporting
+  therefore covers **every product**, and §13.21's per-fuel `null` handling is now a
+  guard against a *future* gap rather than a description of the present.
+
+  > Recorded rather than quietly deleted, because the staleness itself is the lesson. Phase
+  > 20 planning read this line, believed it, and reported to the owner that the profit
+  > bridge was blocked on two missing figures — which was wrong, and was corrected only
+  > because the owner said so and the database was then actually queried. **A spec sentence
+  > is a claim about the world, and the world moves.** When a §14 open question is answered
+  > by someone entering data rather than by someone editing this file, nothing fails and
+  > nothing notices. Check the table before repeating what this section says about it.
 - ~~**§5.2 vs §4.7 contradiction, decide before Phase 9 — the salesman shortfall.**~~
   **Answered before Phase 9, as recommended.** `credit_sales` stays receipt-mandatory —
   the `NOT NULL` is untouched, and §6.9's reversal reaches it through inheritance rather
@@ -3225,6 +3535,12 @@ VARIANCE_ALERT_THRESHOLD=100.00    # §13.23 (Phase 13) -- a THIRD dial, and sep
                               # THE FIGURE IS A GUESS, exactly as the 5000.00 above is, and
                               # it is live on real money from the day reporting ships.
 MAX_UPLOAD_BYTES=5242880
+MAX_STATEMENT_BYTES=2097152    # §5.3a (Phase 20) -- a SEPARATE limit from the line above,
+                              # which governs receipt photographs. A month's statement CSV is
+                              # ~10KB; 2MB is generous for a year. Kept apart because the two
+                              # answer different questions -- how big may a photo be, and how
+                              # big may a text file be -- and welding them together would mean
+                              # a 5MB CSV is 500,000 lines nobody meant to upload.
 MAX_FLOW_RATE_LPM=60           # seeds fuel_types.max_flow_rate_per_minute for litre
                               # fuels in migration 0003 ONLY. The §6.2 guard reads the
                               # per-fuel column, never this. See §4.5.

@@ -27,3 +27,7 @@ coverage.xml
 # (pyproject.toml wins), so package.json is inert at build time and nothing here is
 # ever served to a browser. CLAUDE.md §2's no-build-step rule for the frontend stands.
 node_modules/
+
+# Real bank statements -- account numbers, counterparty names, and a month of real
+# transactions. The parser's test fixture is a synthetic file under tests/, never this.
+bank_statements/
