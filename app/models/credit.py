@@ -298,6 +298,13 @@ class CreditRepayment(Base):
     attachment_id: Mapped[UUID | None] = mapped_column(
         sa.UUID(), sa.ForeignKey("attachments.id"), nullable=True
     )
+    # Phase 20. The tie-breaker for §13.37's ambiguous verification: matching a typed
+    # repayment against a bank statement can only use `business_date` + `amount`, so two
+    # customers paying the same amount on one day are otherwise indistinguishable. Optional,
+    # because a manager recording a repayment from a phone call has no UTR to hand and
+    # refusing the entry would be worse than an ambiguous match. Same column and same purpose
+    # as `bank_deposits.bank_reference`, which has carried it since Phase 10.
+    bank_reference: Mapped[str | None] = mapped_column(sa.Text(), nullable=True)
     reverses_id: Mapped[UUID | None] = mapped_column(
         sa.UUID(), sa.ForeignKey("credit_repayments.id"), nullable=True
     )

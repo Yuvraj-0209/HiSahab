@@ -187,6 +187,32 @@ _CONSTRAINT_ERRORS: dict[str, tuple[int, str, str]] = {
         "CREDIT_CUSTOMER_PHONE_EXISTS",
         "A credit customer with that phone number already exists at this outlet.",
     ),
+    # Phase 20. Bank accounts are admin-managed reference data and the API pre-checks the
+    # label, so this fires only when two admins add the same account at the same instant.
+    "uq_bank_accounts_outlet_label": (
+        409,
+        "BANK_ACCOUNT_LABEL_EXISTS",
+        "A bank account with that label already exists at this outlet.",
+    ),
+    # Phase 20, and the one entry here that is reached by ordinary use rather than a race.
+    # Re-uploading an overlapping statement is the *normal* way to catch up (§4.7: the month
+    # is typed in after the fact), so the importer checks each line's fingerprint before
+    # inserting and skips what it has seen. This constraint is the backstop for two concurrent
+    # uploads of the same file, where both pass the check and one must lose -- loudly, with a
+    # code the caller can act on, rather than writing the month twice (§5.3a).
+    "uq_bank_transactions_account_fingerprint": (
+        409,
+        "BANK_TRANSACTION_ALREADY_IMPORTED",
+        "That statement line has already been imported for this account.",
+    ),
+    # Phase 20. Confirming the same sender fragment for one customer twice -- two managers
+    # reviewing the same import, or a double-submitted confirmation whose idempotency key
+    # differed.
+    "uq_bank_sender_aliases_customer_fragment": (
+        409,
+        "SENDER_ALIAS_EXISTS",
+        "That sender is already remembered for this customer.",
+    ),
     # Phase 10. `daily_cash_summaries` is one row per outlet per business date, and the API
     # checks for an existing row before inserting -- the same check-then-insert window as
     # every entry above. Two managers reconciling the same day at the same moment is not a

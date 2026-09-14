@@ -20,7 +20,7 @@ def test_schema_is_at_head(engine: Engine) -> None:
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert version == "0015"
+    assert version == "0016"
 
 
 def test_pgcrypto_extension_is_installed(engine: Engine) -> None:
@@ -2092,3 +2092,328 @@ def test_set_alembic_url_handles_a_password_with_no_percent() -> None:
     set_alembic_url(config, url)
 
     assert config.get_main_option("sqlalchemy.url") == url
+
+
+# --- Phase 20: bank statements -------------------------------------------------------
+#
+# The constraints below are the ones that keep a *statement* from becoming a *claim*. Each
+# guards a way the schema could otherwise let an imported line say something the bank never
+# said, or let a classification leak into §6.4.
+
+
+@pytest.fixture
+def _bank_account(engine: Engine) -> Iterator[UUID]:
+    """A bank account to hang imports and transactions off, removed afterwards."""
+    from app.core.config import get_settings
+
+    account_id = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO bank_accounts (id, outlet_id, label, bank_name) "
+                "VALUES (:id, :outlet, 'Test Current', 'Bank of Baroda')"
+            ).bindparams(id=account_id, outlet=get_settings().DEFAULT_OUTLET_ID)
+        )
+    try:
+        yield account_id
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM bank_transactions WHERE bank_account_id = :id").bindparams(
+                    id=account_id
+                )
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM bank_statement_imports WHERE bank_account_id = :id"
+                ).bindparams(id=account_id)
+            )
+            connection.execute(
+                text("DELETE FROM bank_accounts WHERE id = :id").bindparams(id=account_id)
+            )
+
+
+@pytest.fixture
+def _bank_import(engine: Engine, _bank_account: UUID) -> Iterator[tuple[UUID, UUID]]:
+    """An import row, returned with its account id."""
+    import_id = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO bank_statement_imports "
+                "(id, bank_account_id, period_from, period_to, row_count, "
+                " imported_count, skipped_count) "
+                "VALUES (:id, :account, '2026-07-01', '2026-07-31', 0, 0, 0)"
+            ).bindparams(id=import_id, account=_bank_account)
+        )
+    yield _bank_account, import_id
+
+
+def _insert_txn(**overrides: object) -> str:
+    """The INSERT every test below varies one column of."""
+    columns = {
+        "bank_account_id": ":account",
+        "import_id": ":import_id",
+        "txn_date": "'2026-07-15'",
+        "narration": "'NEFT-TEST-SOMEBODY'",
+        "amount": "1000.00",
+        "direction": "'credit'",
+    }
+    columns.update({k: str(v) for k, v in overrides.items()})
+    names = ", ".join(columns)
+    values = ", ".join(columns.values())
+    return f"INSERT INTO bank_transactions ({names}, fingerprint) VALUES ({values}, :fp)"
+
+
+def test_a_bank_transaction_amount_must_be_positive(
+    engine: Engine, _bank_import: tuple[UUID, UUID]
+) -> None:
+    """`direction` carries the sign, so a signed amount would put it in two places at once.
+
+    §14 makes inferring direction from a signed amount a named guardrail: get it backwards and
+    every repayment enters the wrong way round while the ledger still balances.
+    """
+    account_id, import_id = _bank_import
+
+    for bad in ("0.00", "-1000.00"):
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(
+                    text(_insert_txn(amount=bad)).bindparams(
+                        account=account_id, import_id=import_id, fp=uuid4().hex
+                    )
+                )
+
+
+def test_only_a_debit_can_be_flagged_an_expense(
+    engine: Engine, _bank_import: tuple[UUID, UUID]
+) -> None:
+    """A credit marked an expense is incoming money counted as a cost (§5.3a).
+
+    Wrong by twice its value in Phase 21's bridge -- it would both fail to appear as income
+    and subtract itself from profit.
+    """
+    account_id, import_id = _bank_import
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            connection.execute(
+                text(_insert_txn(direction="'credit'", is_expense="'yes'")).bindparams(
+                    account=account_id, import_id=import_id, fp=uuid4().hex
+                )
+            )
+
+    # The same flag on a debit is fine.
+    with engine.begin() as connection:
+        connection.execute(
+            text(_insert_txn(direction="'debit'", is_expense="'yes'")).bindparams(
+                account=account_id, import_id=import_id, fp=uuid4().hex
+            )
+        )
+
+
+def test_is_expense_defaults_to_undecided(
+    engine: Engine, _bank_import: tuple[UUID, UUID]
+) -> None:
+    """§6.8's rule one table out: "nobody has looked" must differ from "not a cost".
+
+    A default of `no` would silently answer a question only a human can answer, and Phase 21
+    would total bank expenses as though every debit had been reviewed.
+    """
+    account_id, import_id = _bank_import
+    fingerprint = uuid4().hex
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(_insert_txn(direction="'debit'")).bindparams(
+                account=account_id, import_id=import_id, fp=fingerprint
+            )
+        )
+        flag = connection.execute(
+            text(
+                "SELECT is_expense FROM bank_transactions WHERE fingerprint = :fp"
+            ).bindparams(fp=fingerprint)
+        ).scalar_one()
+
+    assert flag == "undecided"
+
+
+def test_a_settled_trading_day_belongs_only_to_a_paytm_settlement(
+    engine: Engine, _bank_import: tuple[UUID, UUID]
+) -> None:
+    """`matched_business_date` is the T-1 day a settlement covers, and means nothing else."""
+    account_id, import_id = _bank_import
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    _insert_txn(
+                        classification="'cash_deposit'",
+                        matched_business_date="'2026-07-14'",
+                    )
+                ).bindparams(account=account_id, import_id=import_id, fp=uuid4().hex)
+            )
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                _insert_txn(
+                    classification="'paytm_settlement'",
+                    matched_business_date="'2026-07-14'",
+                )
+            ).bindparams(account=account_id, import_id=import_id, fp=uuid4().hex)
+        )
+
+
+def test_one_fingerprint_per_account_but_the_same_line_may_appear_at_another(
+    engine: Engine, _bank_import: tuple[UUID, UUID], _second_bank_account: UUID
+) -> None:
+    """Re-uploading an overlapping month must not duplicate a line (§5.3a).
+
+    Scoped to the account, not global: two accounts genuinely can carry the same date, amount
+    and narration, and a global constraint would refuse the second outlet's real transaction.
+    """
+    account_id, import_id = _bank_import
+    fingerprint = uuid4().hex
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(_insert_txn()).bindparams(
+                account=account_id, import_id=import_id, fp=fingerprint
+            )
+        )
+
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            connection.execute(
+                text(_insert_txn()).bindparams(
+                    account=account_id, import_id=import_id, fp=fingerprint
+                )
+            )
+
+    # Same fingerprint, different account -- allowed.
+    other_import = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO bank_statement_imports "
+                "(id, bank_account_id, period_from, period_to, row_count, "
+                " imported_count, skipped_count) "
+                "VALUES (:id, :account, '2026-07-01', '2026-07-31', 0, 0, 0)"
+            ).bindparams(id=other_import, account=_second_bank_account)
+        )
+        connection.execute(
+            text(_insert_txn()).bindparams(
+                account=_second_bank_account, import_id=other_import, fp=fingerprint
+            )
+        )
+
+
+@pytest.fixture
+def _second_bank_account(engine: Engine) -> Iterator[UUID]:
+    from app.core.config import get_settings
+
+    account_id = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO bank_accounts (id, outlet_id, label, bank_name) "
+                "VALUES (:id, :outlet, 'Second Current', 'Bank of Baroda')"
+            ).bindparams(id=account_id, outlet=get_settings().DEFAULT_OUTLET_ID)
+        )
+    try:
+        yield account_id
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM bank_transactions WHERE bank_account_id = :id").bindparams(
+                    id=account_id
+                )
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM bank_statement_imports WHERE bank_account_id = :id"
+                ).bindparams(id=account_id)
+            )
+            connection.execute(
+                text("DELETE FROM bank_accounts WHERE id = :id").bindparams(id=account_id)
+            )
+
+
+def test_import_counts_must_add_up(engine: Engine, _bank_account: UUID) -> None:
+    """`imported + skipped` cannot exceed `row_count`, or the summary lies about the file."""
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO bank_statement_imports "
+                    "(bank_account_id, period_from, period_to, row_count, "
+                    " imported_count, skipped_count) "
+                    "VALUES (:account, '2026-07-01', '2026-07-31', 10, 8, 5)"
+                ).bindparams(account=_bank_account)
+            )
+
+
+def test_a_sender_alias_must_be_stored_upper_case(engine: Engine) -> None:
+    """Normalised at write time, so `uq_bank_sender_aliases_customer_fragment` means what it
+    looks like. Without it `Gupta` and `GUPTA` are two rows and the memory never hits."""
+    from app.core.config import get_settings
+
+    customer_id = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO credit_customers (id, outlet_id, name, phone) "
+                "VALUES (:id, :outlet, 'Alias Test', :phone)"
+            ).bindparams(
+                id=customer_id,
+                outlet=get_settings().DEFAULT_OUTLET_ID,
+                phone=f"9{uuid4().int % 10**9:09d}",
+            )
+        )
+    try:
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "INSERT INTO bank_sender_aliases (credit_customer_id, fragment) "
+                        "VALUES (:customer, 'Gupta Overseas')"
+                    ).bindparams(customer=customer_id)
+                )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO bank_sender_aliases (credit_customer_id, fragment) "
+                    "VALUES (:customer, 'GUPTA OVERSEAS')"
+                ).bindparams(customer=customer_id)
+            )
+    finally:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "DELETE FROM bank_sender_aliases WHERE credit_customer_id = :id"
+                ).bindparams(id=customer_id)
+            )
+            connection.execute(
+                text("DELETE FROM credit_customers WHERE id = :id").bindparams(id=customer_id)
+            )
+
+
+def test_bank_money_columns_are_numeric_not_float(engine: Engine) -> None:
+    """§3 rule 1 across the new tables, asserted the way the cash engine's version is."""
+    with engine.connect() as connection:
+        wrong = connection.execute(
+            text(
+                "SELECT table_name, column_name, data_type "
+                "FROM information_schema.columns "
+                "WHERE table_name IN "
+                "  ('bank_transactions', 'bank_statement_imports') "
+                "  AND column_name IN "
+                "  ('amount', 'running_balance', 'opening_balance', 'closing_balance') "
+                "  AND data_type <> 'numeric'"
+            )
+        ).all()
+
+    assert wrong == [], f"money stored as something other than NUMERIC: {wrong}"

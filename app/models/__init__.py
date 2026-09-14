@@ -10,6 +10,12 @@ from __future__ import annotations
 
 from app.models.attachment import Attachment
 from app.models.audit import AuditLog
+from app.models.bank import (
+    BankAccount,
+    BankSenderAlias,
+    BankStatementImport,
+    BankTransaction,
+)
 from app.models.cash import BankDeposit, DailyCashSummary, NonFuelSale
 from app.models.collection import Collection
 from app.models.credit import (
@@ -32,7 +38,11 @@ from app.models.user import OutletMembership, UserProfile
 __all__ = [
     "Attachment",
     "AuditLog",
+    "BankAccount",
     "BankDeposit",
+    "BankSenderAlias",
+    "BankStatementImport",
+    "BankTransaction",
     "Collection",
     "CreditCustomer",
     "CreditOpeningBalance",
