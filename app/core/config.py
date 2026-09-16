@@ -80,6 +80,18 @@ class Settings(BaseSettings):
     # teaches a manager to dismiss the list unread; too high and the ₹500 gap §5.2 describes --
     # the one booked as udhaar against a salesman's own name -- never surfaces at all.
     VARIANCE_ALERT_THRESHOLD: Decimal = Decimal("100.00")
+    # Phase 20, §5.3a. Paytm settles a whole day's card + UPI, and the figure the manager
+    # writes in the register is rounded to the rupee -- so a settlement is "correct" when it
+    # lands within a couple of rupees of what the books say. The owner was explicit that this
+    # is NOT a payment-gateway fee: a larger gap means somebody wrote the wrong amount, and
+    # he wants those and only those. Too low and 29 of 29 days are flagged, which trains a
+    # manager to dismiss the list unread; too high and a real mistyped figure hides inside it.
+    SETTLEMENT_TOLERANCE: Decimal = Decimal("2.00")
+    # How many days a deposit may take to reach the bank. Cash leaves the locker on the
+    # trading day and is banked the next morning, so the app's date and the bank's legitimately
+    # differ. Found on real data: exact-date matching reported 21 bank-only and 16 app-only
+    # deposits, of which 14 were one-day pairs of identical amounts.
+    DEPOSIT_MATCH_WINDOW_DAYS: int = 2
     MAX_UPLOAD_BYTES: int = 5_242_880
     # Phase 20, §5.3a. A **separate** dial from the line above, which governs receipt
     # photographs. A month's statement CSV is around 10KB and a year's is well under this;
@@ -123,6 +135,7 @@ class Settings(BaseSettings):
         "EXPENSE_REVIEW_THRESHOLD",
         "EXPENSE_RECEIPT_THRESHOLD",
         "VARIANCE_ALERT_THRESHOLD",
+        "SETTLEMENT_TOLERANCE",
         mode="after",
     )
     @classmethod

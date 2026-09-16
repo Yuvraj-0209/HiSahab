@@ -49,6 +49,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.core.bank_statements import ParsedLine, normalise_narration
+from app.core.config import get_settings
 from app.models.bank import BankSenderAlias, BankTransaction
 from app.models.cash import BankDeposit, DailyCashSummary
 from app.models.credit import CreditCustomer, CreditRepayment
@@ -152,6 +153,7 @@ class SettlementCheck:
     settled: Decimal | None  # what arrived; None = no settlement found
     source: str  # "snapshot" | "computed" -- §13.20's distinction
     transaction_ids: tuple[UUID, ...]
+    tolerance: Decimal
 
     @property
     def difference(self) -> Decimal | None:
@@ -161,7 +163,20 @@ class SettlementCheck:
 
     @property
     def matches(self) -> bool:
-        return self.settled is not None and self.settled == self.expected
+        """Within tolerance, not exactly equal.
+
+        The register carries a figure rounded to the rupee, so an exact match is the
+        exception rather than the rule -- on real July data only 3 of 29 days matched to the
+        paisa while 24 were within ₹2. The owner was explicit that the gap is **not** a
+        payment-gateway fee: anything larger means somebody wrote the wrong amount, and those
+        are the days he wants to chase.
+
+        Flagging all 29 would be the failure §13.23 already names for variance alerts -- a
+        list where almost every row is flagged is one nobody reads.
+        """
+        if self.settled is None:
+            return False
+        return abs(self.settled - self.expected) <= self.tolerance
 
 
 def _card_and_upi_for(
@@ -202,6 +217,7 @@ def settlement_checks(
     bank_account_id: UUID,
     date_from: date,
     date_to: date,
+    tolerance: Decimal | None = None,
 ) -> list[SettlementCheck]:
     """Reconcile every trading day in the window against its T+1 settlement.
 
@@ -210,6 +226,9 @@ def settlement_checks(
     A missing settlement reports `settled=None` rather than zero: "Paytm has not paid yet, or
     the row is not in this file" is a different fact from "Paytm paid nothing" (§6.8).
     """
+    if tolerance is None:
+        tolerance = get_settings().SETTLEMENT_TOLERANCE
+
     settlements = _settlements_by_date(
         db,
         bank_account_id=bank_account_id,
@@ -243,6 +262,7 @@ def settlement_checks(
                 ),
                 source=source,
                 transaction_ids=tuple(row.id for row in rows),
+                tolerance=tolerance,
             )
         )
         day += timedelta(days=1)
@@ -308,10 +328,19 @@ class DepositCheck:
     amount: Decimal
     transaction_id: UUID | None
     bank_deposit_id: UUID | None
+    # How many days after the books recorded it the bank actually saw it. Shown rather than
+    # hidden: a deposit that took three days is matched but is still worth a glance.
+    days_late: int | None = None
 
 
 def deposit_checks(
-    db: Session, *, outlet_id: UUID, bank_account_id: UUID, date_from: date, date_to: date
+    db: Session,
+    *,
+    outlet_id: UUID,
+    bank_account_id: UUID,
+    date_from: date,
+    date_to: date,
+    window_days: int | None = None,
 ) -> list[DepositCheck]:
     """Reconcile `BY CASH` lines against `bank_deposits` (§5.3a).
 
@@ -323,13 +352,19 @@ def deposit_checks(
     bank's own narration for a branch deposit is just "BY CASH" -- there is no reference to
     match against.
     """
+    if window_days is None:
+        window_days = get_settings().DEPOSIT_MATCH_WINDOW_DAYS
+
     statement_rows = (
         db.execute(
             sa.select(BankTransaction).where(
                 BankTransaction.bank_account_id == bank_account_id,
                 BankTransaction.classification == "cash_deposit",
                 BankTransaction.txn_date >= date_from,
-                BankTransaction.txn_date <= date_to,
+                # Widened by the window: cash recorded on the last day of the period reaches
+                # the bank after it, and bounding both sides identically would report that
+                # deposit as missing from the bank every single month.
+                BankTransaction.txn_date <= date_to + timedelta(days=window_days),
             )
         )
         .scalars()
@@ -350,20 +385,38 @@ def deposit_checks(
         .all()
     )
 
-    # Greedy pairing on (date, amount). Deliberately simple: a day with two identical deposits
-    # matched to two identical rows is correct whichever way round they pair, and there is no
-    # third field that could distinguish them anyway.
+    # **Matched on amount within a few days, not on an exact date**, because cash leaves the
+    # locker on the trading day and reaches the branch the next morning. Found on real data:
+    # exact-date matching reported 21 bank-only and 16 app-only deposits for July, of which
+    # 14 were one-day pairs of identical amounts -- 28 false discrepancies in a list of 37,
+    # which is a list nobody would read twice.
+    #
+    # Greedy, and ordered nearest-first so a deposit pairs with the closest candidate rather
+    # than the first one found. Two identical amounts a day apart are correct whichever way
+    # round they pair, and there is no third field that could distinguish them anyway.
     unmatched_books = list(book_rows)
     checks: list[DepositCheck] = []
 
+    # Statement rows in date order, so the earliest bank line claims the earliest book row it
+    # can. Pairing "nearest first" instead looks smarter and is worse: with books on the 1st
+    # and 2nd and bank lines on the 2nd and 3rd, the 2nd-to-2nd pair is nearest, which strands
+    # the 1st with the 3rd and reports `days_late` of 0 and 2 for what is plainly 1 and 1.
+    # Everything still matches either way -- but `days_late` is the whole reason that column
+    # exists, so a wrong one is worse than none.
+    statement_rows = sorted(statement_rows, key=lambda row: row.txn_date)
+
     for row in statement_rows:
-        partner = next(
-            (
-                book
-                for book in unmatched_books
-                if book.business_date == row.txn_date and book.amount == row.amount
-            ),
-            None,
+        candidates = [
+            book
+            for book in unmatched_books
+            # The bank can only see it on or after the day the books say it left the locker.
+            if book.amount == row.amount
+            and 0 <= (row.txn_date - book.business_date).days <= window_days
+        ]
+        partner = min(
+            candidates,
+            key=lambda book: book.business_date,
+            default=None,
         )
         if partner is not None:
             unmatched_books.remove(partner)
@@ -374,6 +427,7 @@ def deposit_checks(
                     amount=row.amount,
                     transaction_id=row.id,
                     bank_deposit_id=partner.id,
+                    days_late=(row.txn_date - partner.business_date).days,
                 )
             )
         else:

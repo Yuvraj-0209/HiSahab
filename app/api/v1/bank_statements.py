@@ -192,6 +192,7 @@ class DepositResponse(BaseModel):
     amount: str
     transaction_id: UUID | None
     bank_deposit_id: UUID | None
+    days_late: int | None
 
 
 class ReconciliationResponse(BaseModel):
@@ -780,6 +781,7 @@ def reconciliation(
                 amount=str(check.amount),
                 transaction_id=check.transaction_id,
                 bank_deposit_id=check.bank_deposit_id,
+                days_late=check.days_late,
             )
             for check in deposits
         ],

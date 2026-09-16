@@ -745,3 +745,213 @@ class TestProposingCustomers:
 
         assert reviews[0].proposals[0].credit_customer_id == customer
         assert reviews[0].proposals[0].confidence == "high"
+
+
+class TestSettlementTolerance:
+    """The register is written to the rupee; the bank pays to the paisa (§16).
+
+    The owner was explicit that the gap is **not** a payment-gateway fee -- a larger one means
+    somebody wrote the wrong amount, and those are the days worth chasing. On real July data
+    only 3 of 29 days matched exactly while 24 were within ₹2, so an exact comparison flags
+    almost everything, which is the failure §13.23 already names for variance alerts.
+    """
+
+    def test_a_gap_inside_the_tolerance_counts_as_a_match(
+        self, engine, bank_account, make_bank_txn, make_shift, make_collection, make_user
+    ) -> None:
+        _shift_with_collections(
+            engine, make_shift, make_collection, make_user,
+            business_date=JULY, card="20000.00", upi="10000.00",
+        )
+        # The bank paid ₹1.55 less than the rounded register figure.
+        make_bank_txn(
+            JULY + timedelta(days=1), "29998.45",
+            narration="RTGS-PAYTM PAYMENTS SERVICE", classification="paytm_settlement",
+        )
+
+        checks = _call(
+            bank_service.settlement_checks, outlet_id=_outlet(),
+            bank_account_id=bank_account, date_from=JULY, date_to=JULY,
+        )
+
+        assert checks[0].matches
+        # The difference is still reported -- tolerated is not the same as invisible.
+        assert checks[0].difference == Decimal("-1.55")
+
+    def test_a_gap_outside_the_tolerance_is_flagged(
+        self, engine, bank_account, make_bank_txn, make_shift, make_collection, make_user
+    ) -> None:
+        """₹33.55 was a real July gap, and the owner wants to know why the register said that."""
+        _shift_with_collections(
+            engine, make_shift, make_collection, make_user,
+            business_date=JULY, card="20000.00", upi="10000.00",
+        )
+        make_bank_txn(
+            JULY + timedelta(days=1), "29966.45",
+            narration="RTGS-PAYTM PAYMENTS SERVICE", classification="paytm_settlement",
+        )
+
+        checks = _call(
+            bank_service.settlement_checks, outlet_id=_outlet(),
+            bank_account_id=bank_account, date_from=JULY, date_to=JULY,
+        )
+
+        assert not checks[0].matches
+        assert checks[0].difference == Decimal("-33.55")
+
+    def test_the_boundary_is_inclusive(
+        self, engine, bank_account, make_bank_txn, make_shift, make_collection, make_user
+    ) -> None:
+        """Exactly at the tolerance is tolerated; a paisa past it is not -- the same
+        convention §6.7 and §6.11 use for their thresholds."""
+        _shift_with_collections(
+            engine, make_shift, make_collection, make_user,
+            business_date=JULY, card="20000.00", upi="10000.00",
+        )
+        make_bank_txn(
+            JULY + timedelta(days=1), "29998.00",
+            narration="RTGS-PAYTM PAYMENTS SERVICE", classification="paytm_settlement",
+        )
+
+        checks = _call(
+            bank_service.settlement_checks, outlet_id=_outlet(),
+            bank_account_id=bank_account, date_from=JULY, date_to=JULY,
+            tolerance=Decimal("2.00"),
+        )
+
+        assert checks[0].matches
+
+    def test_a_missing_settlement_never_matches_however_wide_the_tolerance(
+        self, engine, bank_account, make_bank_txn, make_shift, make_collection, make_user
+    ) -> None:
+        """`None` is not a small difference. Nothing arrived, and no tolerance covers that."""
+        _shift_with_collections(
+            engine, make_shift, make_collection, make_user,
+            business_date=JULY, card="20000.00", upi="10000.00",
+        )
+
+        checks = _call(
+            bank_service.settlement_checks, outlet_id=_outlet(),
+            bank_account_id=bank_account, date_from=JULY, date_to=JULY,
+            tolerance=Decimal("999999.00"),
+        )
+
+        assert not checks[0].matches
+
+
+class TestDepositTiming:
+    """Cash leaves the locker one day and reaches the branch the next (§16).
+
+    Exact-date matching reported 21 bank-only and 16 app-only deposits on real July data, of
+    which 14 were one-day pairs of identical amounts. 28 false discrepancies in a list of 37
+    is a list nobody reads twice.
+    """
+
+    def test_a_deposit_banked_the_next_morning_matches(
+        self, engine, bank_account, make_bank_txn, make_shift, make_user, make_bank_deposit
+    ) -> None:
+        attendant = make_user("attendant")
+        shift = make_shift(business_date=JULY, attendant_id=attendant)
+        make_bank_deposit(shift, amount="224050.00", business_date=JULY)
+        make_bank_txn(
+            JULY + timedelta(days=1), "224050.00",
+            narration="BY CASH", classification="cash_deposit",
+        )
+
+        checks = _call(
+            bank_service.deposit_checks, outlet_id=_outlet(),
+            bank_account_id=bank_account, date_from=JULY, date_to=JULY,
+        )
+
+        assert [check.kind for check in checks] == ["matched"]
+        assert checks[0].days_late == 1
+
+    def test_a_deposit_the_bank_saw_before_the_books_did_does_not_match(
+        self, engine, bank_account, make_bank_txn, make_shift, make_user, make_bank_deposit
+    ) -> None:
+        """Time runs one way. The bank cannot have seen it the day *before* it left the
+        locker, so an earlier bank line is a different deposit -- pairing them would hide two
+        real discrepancies behind one false match.
+        """
+        attendant = make_user("attendant")
+        shift = make_shift(business_date=JULY + timedelta(days=1), attendant_id=attendant)
+        make_bank_deposit(shift, amount="50000.00", business_date=JULY + timedelta(days=1))
+        make_bank_txn(JULY, "50000.00", narration="BY CASH", classification="cash_deposit")
+
+        checks = _call(
+            bank_service.deposit_checks, outlet_id=_outlet(),
+            bank_account_id=bank_account,
+            date_from=JULY, date_to=JULY + timedelta(days=1),
+        )
+
+        assert {check.kind for check in checks} == {"missing_from_books", "missing_from_bank"}
+
+    def test_a_deposit_beyond_the_window_is_still_a_discrepancy(
+        self, engine, bank_account, make_bank_txn, make_shift, make_user, make_bank_deposit
+    ) -> None:
+        attendant = make_user("attendant")
+        shift = make_shift(business_date=JULY, attendant_id=attendant)
+        make_bank_deposit(shift, amount="50000.00", business_date=JULY)
+        make_bank_txn(
+            JULY + timedelta(days=9), "50000.00",
+            narration="BY CASH", classification="cash_deposit",
+        )
+
+        checks = _call(
+            bank_service.deposit_checks, outlet_id=_outlet(),
+            bank_account_id=bank_account,
+            date_from=JULY, date_to=JULY + timedelta(days=9),
+        )
+
+        assert {check.kind for check in checks} == {"missing_from_books", "missing_from_bank"}
+
+    def test_a_deposit_recorded_on_the_last_day_and_banked_after_it_still_matches(
+        self, engine, bank_account, make_bank_txn, make_shift, make_user, make_bank_deposit
+    ) -> None:
+        """Otherwise the period's final deposit is reported missing from the bank every month
+        -- the same structural mistake the Paytm matcher had to avoid at the same boundary.
+        """
+        attendant = make_user("attendant")
+        shift = make_shift(business_date=JULY, attendant_id=attendant)
+        make_bank_deposit(shift, amount="75000.00", business_date=JULY)
+        make_bank_txn(
+            JULY + timedelta(days=1), "75000.00",
+            narration="BY CASH", classification="cash_deposit",
+        )
+
+        checks = _call(
+            bank_service.deposit_checks, outlet_id=_outlet(),
+            bank_account_id=bank_account,
+            # The window ends ON the day the deposit was recorded.
+            date_from=JULY, date_to=JULY,
+        )
+
+        assert [check.kind for check in checks] == ["matched"]
+
+    def test_the_nearest_candidate_wins(
+        self, engine, bank_account, make_bank_txn, make_shift, make_user, make_bank_deposit
+    ) -> None:
+        """Two identical amounts, two bank lines: each should take the closer partner rather
+        than the first one the scan happens to reach."""
+        attendant = make_user("attendant")
+        first = make_shift(business_date=JULY, attendant_id=attendant)
+        second = make_shift(business_date=JULY + timedelta(days=1), attendant_id=attendant)
+        make_bank_deposit(first, amount="10000.00", business_date=JULY)
+        make_bank_deposit(second, amount="10000.00", business_date=JULY + timedelta(days=1))
+        make_bank_txn(
+            JULY + timedelta(days=1), "10000.00",
+            narration="BY CASH", classification="cash_deposit",
+        )
+        make_bank_txn(
+            JULY + timedelta(days=2), "10000.00",
+            narration="BY CASH", classification="cash_deposit",
+        )
+
+        checks = _call(
+            bank_service.deposit_checks, outlet_id=_outlet(),
+            bank_account_id=bank_account,
+            date_from=JULY, date_to=JULY + timedelta(days=2),
+        )
+
+        assert [check.kind for check in checks] == ["matched", "matched"]
+        assert all(check.days_late == 1 for check in checks)

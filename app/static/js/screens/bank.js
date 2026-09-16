@@ -571,6 +571,9 @@ function settlementsCard(items) {
 
 function depositsCard(items) {
   const problems = items.filter((item) => item.kind !== "matched");
+  // Matched but slow: worth a glance, not an alarm. Cash normally reaches the branch the
+  // next morning, so anything longer is a deposit that sat somewhere.
+  const slow = items.filter((item) => item.kind === "matched" && (item.days_late ?? 0) > 1);
   const KINDS = {
     missing_from_books: "In the bank, not in the app",
     missing_from_bank: "In the app, never reached the bank",
@@ -580,7 +583,9 @@ function depositsCard(items) {
     el("h2", { className: "t-heading", text: "Cash deposits" }),
     el("p", {
       className: "t-caption",
-      text: `${items.length - problems.length} of ${items.length} matched.`,
+      text:
+        `${items.length - problems.length} of ${items.length} matched` +
+        (slow.length ? `, ${slow.length} took more than a day to reach the bank.` : "."),
     }),
     ...(problems.length === 0
       ? [empty("Every deposit agrees.")]
