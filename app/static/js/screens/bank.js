@@ -147,70 +147,76 @@ function importCard(accounts, reload) {
   const submit = el("button", {
     className: "btn",
     text: "Import",
-    attrs: { type: "submit" },
-  });
-
-  const form = el(
-    "form",
-    {
-      className: "stack",
-      on: {
-        submit: async (event) => {
-          event.preventDefault();
-          const file = fileInput.files?.[0];
-          if (!file) {
-            status.textContent = "Choose the CSV your bank gave you.";
-            return;
-          }
-          submit.disabled = true;
-          status.textContent = "Reading…";
-          try {
-            const result = await postMultipart(
-              "/bank-statements/imports",
-              { file, bank_account_id: accountField._input.value },
-              { extraHeaders: { "Idempotency-Key": key } },
-            );
-            toast({
-              message:
-                `Imported ${result.imported_count} of ${result.row_count} lines` +
-                (result.skipped_count
-                  ? `, skipped ${result.skipped_count} already seen.`
-                  : "."),
-              kind: "success",
-            });
-            // A fresh key: the next import is a new submission, not a retry of this one.
-            key = newIdempotencyKey();
-            reload();
-          } catch (error) {
-            status.textContent = explain(error);
-          } finally {
-            submit.disabled = false;
-          }
-        },
+    // `type: "button"` and no <form> anywhere on this screen -- see the note below.
+    attrs: { type: "button" },
+    on: {
+      click: async () => {
+        const file = fileInput.files?.[0];
+        if (!file) {
+          status.textContent = "Choose the CSV your bank gave you.";
+          return;
+        }
+        submit.disabled = true;
+        status.textContent = "Reading…";
+        try {
+          const result = await postMultipart(
+            "/bank-statements/imports",
+            { file, bank_account_id: accountField._input.value },
+            { extraHeaders: { "Idempotency-Key": key } },
+          );
+          toast({
+            message:
+              `Imported ${result.imported_count} of ${result.row_count} lines` +
+              (result.skipped_count
+                ? `, skipped ${result.skipped_count} already seen.`
+                : "."),
+            kind: "success",
+          });
+          // A fresh key: the next import is a new submission, not a retry of this one.
+          key = newIdempotencyKey();
+          reload();
+        } catch (error) {
+          status.textContent = explain(error);
+        } finally {
+          submit.disabled = false;
+        }
       },
     },
-    [
-      accountField,
-      el("label", { className: "field" }, [
-        el("span", { className: "t-caption", text: "Statement CSV" }),
-        fileInput,
-      ]),
-      el("p", {
-        className: "t-caption",
-        text:
-          "Download a few days past the month end — the last day's card and UPI settles " +
-          "the next morning, and lines you have already imported are skipped.",
-      }),
-      el("div", { className: "row gap" }, [submit]),
-      status,
-    ],
-  );
+  });
+
+  /* **A div, not a <form>**, and the button is `type="button"`, not `type="submit"`.
+   *
+   * Every other data-entry screen in this app is built from buttons; this one briefly used a
+   * real form, and it produced a bug with no useful error message. A native form submit with
+   * no `action` posts to the *current* URL -- which under hash routing is `/`, owned by the
+   * StaticFiles mount, which serves GET only. The browser reports **405 Method Not Allowed**
+   * and nothing points at the form.
+   *
+   * `preventDefault` in a submit handler is not enough on its own: pressing Enter inside the
+   * account picker submits natively before any handler runs. Removing the form element
+   * removes the failure mode instead of guarding it. */
+  const body = el("div", { className: "stack" }, [
+    accountField,
+    el("label", { className: "field" }, [
+      el("span", { className: "t-caption", text: "Statement CSV" }),
+      fileInput,
+    ]),
+    el("p", {
+      className: "t-caption",
+      text:
+        "Download a few days past the month end — the last day's card and UPI settles " +
+        "the next morning, and lines you have already imported are skipped.",
+    }),
+    el("div", { className: "row gap" }, [submit]),
+    status,
+  ]);
 
   return el("div", { className: "card" }, [
     el("h2", { className: "t-heading", text: "Import a statement" }),
-    form,
+    body,
   ]);
 }
+
 
 function importsCard(items) {
   if (items.length === 0) {
@@ -369,7 +375,8 @@ function creditsSection(items, customers, reload) {
           const result = await api.post(
             "/bank-transactions/confirm-repayments",
             { items: chosen },
-            { idempotencyKey: key },
+            // Third positional argument, not an options object -- `api.post(path, body, key)`.
+            key,
           );
           key = newIdempotencyKey();
           // Partial success is a real outcome, so it is reported rather than hidden behind

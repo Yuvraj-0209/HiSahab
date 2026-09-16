@@ -794,12 +794,18 @@ function bankAccountSheet(existing, onDone) {
     sheet: () => sheet,
     onDone,
     run: async (f) => {
+      // An untouched optional text field reads as "", which fails the four-digit pattern
+      // with a 422 rather than being treated as "not supplied". Dropping empties is what
+      // the field means: absent, not blank.
+      const drop = (values) =>
+        Object.fromEntries(Object.entries(values).filter(([, v]) => v !== ""));
+
       if (existing) {
         const changes = f.changes();
         if (!Object.keys(changes).length) return;
-        await api.patch(`/bank-accounts/${existing.id}`, changes);
+        await api.patch(`/bank-accounts/${existing.id}`, drop(changes));
       } else {
-        await api.post("/bank-accounts", f.values());
+        await api.post("/bank-accounts", drop(f.values()));
       }
     },
   });
