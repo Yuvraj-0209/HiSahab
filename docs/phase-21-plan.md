@@ -200,9 +200,25 @@ None.
 
 ## What shipped
 
-*(Filled in at the end of the phase.)*
+Shipped as planned, in four commits (spec, endpoint, screen, notes), with these differences:
+
+- **`opening_since` added.** The approved six columns could not make `owes_today` exactly
+  reconcilable for a customer whose opening balance is dated after the window. It is shown in
+  the expanded panel only when non-zero. See the notes.
+- **D6 corrected.** A reversal nets inside its original's period. The cross-period effects are
+  replacements and after-the-fact corrections, recorded in §13.41.
+- **Bank matcher split into three functions** rather than only being renamed:
+  `recorded_candidates`, `resolve_candidates` and `verify_against_recorded`. A tie had to name
+  its candidates.
+- 1,734 tests pass (31 new). Every line of new code is covered.
+- **Checked against the real July data:** all customers reconcile with their ledgers. The
+  screen itself has not been checked in a browser (see the notes).
 
 ## Still owed by the owner
 
 - Veto or keep "Udhaar since" and the half-month default.
-- Phase 20's plan and notes documents.
+- **Confirm the 19 unconfirmed bank udhaar credits on the Bank screen** before sending bills.
+  Until then the statement does not include them.
+- **Close the open shift in 16–31 July.**
+- Check the screen by hand: the layout on a phone, and print preview.
+- Phase 20's plan and notes documents (from the audit).
