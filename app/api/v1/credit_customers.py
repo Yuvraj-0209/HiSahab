@@ -40,7 +40,9 @@ from sqlalchemy.orm import Session
 
 from app.api.cursor import DEFAULT_LIMIT, MAX_LIMIT, decode_cursor, encode_cursor
 from app.api.deps import Actor, require_role
+from app.api.window import validate_window
 from app.core.audit import AuditAction
+from app.core.config import Settings, get_settings
 from app.core.errors import AppError
 from app.core.roles import Role
 from app.db.session import get_db
@@ -52,7 +54,9 @@ from app.models.credit import (
     CreditSale,
 )
 from app.models.shift import Shift
+from app.services import bank as bank_service
 from app.services import credit as credit_service
+from app.services import shifts as shift_service
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +72,11 @@ _MAX_ROWS = 500
 # rather than a cursor -- the running balance is only meaningful as a walk from a known
 # anchor, and a cursor's page two has no anchor.
 _MAX_LEDGER_ROWS = 500
+
+# The statement's widest window. The same 366 as `/expenses/summary` and `/reports/summary`:
+# this endpoint reads rows and computes no §6.4 cash, so a year is affordable, and a billing
+# fortnight is the case it is built for.
+_MAX_STATEMENT_DAYS = 366
 
 # Indian vehicle registrations, normalised: upper-cased with every space and hyphen removed,
 # so `MH 12 AB 1234`, `mh12-ab-1234` and `MH12AB1234` all become one value. Not validated
@@ -115,6 +124,87 @@ class CreditCustomerResponse(BaseModel):
     # §6.6: computed from the rows every time, never stored. May be negative when a customer
     # has paid in advance.
     outstanding: Decimal
+
+
+class StatementLineResponse(BaseModel):
+    """One line of a customer's account inside the statement's window (§6.6).
+
+    `amount` is the row as recorded -- a reversal is negative. `period` is `in_range` or
+    `since`. An `opening` line inside the window is display only: its amount is already in
+    `owed_before` (§6.6).
+
+    `bank_status` is set only on an original `bank_transfer` repayment, and is one of
+    `verified`, `ambiguous`, `not_on_statement` or `no_statement` (§13.42). `None` everywhere
+    else, because no single statement line could verify cash, card or UPI.
+    """
+
+    id: UUID
+    kind: str
+    period: str
+    business_date: date
+    amount: Decimal
+    is_reversal: bool
+    is_reversed: bool
+    reversal_reason: str | None
+    shift_id: UUID | None
+    fuel_display_name: str | None
+    quantity: Decimal | None
+    unit_of_measure: str | None
+    vehicle_number: str | None
+    mode: str | None
+    bank_reference: str | None
+    bank_status: str | None
+
+
+class StatementRowResponse(BaseModel):
+    """One customer's statement. Every figure is computed server-side in `Decimal`.
+
+    `owes_today == billed + opening_since + udhaar_since - paid_since`, exactly.
+
+    `opening_balance_entered: false` means nobody has entered what this customer owed before
+    the app -- so `owed_before` is a sum over the rows that exist, not a checked figure, and
+    the screen must say "unknown" rather than "₹0" (§6.8, §14).
+    """
+
+    customer_id: UUID
+    name: str
+    phone: str
+    is_active: bool
+    opening_balance_entered: bool
+    owed_before: Decimal
+    udhaar_in: Decimal
+    repaid_in: Decimal
+    billed: Decimal
+    opening_since: Decimal
+    udhaar_since: Decimal
+    paid_since: Decimal
+    owes_today: Decimal
+    lines: list[StatementLineResponse]
+
+
+class StatementTotalsResponse(BaseModel):
+    """Column totals over the listed customers, summed once, here (§14: never in JS)."""
+
+    owed_before: Decimal
+    udhaar_in: Decimal
+    repaid_in: Decimal
+    billed: Decimal
+    opening_since: Decimal
+    udhaar_since: Decimal
+    paid_since: Decimal
+    owes_today: Decimal
+
+
+class StatementResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_: str = Field(alias="from")
+    to: str
+    today: str
+    rows: list[StatementRowResponse]
+    totals: StatementTotalsResponse
+    lines_truncated: bool
+    open_shift_count: int
 
 
 class LedgerEntry(BaseModel):
@@ -402,6 +492,112 @@ def list_outstanding_balances(
     ]
     items.sort(key=lambda item: item.outstanding, reverse=True)
     return items
+
+
+@router.get("/credit-customers/statement", response_model=StatementResponse)
+def get_credit_statement(
+    date_from: date = Query(alias="from"),
+    date_to: date = Query(alias="to"),
+    actor: Actor = Depends(require_role(Role.manager)),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+) -> StatementResponse:
+    """The billing-period statement: §6.6 cut at two dates, for every customer (§8).
+
+    This outlet bills on the 16th for the 1st-15th and on the 1st for the rest, and this is
+    what a bill is checked against. Six figures per customer -- owed before, udhaar and repaid
+    inside the window, what the bill should say, paid since, owes today -- with the lines
+    behind them and one set of column totals.
+
+    **Registered before `/credit-customers/{customer_id}`**, or FastAPI would try to parse
+    "statement" as a UUID and refuse the request with a 422.
+
+    **Both dates are required**, unlike `/reports/*`: a bill is a window somebody chose, and
+    a default anchored on trading (§13.30) would answer a question nobody asked.
+
+    **Reads only.** The bank tick runs Phase 20's matcher live and writes nothing (§13.42).
+    """
+    today = shift_service.outlet_today(settings.TZ_DISPLAY)
+    validate_window(date_from, date_to, today=today, max_days=_MAX_STATEMENT_DAYS)
+
+    statement = credit_service.period_statement(
+        db, outlet_id=actor.outlet_id, date_from=date_from, date_to=date_to
+    )
+
+    bank_statuses = bank_service.repayment_bank_status(
+        db,
+        outlet_id=actor.outlet_id,
+        repayments=[
+            (line.id, line.business_date)
+            for line in statement.lines
+            if line.kind == "repayment"
+            and line.mode == "bank_transfer"
+            and not line.is_reversal
+        ],
+        date_from=date_from,
+        date_to=today,
+    )
+
+    lines_by_customer: dict[UUID, list[StatementLineResponse]] = {}
+    for line in statement.lines:
+        lines_by_customer.setdefault(line.customer_id, []).append(
+            StatementLineResponse(
+                id=line.id,
+                kind=line.kind,
+                period=line.period,
+                business_date=line.business_date,
+                amount=line.amount,
+                is_reversal=line.is_reversal,
+                is_reversed=line.is_reversed,
+                reversal_reason=line.reversal_reason,
+                shift_id=line.shift_id,
+                fuel_display_name=line.fuel_display_name,
+                quantity=line.quantity,
+                unit_of_measure=line.unit_of_measure,
+                vehicle_number=line.vehicle_number,
+                mode=line.mode,
+                bank_reference=line.bank_reference,
+                bank_status=bank_statuses.get(line.id),
+            )
+        )
+
+    totals = statement.totals
+    return StatementResponse(
+        from_=date_from.isoformat(),
+        to=date_to.isoformat(),
+        today=today.isoformat(),
+        rows=[
+            StatementRowResponse(
+                customer_id=row.customer_id,
+                name=row.name,
+                phone=row.phone,
+                is_active=row.is_active,
+                opening_balance_entered=row.opening_balance_entered,
+                owed_before=row.owed_before,
+                udhaar_in=row.udhaar_in,
+                repaid_in=row.repaid_in,
+                billed=row.billed,
+                opening_since=row.opening_since,
+                udhaar_since=row.udhaar_since,
+                paid_since=row.paid_since,
+                owes_today=row.owes_today,
+                lines=lines_by_customer.get(row.customer_id, []),
+            )
+            for row in statement.rows
+        ],
+        totals=StatementTotalsResponse(
+            owed_before=totals.owed_before,
+            udhaar_in=totals.udhaar_in,
+            repaid_in=totals.repaid_in,
+            billed=totals.billed,
+            opening_since=totals.opening_since,
+            udhaar_since=totals.udhaar_since,
+            paid_since=totals.paid_since,
+            owes_today=totals.owes_today,
+        ),
+        lines_truncated=statement.lines_truncated,
+        open_shift_count=statement.open_shift_count,
+    )
 
 
 @router.get("/credit-customers/{customer_id}", response_model=CreditCustomerResponse)

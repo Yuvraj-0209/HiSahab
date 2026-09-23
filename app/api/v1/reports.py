@@ -42,6 +42,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import Actor, require_role
+from app.api.window import validate_window
 from app.core.cash import OpeningBalanceSource
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
@@ -385,30 +386,7 @@ def _resolve_window(
     if date_from is None:
         date_from = date_to - timedelta(days=default_days - 1)
 
-    if date_from > date_to:
-        raise AppError(
-            status_code=422,
-            code="INVALID_DATE_RANGE",
-            detail="`from` must not be after `to`.",
-        )
-    if (date_to - date_from).days + 1 > max_days:
-        raise AppError(
-            status_code=422,
-            code="INVALID_DATE_RANGE",
-            detail=(
-                f"The range cannot exceed {max_days} days. A longer window would cost more "
-                "to compute than a report should (§13.24, §13.34)."
-            ),
-        )
-    if date_to > today:
-        raise AppError(
-            status_code=422,
-            code="BUSINESS_DATE_IN_FUTURE",
-            detail=(
-                "That date is in the future. Trading has not happened yet, so there is "
-                "nothing to report."
-            ),
-        )
+    validate_window(date_from, date_to, today=today, max_days=max_days)
 
     return date_from, date_to
 

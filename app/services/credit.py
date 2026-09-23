@@ -15,15 +15,17 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Collection
-from datetime import date
+from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import case, exists, func, select
 from sqlalchemy.orm import Session, aliased
 
 from app.core.credit import CreditRepaymentMode
 from app.core.errors import AppError
+from app.core.shifts import ShiftStatus
 from app.models.attachment import Attachment
 from app.models.credit import (
     CreditCustomer,
@@ -31,6 +33,7 @@ from app.models.credit import (
     CreditRepayment,
     CreditSale,
 )
+from app.models.fuel import FuelType
 from app.models.shift import Shift
 
 logger = logging.getLogger(__name__)
@@ -878,3 +881,439 @@ def sales_missing_receipt(db: Session, *, shift: Shift) -> list[UUID]:
         .scalars()
         .all()
     )
+
+
+# --- the statement over a window (§6.6 -- Phase 21) ---------------------------
+
+_ZERO = Decimal("0.00")
+
+# The expanded view's line cap. Generous for a fortnight -- this outlet writes dozens of slips,
+# not thousands -- and it bounds a 366-day window. **The totals never depend on the lines**:
+# they are grouped SUMs, so a truncated list still sits under exact figures.
+MAX_STATEMENT_LINES = 5000
+
+
+@dataclass(frozen=True)
+class StatementLine:
+    """One row of a customer's account inside the statement's window.
+
+    `period` is `"in_range"` for `[from, to]` and `"since"` for after `to`. An opening balance
+    dated inside the window is tagged `in_range` for display but is **counted in
+    `owed_before`**, not in `udhaar_in` -- §6.6: it is the debt from before this software
+    existed, compressed onto one date.
+    """
+
+    id: UUID
+    customer_id: UUID
+    kind: str  # "opening" | "sale" | "repayment"
+    period: str  # "in_range" | "since"
+    business_date: date
+    amount: Decimal
+    is_reversal: bool
+    is_reversed: bool
+    reversal_reason: str | None
+    shift_id: UUID | None
+    # Sales only. `unit_of_measure` travels with `quantity` because a quantity without its
+    # unit is meaningless -- this outlet sells CBG by the kilogram (§4.5).
+    fuel_display_name: str | None
+    quantity: Decimal | None
+    unit_of_measure: str | None
+    vehicle_number: str | None
+    # Repayments only.
+    mode: str | None
+    bank_reference: str | None
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class StatementRow:
+    """One customer's six statement figures, plus the two that make them add up.
+
+    `owes_today = billed + opening_since + udhaar_since - paid_since`, exactly -- the
+    "since" figures are unbounded above rather than capped at today, and that is what makes
+    the identity exact rather than approximately true: §6.1 refuses a future business date on
+    every write path, so "after `to`" and "after `to`, up to today" are the same rows.
+    """
+
+    customer_id: UUID
+    name: str
+    phone: str
+    is_active: bool
+    opening_balance_entered: bool
+    owed_before: Decimal
+    udhaar_in: Decimal
+    repaid_in: Decimal
+    billed: Decimal
+    # An opening balance dated after `to`: a customer whose ledger starts after the window.
+    # Almost always zero, and only there so `owes_today` can be reconciled to the columns.
+    opening_since: Decimal
+    udhaar_since: Decimal
+    paid_since: Decimal
+    owes_today: Decimal
+
+
+@dataclass(frozen=True)
+class StatementTotals:
+    owed_before: Decimal
+    udhaar_in: Decimal
+    repaid_in: Decimal
+    billed: Decimal
+    opening_since: Decimal
+    udhaar_since: Decimal
+    paid_since: Decimal
+    owes_today: Decimal
+
+
+@dataclass(frozen=True)
+class PeriodStatement:
+    date_from: date
+    date_to: date
+    rows: list[StatementRow]
+    totals: StatementTotals
+    lines: list[StatementLine]
+    lines_truncated: bool
+    # §6.6 counts udhaar on a still-open shift -- it is real udhaar and belongs on the bill --
+    # but figures from an open shift can still change, so the screen says so.
+    open_shift_count: int
+
+
+def _bucket(column, predicate) -> object:
+    """`SUM(CASE WHEN predicate THEN amount ELSE 0 END)`, coalesced to ₹0.00."""
+    return func.coalesce(func.sum(case((predicate, column), else_=_ZERO)), _ZERO)
+
+
+def period_statement(
+    db: Session, *, outlet_id: UUID, date_from: date, date_to: date
+) -> PeriodStatement:
+    """§6.6's statement over `[date_from, date_to]`, for every customer at the outlet.
+
+    **Every row counts, reversals included**, which is `outstanding`'s convention: a reversal
+    carries its original's shift and date (§6.9), so the pair nets inside one period. A sale is
+    dated by its shift's `business_date` -- the same join the ledger uses, because a sale has
+    no date of its own (§6.1) -- and never by `created_at`, since §4.7 says the day is typed in
+    after the fact.
+
+    Totals are three grouped aggregates, one per table, merged per customer in Python: the
+    shape of `outstanding_by_customer` and for the same reason -- a customer may appear in any
+    subset of the three. `owes_today` comes from `outstanding_by_customer` itself rather than
+    from these buckets, so it is the definition and not a second implementation of it; the
+    test suite asserts the two agree to the paisa.
+
+    **`paid_since` is not allocated to any bill** (§13.40). Nothing here decides whether a
+    particular bill was cleared.
+    """
+    first, last = date_from, date_to
+
+    customers = db.execute(
+        select(CreditCustomer).where(CreditCustomer.outlet_id == outlet_id)
+    ).scalars().all()
+
+    openings = {
+        row.credit_customer_id: row
+        for row in db.execute(
+            select(
+                CreditOpeningBalance.credit_customer_id,
+                _bucket(
+                    CreditOpeningBalance.amount, CreditOpeningBalance.as_of_date <= last
+                ).label("before"),
+                _bucket(
+                    CreditOpeningBalance.amount, CreditOpeningBalance.as_of_date > last
+                ).label("since"),
+                func.count(case((CreditOpeningBalance.as_of_date >= first, 1))).label(
+                    "active"
+                ),
+            )
+            .join(
+                CreditCustomer,
+                CreditCustomer.id == CreditOpeningBalance.credit_customer_id,
+            )
+            .where(CreditCustomer.outlet_id == outlet_id)
+            .group_by(CreditOpeningBalance.credit_customer_id)
+        ).all()
+    }
+
+    sales = {
+        row.credit_customer_id: row
+        for row in db.execute(
+            select(
+                CreditSale.credit_customer_id,
+                _bucket(CreditSale.amount, Shift.business_date < first).label("before"),
+                _bucket(
+                    CreditSale.amount,
+                    (Shift.business_date >= first) & (Shift.business_date <= last),
+                ).label("in_range"),
+                _bucket(CreditSale.amount, Shift.business_date > last).label("since"),
+                func.count(case((Shift.business_date >= first, 1))).label("active"),
+            )
+            .join(Shift, Shift.id == CreditSale.shift_id)
+            # Scoped by the customer's outlet, not the shift's, exactly as
+            # `outstanding_by_customer` is -- so `billed` and `owes_today` can never be
+            # drawing on two different sets of rows.
+            .join(CreditCustomer, CreditCustomer.id == CreditSale.credit_customer_id)
+            .where(CreditCustomer.outlet_id == outlet_id)
+            .group_by(CreditSale.credit_customer_id)
+        ).all()
+    }
+
+    repayments = {
+        row.credit_customer_id: row
+        for row in db.execute(
+            select(
+                CreditRepayment.credit_customer_id,
+                _bucket(
+                    CreditRepayment.amount, CreditRepayment.business_date < first
+                ).label("before"),
+                _bucket(
+                    CreditRepayment.amount,
+                    (CreditRepayment.business_date >= first)
+                    & (CreditRepayment.business_date <= last),
+                ).label("in_range"),
+                _bucket(
+                    CreditRepayment.amount, CreditRepayment.business_date > last
+                ).label("since"),
+                func.count(case((CreditRepayment.business_date >= first, 1))).label(
+                    "active"
+                ),
+            )
+            .join(CreditCustomer, CreditCustomer.id == CreditRepayment.credit_customer_id)
+            .where(CreditCustomer.outlet_id == outlet_id)
+            .group_by(CreditRepayment.credit_customer_id)
+        ).all()
+    }
+
+    today_balances = outstanding_by_customer(db, outlet_id=outlet_id)
+    entered = opening_balances_by_customer(db, outlet_id=outlet_id)
+
+    rows: list[StatementRow] = []
+    for customer in customers:
+        opening = openings.get(customer.id)
+        sale = sales.get(customer.id)
+        repayment = repayments.get(customer.id)
+
+        owed_before = (
+            (opening.before if opening else _ZERO)
+            + (sale.before if sale else _ZERO)
+            - (repayment.before if repayment else _ZERO)
+        )
+        udhaar_in = sale.in_range if sale else _ZERO
+        repaid_in = repayment.in_range if repayment else _ZERO
+        billed = owed_before + udhaar_in - repaid_in
+        opening_since = opening.since if opening else _ZERO
+        udhaar_since = sale.since if sale else _ZERO
+        paid_since = repayment.since if repayment else _ZERO
+        owes_today = today_balances.get(customer.id, _ZERO)
+
+        has_activity = any(
+            part is not None and part.active > 0 for part in (opening, sale, repayment)
+        )
+        has_balance = any(
+            figure != _ZERO for figure in (owed_before, billed, paid_since, owes_today)
+        )
+        if not (has_activity or has_balance):
+            continue
+
+        rows.append(
+            StatementRow(
+                customer_id=customer.id,
+                name=customer.name,
+                phone=customer.phone,
+                is_active=customer.is_active,
+                opening_balance_entered=customer.id in entered,
+                owed_before=owed_before,
+                udhaar_in=udhaar_in,
+                repaid_in=repaid_in,
+                billed=billed,
+                opening_since=opening_since,
+                udhaar_since=udhaar_since,
+                paid_since=paid_since,
+                owes_today=owes_today,
+            )
+        )
+
+    # Biggest bill first, as the hub sorts by biggest debt. Name breaks ties so the order is
+    # stable between two loads of the same window.
+    rows.sort(key=lambda row: (-row.billed, row.name.casefold(), str(row.customer_id)))
+
+    totals = StatementTotals(
+        owed_before=sum((row.owed_before for row in rows), _ZERO),
+        udhaar_in=sum((row.udhaar_in for row in rows), _ZERO),
+        repaid_in=sum((row.repaid_in for row in rows), _ZERO),
+        billed=sum((row.billed for row in rows), _ZERO),
+        opening_since=sum((row.opening_since for row in rows), _ZERO),
+        udhaar_since=sum((row.udhaar_since for row in rows), _ZERO),
+        paid_since=sum((row.paid_since for row in rows), _ZERO),
+        owes_today=sum((row.owes_today for row in rows), _ZERO),
+    )
+
+    lines, truncated = _statement_lines(
+        db, outlet_id=outlet_id, date_from=first, date_to=last
+    )
+
+    open_shift_count = db.execute(
+        select(func.count())
+        .select_from(Shift)
+        .where(
+            Shift.outlet_id == outlet_id,
+            Shift.status == ShiftStatus.open.value,
+            Shift.business_date >= first,
+            Shift.business_date <= last,
+        )
+    ).scalar_one()
+
+    return PeriodStatement(
+        date_from=first,
+        date_to=last,
+        rows=rows,
+        totals=totals,
+        lines=lines,
+        lines_truncated=truncated,
+        open_shift_count=open_shift_count,
+    )
+
+
+def _statement_lines(
+    db: Session, *, outlet_id: UUID, date_from: date, date_to: date
+) -> tuple[list[StatementLine], bool]:
+    """Every opening, sale and repayment dated on or after `date_from`, capped.
+
+    Three queries rather than a `UNION ALL`, unlike the ledger: the three tables carry
+    different detail columns (fuel and vehicle on a sale, mode and reference on a repayment),
+    and a union would force every one of them into every branch as a typed NULL. The ledger's
+    reason for a union -- ordering the newest N correctly across tables -- applies here only
+    at the cap, and each query fetches one row past it so the merged cut is still exact.
+    """
+    cap = MAX_STATEMENT_LINES
+
+    def _period(day: date) -> str:
+        return "in_range" if day <= date_to else "since"
+
+    opening_reversal = aliased(CreditOpeningBalance)
+    opening_rows = db.execute(
+        select(
+            CreditOpeningBalance,
+            exists()
+            .where(opening_reversal.reverses_id == CreditOpeningBalance.id)
+            .label("is_reversed"),
+        )
+        .join(CreditCustomer, CreditCustomer.id == CreditOpeningBalance.credit_customer_id)
+        .where(
+            CreditCustomer.outlet_id == outlet_id,
+            CreditOpeningBalance.as_of_date >= date_from,
+        )
+        .limit(cap + 1)
+    ).all()
+
+    sale_rows = db.execute(
+        select(
+            CreditSale,
+            Shift.business_date,
+            FuelType.display_name,
+            FuelType.unit_of_measure,
+            _sale_is_reversed().label("is_reversed"),
+        )
+        .join(Shift, Shift.id == CreditSale.shift_id)
+        .join(CreditCustomer, CreditCustomer.id == CreditSale.credit_customer_id)
+        .outerjoin(FuelType, FuelType.id == CreditSale.fuel_type_id)
+        .where(CreditCustomer.outlet_id == outlet_id, Shift.business_date >= date_from)
+        .limit(cap + 1)
+    ).all()
+
+    repayment_reversal = aliased(CreditRepayment)
+    repayment_rows = db.execute(
+        select(
+            CreditRepayment,
+            exists()
+            .where(repayment_reversal.reverses_id == CreditRepayment.id)
+            .label("is_reversed"),
+        )
+        .join(CreditCustomer, CreditCustomer.id == CreditRepayment.credit_customer_id)
+        .where(
+            CreditCustomer.outlet_id == outlet_id,
+            CreditRepayment.business_date >= date_from,
+        )
+        .limit(cap + 1)
+    ).all()
+
+    lines: list[StatementLine] = []
+    for opening, is_reversed in opening_rows:
+        lines.append(
+            StatementLine(
+                id=opening.id,
+                customer_id=opening.credit_customer_id,
+                kind="opening",
+                period=_period(opening.as_of_date),
+                business_date=opening.as_of_date,
+                amount=opening.amount,
+                is_reversal=opening.reverses_id is not None,
+                is_reversed=bool(is_reversed),
+                reversal_reason=opening.reversal_reason,
+                shift_id=None,
+                fuel_display_name=None,
+                quantity=None,
+                unit_of_measure=None,
+                vehicle_number=None,
+                mode=None,
+                bank_reference=None,
+                created_at=opening.created_at,
+            )
+        )
+    for sale, business_date, fuel_name, unit, is_reversed in sale_rows:
+        lines.append(
+            StatementLine(
+                id=sale.id,
+                customer_id=sale.credit_customer_id,
+                kind="sale",
+                period=_period(business_date),
+                business_date=business_date,
+                amount=sale.amount,
+                is_reversal=sale.reverses_id is not None,
+                is_reversed=bool(is_reversed),
+                reversal_reason=sale.reversal_reason,
+                shift_id=sale.shift_id,
+                fuel_display_name=fuel_name,
+                quantity=sale.quantity,
+                unit_of_measure=unit,
+                vehicle_number=sale.vehicle_number,
+                mode=None,
+                bank_reference=None,
+                created_at=sale.created_at,
+            )
+        )
+    for repayment, is_reversed in repayment_rows:
+        lines.append(
+            StatementLine(
+                id=repayment.id,
+                customer_id=repayment.credit_customer_id,
+                kind="repayment",
+                period=_period(repayment.business_date),
+                business_date=repayment.business_date,
+                amount=repayment.amount,
+                is_reversal=repayment.reverses_id is not None,
+                is_reversed=bool(is_reversed),
+                reversal_reason=repayment.reversal_reason,
+                shift_id=repayment.shift_id,
+                fuel_display_name=None,
+                quantity=None,
+                unit_of_measure=None,
+                vehicle_number=None,
+                mode=repayment.mode,
+                bank_reference=repayment.bank_reference,
+                created_at=repayment.created_at,
+            )
+        )
+
+    # Oldest first within a customer: a bill reads top to bottom in date order. The opening
+    # balance sorts first on its date, because it is the anchor the rest of the account is
+    # measured from (the ledger's rule, reversed for an oldest-first list).
+    rank = {"opening": 0, "sale": 1, "repayment": 1}
+    lines.sort(
+        key=lambda line: (
+            str(line.customer_id),
+            line.business_date,
+            rank[line.kind],
+            line.created_at,
+            str(line.id),
+        )
+    )
+    truncated = len(lines) > cap
+    return lines[:cap], truncated

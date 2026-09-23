@@ -50,7 +50,12 @@ from sqlalchemy.orm import Session
 
 from app.core.bank_statements import ParsedLine, normalise_narration
 from app.core.config import get_settings
-from app.models.bank import BankSenderAlias, BankTransaction
+from app.models.bank import (
+    BankAccount,
+    BankSenderAlias,
+    BankStatementImport,
+    BankTransaction,
+)
 from app.models.cash import BankDeposit, DailyCashSummary
 from app.models.credit import CreditCustomer, CreditRepayment
 from app.models.shift import Shift
@@ -483,18 +488,17 @@ class CreditReview:
     proposals: tuple[CustomerProposal, ...]
 
 
-def _verify_against_recorded(
+def recorded_candidates(
     db: Session, *, outlet_id: UUID, row: BankTransaction
-) -> tuple[UUID | None, bool]:
-    """Is this statement credit a repayment somebody already typed in? (§13.37)
+) -> list[CreditRepayment]:
+    """Every typed-in repayment this statement credit could be (§13.37).
 
-    Matches on `business_date` + `amount` among bank-transfer repayments with no shift, using
-    `bank_reference` to break a tie when both sides carry one.
+    Bank-transfer repayments with no shift, on the line's date, for the line's amount, not
+    already claimed by a *different* statement line -- a repayment verifies exactly once.
 
-    **An unresolvable tie links nothing.** Two customers paying the same amount on one day are
-    genuinely indistinguishable, and an arbitrary pick would put a verification tick against
-    the wrong person's ledger. A wrong tick is worse than a missing one, because it stops
-    anybody looking again.
+    Split out of `verify_against_recorded` in Phase 21 so the credit statement can mark every
+    candidate of a tie as `ambiguous`, rather than only learning that *some* tie happened. The
+    query is unchanged; the Bank screen and the statement ask it identically (§13.42).
     """
     candidates = (
         db.execute(
@@ -526,8 +530,19 @@ def _verify_against_recorded(
         .scalars()
         .all()
     )
-    candidates = [row_ for row_ in candidates if row_.id not in claimed]
+    return [row_ for row_ in candidates if row_.id not in claimed]
 
+
+def resolve_candidates(
+    candidates: list[CreditRepayment], *, row: BankTransaction
+) -> tuple[UUID | None, bool]:
+    """Pick the one candidate this line verifies, or report a tie. Pure; no queries.
+
+    **An unresolvable tie links nothing.** Two customers paying the same amount on one day are
+    genuinely indistinguishable, and an arbitrary pick would put a verification tick against
+    the wrong person's ledger. A wrong tick is worse than a missing one, because it stops
+    anybody looking again.
+    """
     if not candidates:
         return None, False
     if len(candidates) == 1:
@@ -545,6 +560,20 @@ def _verify_against_recorded(
         return referenced[0].id, False
 
     return None, True
+
+
+def verify_against_recorded(
+    db: Session, *, outlet_id: UUID, row: BankTransaction
+) -> tuple[UUID | None, bool]:
+    """Is this statement credit a repayment somebody already typed in? (§13.37)
+
+    Matches on `business_date` + `amount` among bank-transfer repayments with no shift, using
+    `bank_reference` to break a tie when both sides carry one. Returns
+    `(verified_repayment_id, ambiguous)`.
+    """
+    return resolve_candidates(
+        recorded_candidates(db, outlet_id=outlet_id, row=row), row=row
+    )
 
 
 def propose_customers(
@@ -628,7 +657,7 @@ def credit_reviews(
         if row.credit_repayment_id is not None:
             verified_id, ambiguous = row.credit_repayment_id, False
         else:
-            verified_id, ambiguous = _verify_against_recorded(
+            verified_id, ambiguous = verify_against_recorded(
                 db, outlet_id=outlet_id, row=row
             )
 
@@ -649,6 +678,109 @@ def credit_reviews(
         )
 
     return reviews
+
+
+# --- the credit statement's bank tick (§13.42, Phase 21) ---------------------
+
+
+class RepaymentBankStatus:
+    """What the bank says about one bank-transfer repayment. Strings, so they serialise as-is.
+
+    `ambiguous` is §13.37's tie: this repayment is one of several identical candidates for one
+    statement line, and nothing is ticked. `not_on_statement` and `no_statement` differ in
+    whether anybody has uploaded a statement covering the date -- "the bank did not see it" and
+    "we have not looked" are different facts, and collapsing them would read an un-uploaded
+    month as a list of missing payments.
+    """
+
+    verified = "verified"
+    ambiguous = "ambiguous"
+    not_on_statement = "not_on_statement"
+    no_statement = "no_statement"
+
+
+def repayment_bank_status(
+    db: Session,
+    *,
+    outlet_id: UUID,
+    repayments: list[tuple[UUID, date]],
+    date_from: date,
+    date_to: date,
+) -> dict[UUID, str]:
+    """The bank's verdict on each `(repayment_id, business_date)` given. Reads only.
+
+    A repayment is `verified` when a statement line is **linked** to it (it was created from
+    that line) **or** when the Bank screen's live match resolves to it. The live half runs
+    `recorded_candidates` / `resolve_candidates` -- the functions `credit_reviews` uses --
+    over every unlinked `udhaar_repayment` line dated in `[date_from, date_to]`, so this screen
+    and the Bank screen give the same answer by construction rather than by agreement (§13.42).
+
+    The caller passes only original (non-reversal) `bank_transfer` rows. A reversal is not a
+    bank credit, and cash, card and UPI have no single line that could verify them -- Paytm
+    settles card and UPI together as one daily credit.
+    """
+    if not repayments:
+        return {}
+
+    ids = [repayment_id for repayment_id, _ in repayments]
+
+    verified: set[UUID] = set(
+        db.execute(
+            sa.select(BankTransaction.credit_repayment_id)
+            .join(BankAccount, BankAccount.id == BankTransaction.bank_account_id)
+            .where(
+                BankAccount.outlet_id == outlet_id,
+                BankTransaction.credit_repayment_id.in_(ids),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    ambiguous: set[UUID] = set()
+
+    unlinked = (
+        db.execute(
+            sa.select(BankTransaction)
+            .join(BankAccount, BankAccount.id == BankTransaction.bank_account_id)
+            .where(
+                BankAccount.outlet_id == outlet_id,
+                BankTransaction.classification == "udhaar_repayment",
+                BankTransaction.credit_repayment_id.is_(None),
+                BankTransaction.txn_date >= date_from,
+                BankTransaction.txn_date <= date_to,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for line in unlinked:
+        candidates = recorded_candidates(db, outlet_id=outlet_id, row=line)
+        verified_id, is_tie = resolve_candidates(candidates, row=line)
+        if verified_id is not None:
+            verified.add(verified_id)
+        elif is_tie:
+            ambiguous.update(candidate.id for candidate in candidates)
+
+    periods = db.execute(
+        sa.select(BankStatementImport.period_from, BankStatementImport.period_to)
+        .join(BankAccount, BankAccount.id == BankStatementImport.bank_account_id)
+        .where(BankAccount.outlet_id == outlet_id)
+    ).all()
+
+    def _covered(day: date) -> bool:
+        return any(start <= day <= end for start, end in periods)
+
+    statuses: dict[UUID, str] = {}
+    for repayment_id, business_date in repayments:
+        if repayment_id in verified:
+            statuses[repayment_id] = RepaymentBankStatus.verified
+        elif repayment_id in ambiguous:
+            statuses[repayment_id] = RepaymentBankStatus.ambiguous
+        elif _covered(business_date):
+            statuses[repayment_id] = RepaymentBankStatus.not_on_statement
+        else:
+            statuses[repayment_id] = RepaymentBankStatus.no_statement
+    return statuses
 
 
 def remember_sender(
