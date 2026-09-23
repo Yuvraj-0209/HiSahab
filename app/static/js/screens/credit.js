@@ -44,6 +44,13 @@ export async function renderCreditHub(container, { session, navigate }) {
       attrs: { type: "button" },
       on: { click: () => navigate("#/credit/repayments") },
     }),
+    // Phase 21. The fortnightly bill, checked before it goes out on the 1st and the 16th.
+    el("button", {
+      className: "btn",
+      text: "Billing statement",
+      attrs: { type: "button" },
+      on: { click: () => navigate("#/credit/statement") },
+    }),
     // Phase 20. The way in to the statement screens, from the tab whose ledger they feed.
     el("button", {
       className: "btn btn-plain",

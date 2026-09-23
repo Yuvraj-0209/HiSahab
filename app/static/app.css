@@ -1735,3 +1735,95 @@ circle.donut-slice {
     border-color: var(--hairline-strong);
   }
 }
+
+/* ==========================================================================
+   12. The billing-period statement (Phase 21) and printing it
+   ========================================================================== */
+
+/* Two date boxes side by side where they fit, stacked on a phone. */
+.statement-dates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--sp-3);
+}
+
+/* The six figures in the order a bill reads. Three across on a laptop, two on a
+ * phone -- content-driven, like `.grid`, rather than a guessed device width. */
+.statement-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: var(--sp-3) var(--sp-4);
+}
+.statement-figure {
+  min-width: 0;
+}
+
+.statement-detail.is-collapsed {
+  display: none;
+}
+
+.print-only {
+  display: none;
+}
+
+/* Printing is a MEDIUM, not a second palette: §12 forbids a theme toggle, and this
+ * is not one -- nothing is persisted, nothing is selectable, and the screen never
+ * shows it. Paper has a white ground, so the tokens are re-pointed for print only.
+ * No `backdrop-filter` survives onto paper (and several print engines rasterise it
+ * badly), so every material goes solid. */
+@media print {
+  :root {
+    --ground: #ffffff;
+    --surface: #ffffff;
+    --surface-raised: #ffffff;
+    --surface-high: #eeeeee;
+    --text-primary: #000000;
+    --text-secondary: #333333;
+    --text-tertiary: #555555;
+    --hairline: #cccccc;
+    --hairline-strong: #999999;
+  }
+  body {
+    background: #ffffff;
+  }
+  .chrome,
+  .tabbar,
+  .toast-stack,
+  .no-print {
+    display: none !important;
+  }
+  .screen {
+    padding: 0;
+    max-width: none;
+  }
+  .print-only {
+    display: block;
+  }
+  .card {
+    background: #ffffff;
+    box-shadow: none;
+    border: 1px solid var(--hairline);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    break-inside: avoid;
+  }
+  /* On paper every customer shows their entries: nobody can tap to expand a page. */
+  .statement-detail.is-collapsed {
+    display: block;
+  }
+  .pill {
+    border: 1px solid var(--hairline-strong);
+    background: #ffffff;
+    color: #000000;
+  }
+  .truncation-notice {
+    background: #ffffff;
+    color: #000000;
+    border: 1px solid var(--hairline-strong);
+  }
+  /* "Print this customer": one card, and nothing about anybody else. */
+  body.print-one .statement-customer:not(.print-target),
+  body.print-one .statement-totals {
+    display: none !important;
+  }
+}

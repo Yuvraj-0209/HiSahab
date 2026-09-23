@@ -48,6 +48,7 @@ import {
 } from "./screens/credit_repayments.js";
 import { renderCreditHub, renderCustomerLedger as renderLedger } from "./screens/credit.js";
 import { renderOpeningBalances } from "./screens/credit_opening_balances.js";
+import { renderCreditStatement } from "./screens/credit_statement.js";
 import {
   renderBankHub,
   renderBankReconciliation,
@@ -325,6 +326,14 @@ function registerRoutes() {
     tab: "credit",
     role: "admin",
   });
+  // Phase 21. The window lives in the query string, like `/summary`'s, so a bill's period
+  // survives a reload and prints from a shareable link.
+  route(
+    "/credit/statement",
+    (_params, query) =>
+      renderCreditStatement(session.shell.screen, { session, navigate }, query),
+    { tab: "credit", role: "manager" },
+  );
   // Phase 20. Inside the Credit tab rather than a seventh one: this feeds the udhaar
   // ledger, and §8 already puts both at the manager floor.
   route("/credit/bank", creditScreen(renderBankHub), { tab: "credit", role: "manager" });
