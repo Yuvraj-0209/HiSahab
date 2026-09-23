@@ -1120,7 +1120,7 @@ That distinction drives every design decision below.
 > `ck_attachments_mime_type_allowed` — which exists so the API can never accept what the
 > database refuses (§5.3) — or building a second storage path for one file type.
 >
-> **`closing_balance` is the column Phase 21 cannot proceed without.** A bank balance exists
+> **`closing_balance` is the column Phase 22 cannot proceed without.** A bank balance exists
 > nowhere else in this schema; `bank_deposits` records flows, never a position.
 
 **`bank_transactions`** — one row per statement line. **Append-only in practice.**
@@ -1566,6 +1566,40 @@ chain**, exactly as a confirmed meter reading re-anchors §4.7's.
   the same outstanding balance and both pass. See §13.13 — this is a known approximation with
   a stated reason, not an omission.
 
+**The statement over a window. Phase 21.** This outlet bills every customer twice a month —
+on the 16th for the 1st–15th, and on the 1st for the rest — and a bill is §6.6's sum cut at two
+dates. For customer *c*, window `[F, T]`, and `D` = today at the outlet (`TZ_DISPLAY`):
+
+```
+owed_before  = Σ credit_opening_balances(as_of_date ≤ T)
+             + Σ credit_sales(date < F) − Σ credit_repayments(date < F)
+udhaar_in    = Σ credit_sales(F ≤ date ≤ T)
+repaid_in    = Σ credit_repayments(F ≤ date ≤ T)
+billed       = owed_before + udhaar_in − repaid_in      ← outstanding as of T: the bill
+udhaar_since = Σ credit_sales(T < date ≤ D)
+paid_since   = Σ credit_repayments(T < date ≤ D)
+owes_today   = outstanding(c)                           ← the definition above, unchanged
+             = billed + udhaar_since − paid_since
+```
+
+- **A sale is dated by its shift's `business_date`** (§6.1); a repayment by its own
+  `business_date`. Never by `created_at` — §4.7 says the day is typed in after the fact.
+- **Every row counts, reversals included**, exactly as in `outstanding`. A reversal carries the
+  original's shift and date (§6.9), so the pair always nets inside one period. Its
+  *replacement* does not: a new udhaar needs an open shift, so a corrected slip lands in the
+  period it was entered in, and a correction made after a bill went out changes what that
+  past period now reads (§13.41).
+- **An opening balance dated inside the window is owed-before, not udhaar.** It is the debt
+  from before this software existed, compressed onto one date; counting it as the period's
+  udhaar would bill years of history as one fortnight's fuel. Hence `as_of_date ≤ T` on the
+  first line rather than `< F`.
+- **`paid_since` is not allocated to any bill.** It is every repayment after `T`, full stop. One
+  payment covering parts of three bills has no honest per-bill answer — the reason Phase 9
+  deleted `credit_sales.is_settled` — so whether *this* bill was cleared is read by a human
+  from `billed` beside `paid_since` (§13.40).
+- **Computed server-side, including the column totals.** A statement is money arithmetic from
+  top to bottom and §14 forbids any of it in the client.
+
 ### 6.7 Expense review flagging
 
 - Threshold is a **config value** (`EXPENSE_REVIEW_THRESHOLD`, default `1000.00`),
@@ -1858,6 +1892,7 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | List expense categories (to fill a dropdown) | ✅ | ✅ | ✅ |
 | List credit customers (to fill a dropdown — **name and vehicles only**, §9) | ✅ | ✅ | ✅ |
 | Read one customer's detail, outstanding balance, or ledger | ❌ | ✅ | ✅ |
+| Read the billing-period credit statement (§6.6) | ❌ | ✅ | ✅ |
 | Record a repayment that arrived at the bank, not on a shift (§5.2) | ❌ | ✅ | ✅ |
 | Set or reverse a customer's opening balance (§5.2) | ❌ | ❌ | ✅ |
 | List the outlet roster (to fill a picker — **name and role only**, §13.26) | ❌ | ✅ | ✅ |
@@ -2467,7 +2502,7 @@ ahead — no empty modules for later phases.
     time, and confirmation writes through the Phase 16 endpoint that already exists rather than
     a second path into the same table.
 
-    **Debits are classified by a human, and that is a Phase 21 term arriving early.** A debit is
+    **Debits are classified by a human, and that is a Phase 22 term arriving early.** A debit is
     either a real expense or an IOCL top-up — money moved between the owner's own pockets — and
     the statement cannot tell them apart. `is_expense` defaults to `undecided` and only a person
     sets it (§5.3a).
@@ -2476,16 +2511,43 @@ ahead — no empty modules for later phases.
     `credit_repayments`. Not by discipline but by construction — no other classification has a
     code path to any other table, and a structural test asserts it, because §14's IOCL rule has
     always been a sentence and a sentence is what gets forgotten.
-21. **The profit bridge** — not built here; the destination Phase 20 was shaped for. The owner
+21. **The billing-period statement** — one read endpoint, one screen on the Credit tab, a print
+    stylesheet, and **no migration, no new table, no new column and no new error code.** Like
+    Phases 13, 14 and 19, every figure already exists; the phase is about cutting it at dates.
+
+    This outlet bills every udhaar customer on the **16th** (for the 1st–15th) and on the
+    **1st** (for the 16th to month end). Preparing and checking those bills needs, for any
+    window and every customer: what they owed going in, udhaar issued and repayments received
+    inside it, what the bill should say, what has come in since, and what they owe today. The
+    Credit tab could answer only *"what does each customer owe now"* and *"every line of one
+    account"* — nothing was filtered by date.
+
+    **(a) One endpoint, `GET /credit-customers/statement`, and the grand totals come from it.**
+    §14's rule for dashboards, one tab over: a column total is a sum of money, so it arrives
+    already summed rather than being added in JavaScript.
+
+    **(b) Payments after the bill are shown beside it, never allocated to it.** §6.6 and §13.40.
+    The owner asked to see what was paid after the bill went out; a FIFO allocation was offered
+    and declined as a new business rule this system has never had.
+
+    **(c) The bank tick reuses Phase 20's matcher unchanged.** A statement-created repayment is
+    linked on the row; a hand-typed one is verified only by `(date, amount)` matching, which the
+    Bank screen recomputes on every read. Splitting that function's candidate query out lets
+    this screen ask the same question the same way, so the two can never disagree (§13.42).
+
+    **(d) It is also the as-of-date outstanding Phase 22 needs.** `billed` is exactly
+    `outstanding as of T`, which is why this phase comes before the profit bridge rather than
+    after it.
+22. **The profit bridge** — not built here; the destination Phase 20 was shaped for. The owner
     verifies profit by proving where the money physically went between two dates: gross margin,
     less cash **and bank** expenses, must equal the movement in five buckets — cash in hand,
     bank balance, stock, credit outstanding, and **the IOCL balance**, which is a bucket and
     never a cost (§12). Four known plus the profit makes the fifth solvable, so the bridge
     reports what the IOCL balance *should* have done and the owner checks the portal.
 
-    Phase 20 supplies bank balance and bank expenses. Still to build: stock and IOCL balances
-    typed per period, and an **as-of-date** outstanding — `outstanding()` has no date filter
-    today and `credit_sales` has no date column, reaching one only through its shift.
+    Phase 20 supplies bank balance and bank expenses, and Phase 21 the **as-of-date**
+    outstanding (the statement's `billed` column, §6.6). Still to build: stock and IOCL
+    balances typed per period.
 
 ---
 
@@ -2537,7 +2599,7 @@ and ask.
   > imported period are stored on the import row.
   >
   > **Still out of scope:** the IOCL/PAD ledger itself. Nothing polls or parses IOCL, and
-  > the CCA balances above are **typed by a human from the portal** when Phase 21 needs
+  > the CCA balances above are **typed by a human from the portal** when Phase 22 needs
   > them. A statement debit paid to IOCL is *classified as such and left alone* — it
   > produces no row anywhere else, which is how the rule one paragraph up stays true by
   > construction rather than by discipline.
@@ -3037,6 +3099,34 @@ future reader must be able to tell the difference.
     The direction of the failure is the point: an unclassified line is visible work, a
     misclassified one is invisible error. §4.7's principle, applied to a parser. §5.3a
 
+40. **Whether a particular bill was paid is a human judgement, not a figure.** Phase 21. The
+    statement shows `billed` beside `paid_since` and allocates nothing. A ₹10,000 payment
+    against a ₹6,000 bill and a ₹4,000 bill from the fortnight before has no single honest
+    split, and any rule — oldest first, newest first, pro rata — is an invention the owner
+    would then have to trust. The allocation that matters in practice is already correct:
+    `owes_today` is §6.6's sum and needs none. Revisit only if the owner starts asking
+    "which bills are open" rather than "what is owed". §5.2, §6.6
+
+41. **A statement is recomputed on every read, so a correction can change a bill already
+    sent.** Phase 21. A reversal carries its original's shift and `business_date` (§6.9), so
+    cancelling a 10 September slip on 18 September lowers the **1–15** figures — the period
+    whose bill went out on the 16th. And the corrected *replacement* slip, if any, needs an open
+    shift, so it lands in the **16–30** period. Both periods are right as sums; neither matches
+    the paper that was sent.
+
+    Storing each bill as it was issued would fix this and is not built: it is a snapshot table
+    in the shape of `daily_cash_summaries`, plus an "issue this bill" act nobody performs in the
+    app today. The statement shows both lines of a reversal tagged as cancelled so the change
+    is visible rather than silent. Revisit if the owner starts reconciling against bills he has
+    already sent rather than preparing the next one. §5.2, §6.6, §6.9
+
+42. **The statement's bank tick is partly computed on every read.** Phase 21. A repayment
+    created from a statement line is linked on the row; a hand-typed one is verified by the
+    Bank screen's live `(date, amount)` match, and nothing stores that answer. The statement
+    runs the same match rather than a copy of it, so the two screens agree — at the cost of
+    one query per unlinked statement line in the window. Two identical payments on one day
+    are marked `ambiguous` and ticked neither, §13.37's rule unchanged. §5.3a, §13.37
+
 ---
 
 ## 14. Guardrails for Claude Code
@@ -3348,16 +3438,30 @@ to occur on this specific project.
   default is `undecided` so that "nobody has looked" stays distinguishable from "somebody
   decided it is not a cost". A period total must report the undecided count rather than
   treating it as nil: §6.8's zero-as-an-answer rule, one table further out (§5.3a)
-- **Treat the IOCL balance as a cost, or invert its sign.** Phases 20–21. Money sent to IOCL
+- **Treat the IOCL balance as a cost, or invert its sign.** Phases 20–22. Money sent to IOCL
   has not left the business — it sits with them as a float, which is why restocks are paid in
   round figures. In the profit bridge it is a **bucket**, exactly like cash or bank. And the
   portal shows **negative for money IOCL is holding for you**, positive for what you owe:
-  §12's original wording had this backwards and was corrected in Phase 20 (§12, §11 phase 21)
+  §12's original wording had this backwards and was corrected in Phase 20 (§12, §11 phase 22)
 - **Recompute a reconciled day's stored card or UPI total to make a Paytm settlement match.**
   Phase 20. §14 already forbids recomputing a snapshot and §6.5 chains days, so the rewrite
   would not stay local. Read the stored component where the day is reconciled, compute live
   only where there is no snapshot, and say which — §13.20's `source` distinction, unchanged
   (§5.2, §13.20)
+- **Allocate a repayment to a particular bill.** Phase 21. The statement shows `billed` beside
+  `paid_since` and splits nothing: one payment covering parts of three bills has no honest
+  per-bill answer, which is the reason `credit_sales.is_settled` was deleted. An "oldest first"
+  rule looks harmless and is a business rule the owner never agreed to (§6.6, §13.40)
+- **Date a credit sale by `created_at`, or put an in-window opening balance into "udhaar in
+  range".** A sale belongs to its shift's `business_date` (§6.1, §4.7). An opening balance is
+  years of history on one date and belongs in owed-before; billing it as one fortnight's udhaar
+  is wrong by the customer's entire past (§6.6)
+- **Total a statement column in JavaScript.** Phase 21. The per-customer figures and the column
+  totals arrive together from one server pass; adding the rows client-side is money
+  arithmetic, and a total that disagrees with its rows by a paisa is the plausible-but-wrong
+  figure this document opens by warning about (§3 rule 1, §6.6)
+- **Show "owed before: ₹0" for a customer whose opening balance was never entered.** The sum
+  is genuinely `0.00`; the fact is "unknown". Same rule as the Credit hub (§6.8, §14 above)
 - "Improve" the schema mid-implementation without flagging it first
 
 **Do:**
