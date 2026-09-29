@@ -42,7 +42,7 @@
 
 import { el } from "../dom.js";
 import { api, explain } from "../api.js";
-import { format, gapLabel } from "../money.js";
+import { format, varianceLabel } from "../money.js";
 import { todayAtOutlet } from "../time.js";
 import { field, Form } from "../ui/field.js";
 import { openSheet } from "../ui/sheet.js";
@@ -70,7 +70,7 @@ export function termRow(label, value) {
  * (§5.2's stored snapshot), so this is a read, not a recomputation.
  */
 function closingRecap(summary) {
-  const variance = gapLabel(summary.variance, { absent: "not counted" });
+  const variance = varianceLabel(summary.variance);
 
   return el("div", { className: "list" }, [
     el("div", { className: "list-row" }, [

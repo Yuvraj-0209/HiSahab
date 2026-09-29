@@ -547,6 +547,17 @@ function closingSheet(line, saved, context) {
 
   const form = new Form({ closing_reading: closing, testing_quantity: testing });
 
+  // §6.2's meter-reset tick, on the EDIT sheet as well as the first-entry one. The PATCH has
+  // always accepted it, and "Set manual quantity" below only appears once it is set -- so
+  // without it here, a saved reading could never reach the override at all. Found on
+  // 19 Sept 2026, when a wrong chained opening left D1 at 0 L with no way to correct it.
+  // Only sent when it changed, like every other field on this sheet.
+  const meterReset = el("input", {
+    attrs: { type: "checkbox", id: "f-edit-meter-reset", name: "meter_reset_occurred" },
+    className: "field-checkbox",
+  });
+  meterReset.checked = Boolean(saved.meter_reset_occurred);
+
   const submit = el("button", {
     className: "btn btn-primary btn-block",
     text: "Save",
@@ -560,6 +571,9 @@ function closingSheet(line, saved, context) {
       // Only what changed. ReadingUpdate has no nozzle_id and no opening_reading -- §4.7:
       // "a wrong opening is a wrong chain, fixed at its source", never edited here.
       const body = form.changes();
+      if (meterReset.checked !== Boolean(saved.meter_reset_occurred)) {
+        body.meter_reset_occurred = meterReset.checked;
+      }
       if (Object.keys(body).length === 0) {
         sheet.close();
         return;
@@ -622,6 +636,16 @@ function closingSheet(line, saved, context) {
       savedRows(line, saved),
       noSaleBtn,
       ...form.nodes(),
+      el("label", { className: "field row", attrs: { for: "f-edit-meter-reset" } }, [
+        meterReset,
+        el("span", { className: "grow" }, [
+          el("span", { className: "t-body", text: "The meter was repaired or replaced" }),
+          el("p", {
+            className: "t-caption",
+            text: "The reading pair then means nothing. Save, reopen this nozzle, and an admin sets the quantity by hand.",
+          }),
+        ]),
+      ]),
       overrideBtn,
     ]),
     footer: el("div", { style: { padding: "0 1rem 1rem" } }, [submit]),
