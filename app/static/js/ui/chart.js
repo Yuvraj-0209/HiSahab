@@ -32,7 +32,7 @@
 
 import { el, svgEl } from "../dom.js";
 import { businessDate, businessDateShort, businessDateWeekday } from "../time.js";
-import { format, gapLabel } from "../money.js";
+import { format, varianceIsShort, varianceLabel } from "../money.js";
 import { PRESETS, Spring } from "../motion/spring.js";
 
 /**
@@ -283,7 +283,7 @@ function renderDetail(container, day, onSelect) {
     return;
   }
 
-  const variance = gapLabel(day.variance, { absent: "not counted" });
+  const variance = varianceLabel(day.variance);
 
   container.replaceChildren(
     el("div", { className: "chart-detail-head" }, [
@@ -355,9 +355,10 @@ export function varianceStrip(days) {
   days.forEach((day, index) => {
     if (day.variance === null) return;
 
-    // `isNegative` is a string test, not a numeric one -- see money.js. A surplus (negative
-    // variance under §6.4's sign convention) draws upward, a shortage downward.
-    const short = !day.variance.trim().startsWith("-");
+    // A surplus draws upward, a shortage downward. Variance is counted − expected, so a
+    // NEGATIVE one is short -- the opposite of a gap. This line used to test the sign itself
+    // and had it backwards; `varianceIsShort` is now the one place the convention lives.
+    const short = varianceIsShort(day.variance);
     const x = index * 24 + 12;
     const reach = day.alert ? mid - 6 : mid / 2;
 

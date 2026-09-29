@@ -33,7 +33,7 @@
 
 import { el, empty, pill, render } from "../dom.js";
 import { api } from "../api.js";
-import { format, gapLabel } from "../money.js";
+import { format, varianceLabel } from "../money.js";
 import { businessDate } from "../time.js";
 import { salesBars, varianceStrip } from "../ui/chart.js";
 import { errorCard } from "./today.js";
@@ -116,7 +116,7 @@ export async function renderReports(container, { session, navigate }, query = {}
 }
 
 function dayRow(day, navigate) {
-  const variance = gapLabel(day.variance, { absent: "not counted" });
+  const variance = varianceLabel(day.variance);
 
   return el(
     "button",

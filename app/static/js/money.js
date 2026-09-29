@@ -120,6 +120,43 @@ export function gapLabel(value, { absent = "not declared" } = {}) {
 }
 
 /**
+ * Render a day's variance with its meaning attached. **Not `gapLabel`** -- the sign runs the
+ * other way.
+ *
+ *   gap      = accountable − declared   what he should hold minus what he handed over
+ *   variance = counted − expected       what is in the locker minus what should be (§6.4)
+ *
+ * So a positive gap is short and a positive variance is a **surplus**. Every variance in the
+ * app was once labelled with `gapLabel`, and 15 Sept 2026 -- counted ₹455.00 against an
+ * expected −₹1,69,190.75 -- read "₹1,69,645.75 · short" for a locker holding exactly that
+ * much more than the books said. A real shortage would have read "surplus".
+ * `tests/money_assertions.mjs` pins both conventions side by side.
+ *
+ * @returns {{text: string, className: string}}
+ */
+export function varianceLabel(value, { absent = "not counted" } = {}) {
+  if (value === null || value === undefined) {
+    return { text: absent, className: "t-absent" };
+  }
+  if (isZero(value)) {
+    return { text: `${format(value)} · balanced`, className: "" };
+  }
+  if (varianceIsShort(value)) {
+    return { text: `${format(value)} · short`, className: "text-short" };
+  }
+  return { text: `${format(value)} · surplus`, className: "text-surplus" };
+}
+
+/** True when a variance means the locker is short: counted below expected, so negative.
+ *
+ * The one place the variance sign convention lives, so the chart's direction and the label's
+ * word cannot disagree.
+ */
+export function varianceIsShort(value) {
+  return isNegative(value) && !isZero(value);
+}
+
+/**
  * Format a quantity with its unit.
  *
  * §4.5: a quantity is a *measure*, not necessarily a volume. CBG is sold by the kilogram

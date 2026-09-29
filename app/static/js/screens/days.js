@@ -51,7 +51,7 @@
 
 import { el, empty, pill, render } from "../dom.js";
 import { api, ApiError, explain } from "../api.js";
-import { format, gapLabel } from "../money.js";
+import { format, varianceLabel } from "../money.js";
 import { businessDate } from "../time.js";
 import { describeSource } from "../ui/chart.js";
 import { notify } from "../ui/toast.js";
@@ -268,7 +268,7 @@ export async function loadDays() {
 /** One row in a day list. Used by this screen and by the Cash hub's "Trading days". */
 export function dayRow(day, { me, navigate, unblocked }) {
   const state = dayState(day, { role: me.role, unblocked });
-  const variance = gapLabel(day.summary?.variance ?? null, { absent: "not counted" });
+  const variance = varianceLabel(day.summary?.variance ?? null);
 
   return el(
     "button",
@@ -675,7 +675,7 @@ function row(label, value, { absent = "—" } = {}) {
 }
 
 function varianceRow(variance) {
-  const label = gapLabel(variance, { absent: "not counted" });
+  const label = varianceLabel(variance);
 
   return el("div", { className: "list-row" }, [
     el("div", { className: "list-row-main t-body", text: "Variance" }),
