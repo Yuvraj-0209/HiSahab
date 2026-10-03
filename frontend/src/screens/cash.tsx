@@ -38,7 +38,7 @@ export function CashScreen() {
   if (pending || shift.isPending || outstanding.isPending) {
     return (
       <>
-        <ScreenTitle title="Cash" />
+        <ScreenTitle large title="Cash" />
         <Skeleton rows={4} />
       </>
     );
@@ -47,7 +47,7 @@ export function CashScreen() {
   if (failed || !days) {
     return (
       <>
-        <ScreenTitle title="Cash" />
+        <ScreenTitle large title="Cash" />
         <ErrorCard error={failed} onRetry={() => void Promise.all([refetch(), shift.refetch(), outstanding.refetch()])} />
       </>
     );
@@ -64,7 +64,7 @@ export function CashScreen() {
 
   return (
     <>
-      <ScreenTitle title="Cash" subtitle={needsYou.length ? `${needsYou.length} day${needsYou.length === 1 ? "" : "s"} need you` : "Nothing waiting"} />
+      <ScreenTitle large title="Cash" subtitle={needsYou.length ? `${needsYou.length} day${needsYou.length === 1 ? "" : "s"} need you` : "Nothing waiting"} />
       <div className="flex flex-col gap-6">
         <Card>
           {open ? (
@@ -89,7 +89,7 @@ export function CashScreen() {
         </Card>
 
         <section>
-          <SectionLabel>Needs you</SectionLabel>
+          <SectionLabel sticky>Needs you</SectionLabel>
           <div ref={work} className="flex flex-col gap-3">
             {needsYou.length ? (
               needsYou.map((day) => (
@@ -102,7 +102,7 @@ export function CashScreen() {
         </section>
 
         <section>
-          <SectionLabel>Trading days</SectionLabel>
+          <SectionLabel sticky>Trading days</SectionLabel>
           {days.length ? (
             <Card className="py-1 sm:py-1">
               {days.slice(0, RECENT).map((day) => (
@@ -120,7 +120,7 @@ export function CashScreen() {
         </section>
 
         <section>
-          <SectionLabel>Salesman balances</SectionLabel>
+          <SectionLabel sticky>Salesman balances</SectionLabel>
           {owed.length ? (
             <>
               <Card className="py-1 sm:py-1">
@@ -151,7 +151,7 @@ export function CashScreen() {
 
         {/* Deliberately last: this tab is for doing the reconciliation; these look back at it. */}
         <section>
-          <SectionLabel>Look back</SectionLabel>
+          <SectionLabel sticky>Look back</SectionLabel>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <LookBack icon={<FlagIcon size={20} aria-hidden />} label="Flagged expenses" onClick={() => navigate("/expenses/flagged")} />
             <LookBack icon={<ChartBarIcon size={20} aria-hidden />} label="The latest trading week" onClick={() => navigate("/reports")} />
@@ -169,7 +169,7 @@ function LookBack({ icon, label, onClick }: { icon: ReactNode; label: string; on
     <button
       type="button"
       onClick={onClick}
-      className="pressable flex items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
+      className="pressable liftable flex items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
     >
       <span className="text-accent">{icon}</span>
       <span className="grow text-[0.9375rem] text-ink">{label}</span>

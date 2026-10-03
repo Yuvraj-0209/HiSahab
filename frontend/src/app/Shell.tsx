@@ -125,7 +125,7 @@ function TabBar({
         <span
           aria-hidden="true"
           data-placed={placed ? "true" : "false"}
-          className="tab-indicator pointer-events-none absolute top-1.5 bottom-1.5 left-1.5 rounded-full bg-accent-tint"
+          className="tab-indicator pointer-events-none absolute top-1.5 bottom-1.5 left-1.5 rounded-full"
           style={indicator}
         />
         {tabs.map((tab, index) => {

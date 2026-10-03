@@ -54,7 +54,7 @@ export function CreditHubScreen() {
   if (balances.isPending) {
     return (
       <>
-        <ScreenTitle title="Credit" />
+        <ScreenTitle large title="Credit" />
         <Skeleton rows={4} />
       </>
     );
@@ -62,7 +62,7 @@ export function CreditHubScreen() {
   if (balances.isError || !balances.data) {
     return (
       <>
-        <ScreenTitle title="Credit" />
+        <ScreenTitle large title="Credit" />
         <ErrorCard error={balances.error} onRetry={() => void balances.refetch()} />
       </>
     );
@@ -72,7 +72,7 @@ export function CreditHubScreen() {
 
   return (
     <>
-      <ScreenTitle title="Credit" subtitle={`${rows.length} customer${rows.length === 1 ? "" : "s"}`} />
+      <ScreenTitle large title="Credit" subtitle={`${rows.length} customer${rows.length === 1 ? "" : "s"}`} />
       <div className="flex flex-col gap-5">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           <HubLink icon={<HandCoinsIcon size={20} aria-hidden />} label="Record a bank payment" onClick={() => navigate("/credit/repayments")} />
@@ -107,7 +107,7 @@ export function CreditHubScreen() {
                 type="button"
                 data-arrive
                 onClick={(event) => navigate(`/credit/customers/${entry.credit_customer_id}`, { shared: sharedSource(event) })}
-                className="pressable flex w-full items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
+                className="pressable liftable flex w-full items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
               >
                 <span className="min-w-0 grow">
                   <span className="flex items-center gap-2">
@@ -140,7 +140,7 @@ function HubLink({ icon, label, onClick }: { icon: ReactNode; label: string; onC
     <button
       type="button"
       onClick={onClick}
-      className="pressable flex items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3 text-left shadow-1"
+      className="pressable liftable flex items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3 text-left shadow-1"
     >
       <span className="text-accent">{icon}</span>
       <span className="grow text-[0.9375rem] text-ink">{label}</span>
@@ -163,7 +163,7 @@ export function CustomerLedgerScreen() {
     return (
       <>
         <ScreenTitle title="Ledger" />
-        <Skeleton rows={4} />
+        <Skeleton shape="list" rows={4} />
       </>
     );
   }

@@ -79,7 +79,7 @@ export function CreditStatementScreen() {
         <ScreenTitle title="Billing statement" />
         {picker}
         <div className="mt-4">
-          <Skeleton rows={3} />
+          <Skeleton shape="list" rows={3} />
         </div>
       </>
     );

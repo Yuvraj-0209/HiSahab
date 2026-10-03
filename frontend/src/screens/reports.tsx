@@ -44,7 +44,7 @@ export function ReportsScreen() {
     return (
       <>
         <ScreenTitle title="Reports" />
-        <Skeleton rows={4} />
+        <Skeleton shape="figure" rows={4} />
       </>
     );
   }
@@ -181,7 +181,7 @@ export function AlertsScreen() {
                 type="button"
                 data-arrive
                 onClick={(event) => navigate(`/days/${alert.business_date}`, { shared: sharedSource(event) })}
-                className="pressable flex w-full items-center gap-3 rounded-[var(--radius-card)] border border-warning bg-surface px-4 py-3.5 text-left shadow-1"
+                className="pressable liftable flex w-full items-center gap-3 rounded-[var(--radius-card)] border border-warning bg-surface px-4 py-3.5 text-left shadow-1"
               >
                 <div className="min-w-0 grow">
                   <p className="text-[0.9375rem] font-medium text-ink">{ALERT_LABEL[alert.kind] ?? alert.kind}</p>

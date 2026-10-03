@@ -288,7 +288,7 @@ export function DaysScreen() {
     return (
       <>
         <ScreenTitle title="Days" />
-        <Skeleton rows={5} />
+        <Skeleton shape="list" rows={5} />
       </>
     );
   }

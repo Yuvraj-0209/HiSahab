@@ -172,7 +172,7 @@ function NozzleTile({ line, onOpen }: { line: Line; onOpen: () => void }) {
       type="button"
       data-arrive
       onClick={onOpen}
-      className={`pressable flex flex-col items-start gap-2 rounded-[var(--radius-card)] border bg-surface p-3.5 text-left shadow-1 ${
+      className={`pressable liftable flex flex-col items-start gap-2 rounded-[var(--radius-card)] border bg-surface p-3.5 text-left shadow-1 ${
         saved?.requires_review ? "border-warning" : "border-hairline"
       }`}
     >

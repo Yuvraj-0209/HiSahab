@@ -373,6 +373,23 @@ None.
     `finished` (a duplicate `view-transition-name` aborts one silently), plus none under reduced
     motion.
 
+- **Commit 4 — chrome and scroll.**
+  - Large titles on the six tab roots (`ScreenTitle large`), collapsing into the chrome by CSS
+    scroll-driven animations; no JavaScript. Without scroll timelines or under reduced motion the
+    large copy is hidden and the chrome is exactly as before. The chrome's copy stays the `<h1>`.
+  - Charts grow when they come into view (ScrollTrigger, `once`, transforms only).
+  - Sticky group labels (`SectionLabel sticky`) on the Cash hub and the bank screens, with a
+    hairline only while stuck (a scroll-state container query).
+  - Shaped skeletons (`rows`, `list`, `cards`, `figure`) with a transform shimmer; hover lift on
+    standalone clickable cards for fine pointers only; the type ramp's top three steps.
+  - **Two contrast defects found by axe, both real.** The longer pages put a cobalt button
+    under the translucent tab bar, and labels read against it: the active tab fell to 3.8:1
+    (dark) and the muted labels to 4.4:1 (light). The tab indicator is now an opaque mix of
+    accent and ground, and the chrome is 88% / 86% opaque instead of 78% / 74%.
+  - `settle()` now ignores scroll-driven animations, which are "running" for as long as the page
+    exists.
+  - Vitest 72, Playwright 130.
+
 ## Still owed by the owner
 
 - Approval of the front-door copy, and the contact for "Talk to us" (WhatsApp number or email).

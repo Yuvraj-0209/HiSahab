@@ -73,14 +73,14 @@ export function AdminHubScreen() {
   const navigate = useGo();
   return (
     <>
-      <ScreenTitle title="Admin" />
+      <ScreenTitle large title="Admin" />
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
         {SECTIONS.map(({ label, hint, route, Icon }) => (
           <button
             key={route}
             type="button"
             onClick={() => navigate(route)}
-            className="pressable flex items-center gap-3.5 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
+            className="pressable liftable flex items-center gap-3.5 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
           >
             <span className="grid size-10 shrink-0 place-items-center rounded-[var(--radius-control)] bg-accent-tint text-accent">
               <Icon size={20} aria-hidden />

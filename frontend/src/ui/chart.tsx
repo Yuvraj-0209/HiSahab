@@ -19,7 +19,7 @@
  * ## Motion
  *
  * The rail between pages is driven by the spring (interruptible: a second tap mid-turn
- * redirects it). On first view the bars grow from the baseline with GSAP -- `scaleY`, a
+ * redirects it). When they come into view the bars grow from the baseline with GSAP -- `scaleY`, a
  * transform on each bar; the height itself is still the server's string. Two engines, never on
  * the same element (§14). Reduced motion: both simply arrive.
  *
@@ -33,9 +33,17 @@ import type { Schemas } from "../api/types";
 import { format, varianceIsShort, varianceLabel } from "../lib/money";
 import { businessDate, businessDateShort, businessDateWeekday } from "../lib/time";
 import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
+import "../motion/scroll";
 import { PRESETS, Spring } from "../motion/spring";
 
 type RangeDay = Schemas["RangeDayResponse"];
+
+/* Charts grow when they come into view, not when they mount (Phase 24 D4). A chart below the
+ * fold that animates on mount grows where nobody can see it, and is simply there by the time
+ * anyone scrolls to it -- so the motion that says "this is the figure" said it to nobody. Only
+ * transforms move (`scaleY`, `scaleX`, a dash length); the geometry is the server's string
+ * throughout, and a chart already on screen starts at once. */
+const ON_VIEW = "top 92%";
 
 /** What a sales bar needs. The range report's days carry a variance; the summary's trend days
  * do not, and the detail panel simply omits it rather than printing an absent one. */
@@ -84,7 +92,14 @@ export function SalesBars<Day extends BarDay>({ days, onSelect, perPage = 10 }: 
   useMotion(
     (play) =>
       play(() => {
-        gsap.from("[data-bar]", { scaleY: 0, transformOrigin: "50% 100%", duration: DURATION.large, ease: EASE.enter.gsap, stagger: 0.025 });
+        gsap.from("[data-bar]", {
+          scaleY: 0,
+          transformOrigin: "50% 100%",
+          duration: DURATION.large,
+          ease: EASE.enter.gsap,
+          stagger: 0.025,
+          scrollTrigger: { trigger: scope.current, start: ON_VIEW, once: true },
+        });
       }),
     { scope },
   );
@@ -284,7 +299,13 @@ export function Donut({ slices, children }: { slices: Slice[]; children?: ReactN
     (play) => {
       if (!scope.current) return;
       play(() => {
-        gsap.from("[data-slice]", { attr: { "stroke-dasharray": "0 100" }, duration: DURATION.large, ease: EASE.enter.gsap, stagger: 0.07 });
+        gsap.from("[data-slice]", {
+          attr: { "stroke-dasharray": "0 100" },
+          duration: DURATION.large,
+          ease: EASE.enter.gsap,
+          stagger: 0.07,
+          scrollTrigger: { trigger: scope.current, start: ON_VIEW, once: true },
+        });
       });
     },
     { scope },
@@ -345,7 +366,14 @@ export function ShareBars({ rows }: { rows: ShareRow[] }) {
     (play) => {
       if (!scope.current) return;
       play(() => {
-        gsap.from("[data-share]", { scaleX: 0, transformOrigin: "0% 50%", duration: DURATION.large, ease: EASE.enter.gsap, stagger: 0.04 });
+        gsap.from("[data-share]", {
+          scaleX: 0,
+          transformOrigin: "0% 50%",
+          duration: DURATION.large,
+          ease: EASE.enter.gsap,
+          stagger: 0.04,
+          scrollTrigger: { trigger: scope.current, start: ON_VIEW, once: true },
+        });
       });
     },
     { scope },

@@ -79,8 +79,12 @@
   --shadow-3: 0 18px 48px -12px rgb(20 26 44 / 0.28), 0 4px 12px rgb(20 26 44 / 0.08);
 
   /* Translucent chrome. The chrome never moves, so blurring behind it is affordable
-   * (§13.29 forbids the filter only on things that animate). */
-  --chrome: rgb(243 244 246 / 0.78);
+   * (§13.29 forbids the filter only on things that animate).
+   *
+   * 0.88, not Phase 23's 0.78: the labels on the chrome are read against whatever scrolls
+   * beneath it, and at 0.78 a cobalt button passing under the tab bar took muted labels to
+   * 4.4:1 (axe, Phase 24). At 0.88 the worst case is above 5:1 and the glass still shows. */
+  --chrome: rgb(243 244 246 / 0.88);
   --scrim: rgb(14 17 24 / 0.32);
 
   /* Text over the login photograph. The photograph is the same in both palettes, so this is
@@ -144,7 +148,7 @@
     --shadow-2: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 14px 32px -10px rgb(0 0 0 / 0.6);
     --shadow-3: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 24px 60px -12px rgb(0 0 0 / 0.75);
 
-    --chrome: rgb(12 13 15 / 0.74);
+    --chrome: rgb(12 13 15 / 0.86);
     --scrim: rgb(0 0 0 / 0.55);
   }
 }
@@ -192,6 +196,22 @@
   --radius-card: 18px;
   --radius-control: 12px;
   --radius-sheet: 26px;
+
+  /* The type ramp's top three steps (Phase 24 D6), as `text-display`, `text-title` and
+   * `text-headline`. Below these the screens keep their existing sizes; the ramp exists so the
+   * new large titles and hero figures share one scale instead of three guesses. */
+  --text-display: 2.75rem;
+  --text-display--line-height: 1.05;
+  --text-display--letter-spacing: -0.035em;
+  --text-display--font-weight: 650;
+  --text-title: 1.875rem;
+  --text-title--line-height: 1.12;
+  --text-title--letter-spacing: -0.028em;
+  --text-title--font-weight: 650;
+  --text-headline: 1.25rem;
+  --text-headline--line-height: 1.25;
+  --text-headline--letter-spacing: -0.018em;
+  --text-headline--font-weight: 600;
 }
 
 /* ==========================================================================
@@ -328,8 +348,13 @@
   }
 }
 
+/* Opaque, unlike --accent-tint: the tab bar is translucent, so a tinted pill's colour depended on
+ * whatever was scrolled beneath it, and a cobalt button passing under the bar took the active
+ * label to 3.8:1 (axe, Phase 24). Mixed with the ground instead, the label always sits on a known
+ * colour. */
 .tab-indicator {
   will-change: transform;
+  background: color-mix(in srgb, var(--accent) 14%, var(--ground));
 }
 
 .tab-indicator[data-placed="true"] {
@@ -466,6 +491,114 @@ html[data-nav="fade"]::view-transition-new(root) {
 @keyframes vt-fade-in {
   from {
     opacity: 0;
+  }
+}
+
+/* Large titles (Phase 24 D4, chrome.tsx). A tab root shows its name big at the top; scrolling
+ * folds it away while the chrome's compact copy fades in. Both are scroll-driven animations on the
+ * root scroller -- position-linked, so there is nothing to finish and nothing on the main thread.
+ *
+ * Without scroll timelines (or under reduced motion) the large copy is not shown at all and the
+ * compact one is always visible: exactly the chrome as it was. */
+.large-title {
+  display: none;
+}
+
+@supports (animation-timeline: scroll()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .large-title {
+      display: block;
+      transform-origin: 0 100%;
+      animation: large-title-fold linear both;
+      animation-timeline: scroll(root);
+      animation-range: 0 72px;
+    }
+
+    .compact-title.is-collapsible {
+      animation: compact-title-arrive linear both;
+      animation-timeline: scroll(root);
+      animation-range: 44px 80px;
+    }
+  }
+}
+
+@keyframes large-title-fold {
+  to {
+    opacity: 0;
+    transform: translate3d(0, -10px, 0) scale(0.94);
+  }
+}
+
+@keyframes compact-title-arrive {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+}
+
+/* Loading placeholders (Phase 24 D6, primitives.tsx). The shimmer is a soft highlight sliding
+ * across each bar on a pseudo-element: a transform, on the compositor. It loops only while the
+ * data is on its way -- the bar is gone the moment it lands -- and under reduced motion the
+ * accessibility block below stops it, leaving a still placeholder. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-sunken);
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translate3d(-100%, 0, 0);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--surface-raised) 60%, transparent),
+    transparent
+  );
+  animation: skeleton-shimmer 1.4s var(--ease-move) infinite;
+}
+
+@keyframes skeleton-shimmer {
+  to {
+    transform: translate3d(100%, 0, 0);
+  }
+}
+
+/* Hover lift (Phase 24 D6), for clickable cards on devices with a real pointer only -- on a
+ * phone a hover state sticks after a tap and reads as a bug. Transform and shadow; the press
+ * scale from `pressable` still wins while the button is held down. */
+@media (hover: hover) and (pointer: fine) {
+  .liftable {
+    transition:
+      transform var(--dur-small) var(--ease-enter),
+      box-shadow var(--dur-small) var(--ease-enter);
+  }
+  .liftable:hover:not(:active):not(:disabled) {
+    transform: translate3d(0, -1px, 0);
+    box-shadow: var(--shadow-2);
+  }
+}
+
+/* Sticky group labels (Phase 24 D4, primitives.tsx `SectionLabel sticky`). Pinned just under the
+ * chrome on the page's own ground; the hairline appears only while the label is actually stuck,
+ * through a scroll-state container query. Browsers without one simply show no hairline. */
+.section-sticky {
+  position: sticky;
+  top: calc(env(safe-area-inset-top) + 3.5rem);
+  z-index: 10;
+  container-type: scroll-state;
+  background: var(--ground);
+}
+
+.section-sticky-label {
+  transition: box-shadow var(--dur-small) ease;
+}
+
+@container scroll-state(stuck: top) {
+  .section-sticky-label {
+    box-shadow: 0 1px 0 var(--hairline);
   }
 }
 

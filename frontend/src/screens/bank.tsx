@@ -156,7 +156,7 @@ export function BankHubScreen() {
         </div>
 
         <section>
-          <SectionLabel>Imports</SectionLabel>
+          <SectionLabel sticky>Imports</SectionLabel>
           {items.length ? (
             <div ref={list} className="flex flex-col gap-2">
               {items.map((item) => (
@@ -192,7 +192,7 @@ function WayIn({ title, detail, onClick }: { title: string; detail: string; onCl
     <button
       type="button"
       onClick={onClick}
-      className="pressable flex items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
+      className="pressable liftable flex items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
     >
       <span className="min-w-0 grow">
         <span className="block text-[0.9375rem] font-semibold text-ink">{title}</span>
@@ -364,7 +364,7 @@ function AccountCredits({ account, customers, labelled }: { account: Account; cu
   if (credits.isPending || (lines.length > 0 && reconciliation.isPending)) {
     return (
       <section>
-        <SectionLabel>{heading}</SectionLabel>
+        <SectionLabel sticky>{heading}</SectionLabel>
         <Skeleton rows={2} />
       </section>
     );
@@ -372,7 +372,7 @@ function AccountCredits({ account, customers, labelled }: { account: Account; cu
   if (credits.isError || reconciliation.isError) {
     return (
       <section>
-        <SectionLabel>{heading}</SectionLabel>
+        <SectionLabel sticky>{heading}</SectionLabel>
         <ErrorCard
           error={credits.error ?? reconciliation.error}
           onRetry={() => {
@@ -386,7 +386,7 @@ function AccountCredits({ account, customers, labelled }: { account: Account; cu
   if (lines.length === 0) {
     return (
       <section>
-        <SectionLabel>{heading}</SectionLabel>
+        <SectionLabel sticky>{heading}</SectionLabel>
         <Empty>Every incoming udhaar line on this account has been dealt with.</Empty>
       </section>
     );
@@ -478,7 +478,7 @@ function CreditsSection({
 
   return (
     <section>
-      <SectionLabel>{heading}</SectionLabel>
+      <SectionLabel sticky>{heading}</SectionLabel>
       <p className="mb-3 text-[0.875rem] text-ink-muted">
         {recordable.length
           ? `${recordable.length} incoming ${recordable.length === 1 ? "line looks" : "lines look"} like a customer settling up. Nothing is recorded until you tick it.`

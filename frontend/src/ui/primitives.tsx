@@ -81,13 +81,19 @@ export function Card({
 }
 
 /** A small label naming a group of rows inside a screen. A section heading in an app, not a
- * landing-page eyebrow: it is how a reader finds their place in a long day. */
-export function SectionLabel({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return (
-    <h3 className={`mb-2 text-[0.75rem] font-semibold tracking-[0.06em] text-ink-faint uppercase ${className}`}>
+ * landing-page eyebrow: it is how a reader finds their place in a long day.
+ *
+ * `sticky` (Phase 24 D4) pins it under the chrome while its own `<section>` scrolls past, so a
+ * long list always says which group you are reading; it gains a hairline only once it is
+ * actually stuck (a scroll-state container query, where the browser has one). Use it only where
+ * the label's parent is the section it names -- sticky is bounded by the parent. */
+export function SectionLabel({ children, className = "", sticky = false }: { children: ReactNode; className?: string; sticky?: boolean }) {
+  const label = (
+    <h3 className={`${sticky ? "section-sticky-label py-1.5" : "mb-2"} text-[0.75rem] font-semibold tracking-[0.06em] text-ink-faint uppercase ${className}`}>
       {children}
     </h3>
   );
+  return sticky ? <div className="section-sticky mb-1">{label}</div> : label;
 }
 
 /** A labelled value: the shape most reading surfaces take. Figures are tabular. */
@@ -179,13 +185,82 @@ export function ErrorCard({ error, onRetry }: { error: unknown; onRetry?: () => 
   );
 }
 
-/** A loading placeholder in the shape of what is coming, rather than a spinner. */
-export function Skeleton({ rows = 3 }: { rows?: number }) {
+/* --- loading ----------------------------------------------------------------------------- */
+
+/** One placeholder bar. The shimmer is a gradient sliding across it on a pseudo-element -- a
+ * transform, so it runs on the compositor (styles.css `.skeleton`). */
+function Bone({ className = "" }: { className?: string }) {
+  return <div className={`skeleton rounded-[8px] ${className}`} />;
+}
+
+/**
+ * A loading placeholder in the shape of what is coming, rather than a spinner (Phase 24 D6).
+ *
+ * The shape matters more than the shimmer: when the data lands, a placeholder the size of the
+ * real layout means nothing below it jumps. Four shapes cover every screen:
+ *
+ *   rows    stacked cards, the default (Phase 23's shape)
+ *   list    one card of label/value rows: days, a ledger, a statement
+ *   cards   a grid of summary cards with a figure each: Today, the Cash hub
+ *   figure  one large figure over a chart: the Summary
+ */
+export function Skeleton({ rows = 3, shape = "rows" }: { rows?: number; shape?: "rows" | "list" | "cards" | "figure" }) {
+  const items = Array.from({ length: rows }, (_, index) => index);
+  let body: ReactNode;
+  if (shape === "list") {
+    body = (
+      <div className="rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-1 shadow-1 sm:px-5">
+        {items.map((index) => (
+          <div key={index} className="flex items-center justify-between gap-4 border-b border-hairline py-3.5 last:border-b-0">
+            <div className="flex grow flex-col gap-2">
+              <Bone className="h-3.5 w-28" />
+              <Bone className="h-2.5 w-20" />
+            </div>
+            <Bone className="h-3.5 w-24" />
+          </div>
+        ))}
+      </div>
+    );
+  } else if (shape === "cards") {
+    body = (
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {items.map((index) => (
+          <div key={index} className="flex flex-col gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface p-4 shadow-1 sm:p-5">
+            <Bone className="h-3 w-24" />
+            <Bone className="h-7 w-40" />
+            <Bone className="h-2.5 w-full" />
+            <Bone className="h-2.5 w-3/4" />
+          </div>
+        ))}
+      </div>
+    );
+  } else if (shape === "figure") {
+    body = (
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface p-4 shadow-1 sm:p-5">
+          <Bone className="h-3 w-28" />
+          <Bone className="h-10 w-56" />
+          <Bone className="mt-2 h-40 w-full" />
+        </div>
+        {items.slice(1).map((index) => (
+          <div key={index} className="h-[4.5rem] rounded-[var(--radius-card)] border border-hairline bg-surface p-4 shadow-1">
+            <Bone className="h-3 w-1/3" />
+          </div>
+        ))}
+      </div>
+    );
+  } else {
+    body = (
+      <div className="flex flex-col gap-3">
+        {items.map((index) => (
+          <Bone key={index} className="h-[4.5rem] rounded-[var(--radius-card)]" />
+        ))}
+      </div>
+    );
+  }
   return (
-    <div className="flex flex-col gap-3" aria-busy="true" aria-label="Loading">
-      {Array.from({ length: rows }, (_, index) => (
-        <div key={index} className="h-[4.5rem] animate-pulse rounded-[var(--radius-card)] bg-surface-sunken" />
-      ))}
+    <div aria-busy="true" aria-label="Loading">
+      {body}
     </div>
   );
 }

@@ -41,6 +41,9 @@ async function settle(page: Page) {
         ) &&
         document
           .getAnimations()
+          // Only time-based animations finish. A scroll-driven one (the large titles) is tied to
+          // the scroll position and is "running" for as long as the page exists.
+          .filter((animation) => animation.timeline === document.timeline)
           .every((animation) => animation.playState !== "running" || animation.effect?.getComputedTiming().iterations === Infinity),
     );
   // Twice, half a second apart: the first pass can land while a loading skeleton is on screen,

@@ -56,7 +56,7 @@ export function EntryScreen() {
   if (current.isPending) {
     return (
       <>
-        <ScreenTitle title="Entry" />
+        <ScreenTitle large title="Entry" />
         <Skeleton rows={5} />
       </>
     );
@@ -64,7 +64,7 @@ export function EntryScreen() {
   if (current.isError) {
     return (
       <>
-        <ScreenTitle title="Entry" />
+        <ScreenTitle large title="Entry" />
         <ErrorCard error={current.error} onRetry={() => void current.refetch()} />
       </>
     );
@@ -73,7 +73,7 @@ export function EntryScreen() {
   if (!shift) {
     return (
       <>
-        <ScreenTitle title="Entry" subtitle="No open shift" />
+        <ScreenTitle large title="Entry" subtitle="No open shift" />
         <Card>
           <p className="text-[0.9375rem] text-ink">There is no open shift to type into.</p>
           <div className="mt-4">
@@ -90,7 +90,7 @@ export function EntryScreen() {
 
   return (
     <>
-      <ScreenTitle title="Entry" subtitle={`${businessDate(shift.business_date)} · shift ${shift.sequence}`} />
+      <ScreenTitle large title="Entry" subtitle={`${businessDate(shift.business_date)} · shift ${shift.sequence}`} />
       <div ref={list} className="flex flex-col gap-2.5">
         {lines.map((line) => (
           <button
@@ -98,7 +98,7 @@ export function EntryScreen() {
             type="button"
             data-arrive
             onClick={() => navigate(`/shifts/${shift.id}/${line.path}`)}
-            className="pressable flex w-full items-center gap-4 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
+            className="pressable liftable flex w-full items-center gap-4 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
           >
             <span className="grid size-11 shrink-0 place-items-center rounded-[var(--radius-control)] bg-accent-tint text-accent">
               <line.Icon size={22} aria-hidden />

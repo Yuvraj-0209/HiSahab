@@ -73,7 +73,7 @@ export function AuditLogsScreen() {
         <FilterCard current={filters} onApply={setFilters} failed={logs.error} />
 
         {logs.isPending ? (
-          <Skeleton rows={4} />
+          <Skeleton shape="list" rows={4} />
         ) : logs.isError ? (
           <ErrorCard error={logs.error} onRetry={() => void logs.refetch()} />
         ) : entries.length ? (

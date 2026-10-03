@@ -62,8 +62,8 @@ export function TodayScreen() {
   if (current.isPending) {
     return (
       <>
-        <ScreenTitle title="Today" />
-        <Skeleton rows={4} />
+        <ScreenTitle large title="Today" />
+        <Skeleton shape="cards" rows={4} />
       </>
     );
   }
@@ -72,7 +72,7 @@ export function TodayScreen() {
     // state, explained in words rather than hidden.
     return (
       <>
-        <ScreenTitle title="Today" />
+        <ScreenTitle large title="Today" />
         <ErrorCard error={current.error} onRetry={() => void current.refetch()} />
       </>
     );
@@ -88,15 +88,15 @@ export function ShiftByIdScreen() {
   if (shift.isPending) {
     return (
       <>
-        <ScreenTitle title="Today" subtitle="Loading…" />
-        <Skeleton rows={4} />
+        <ScreenTitle large title="Today" subtitle="Loading…" />
+        <Skeleton shape="cards" rows={4} />
       </>
     );
   }
   if (shift.isError || !shift.data) {
     return (
       <>
-        <ScreenTitle title="Today" />
+        <ScreenTitle large title="Today" />
         <ErrorCard error={shift.error} onRetry={() => void shift.refetch()} />
       </>
     );
@@ -112,7 +112,7 @@ function ShiftDetail({ shift }: { shift: Shift }) {
 
   return (
     <>
-      <ScreenTitle title="Today" subtitle={shiftSubtitle(shift)} />
+      <ScreenTitle large title="Today" subtitle={shiftSubtitle(shift)} />
       <div className="flex flex-col gap-4">
         <ShiftHeader shift={shift} />
         {isManager ? <ShiftFigures shift={shift} /> : null}
@@ -434,7 +434,7 @@ function DomainCard({
         </div>
         <div className="mt-3 flex items-baseline gap-2">
           <span className="text-[1.75rem] leading-none font-semibold tracking-[-0.025em] text-ink">
-            {loading ? <span className="inline-block h-7 w-32 animate-pulse rounded-lg bg-surface-sunken align-middle" /> : figure}
+            {loading ? <span className="skeleton inline-block h-7 w-32 rounded-lg align-middle" /> : figure}
           </span>
           {figureLabel && !loading ? <span className="text-[0.8125rem] text-ink-muted">{figureLabel}</span> : null}
         </div>
@@ -636,7 +636,7 @@ function NoShift() {
 
   return (
     <>
-      <ScreenTitle title="Today" subtitle="No open shift" />
+      <ScreenTitle large title="Today" subtitle="No open shift" />
       <div className="flex flex-col gap-5">
         <Card>
           <p className="text-[1.125rem] font-semibold tracking-[-0.015em] text-ink">No shift is open at this outlet.</p>

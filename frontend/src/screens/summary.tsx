@@ -63,7 +63,7 @@ export function SummaryScreen() {
 
   return (
     <>
-      <ScreenTitle title="Summary" subtitle={subtitle} />
+      <ScreenTitle large title="Summary" subtitle={subtitle} />
       <ScreenActions>
         <Button size="sm" icon={<CalendarDotsIcon size={16} aria-hidden />} onClick={() => setChoosing(true)}>
           Change range
@@ -71,7 +71,7 @@ export function SummaryScreen() {
       </ScreenActions>
 
       {report.isPending ? (
-        <Skeleton rows={5} />
+        <Skeleton shape="figure" rows={5} />
       ) : report.isError || !report.data ? (
         <ErrorCard error={report.error} onRetry={() => void report.refetch()} />
       ) : (
