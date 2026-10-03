@@ -20,13 +20,17 @@ coverage.xml
 # macOS
 .DS_Store
 
-# Node — deploy tooling only (Phase 18).
-# The `railway` package exists solely to evaluate .railway/railway.ts when running
-# `railway config plan/apply` from a developer machine. It is NOT part of the
-# application and NOT part of the build: Railpack detects Python before Node
-# (pyproject.toml wins), so package.json is inert at build time and nothing here is
-# ever served to a browser. CLAUDE.md §2's no-build-step rule for the frontend stands.
+# Node. Two separate package.json files, for two separate reasons:
+#   - the root one is deploy tooling only (Phase 18): the `railway` package evaluates
+#     .railway/railway.ts for `railway config plan/apply`. Nothing in it is served.
+#   - frontend/ is the application's frontend (Phase 23, CLAUDE.md §2), built by Vite.
+# Railpack still detects Python first (pyproject.toml wins); railpack.json adds Node to
+# that build and runs the frontend build inside it.
 node_modules/
+
+# Vite build output. Until Phase 23's cutover it lands in frontend/dist/; after it,
+# in app/static/ -- build output either way, never source.
+frontend/dist/
 
 # Real bank statements -- account numbers, counterparty names, and a month of real
 # transactions. The parser's test fixture is a synthetic file under tests/, never this.

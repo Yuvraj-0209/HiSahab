@@ -272,8 +272,29 @@ None.
 
 *Recorded as each commit lands.*
 
+- **Suite at the start of the phase: 1,741 passed**, 98% coverage. Every module under 100% is a
+  Phase 16 / 20 gap Phase 21's audit already recorded (`bank_statements.py` 87%,
+  `credit_opening_balances.py` 88%, `credit_repayments.py` 92%); nothing new.
 - Commit 0 — `633a1bf`. The idempotency coverage test (3 tests) failed on
   `/bank-transactions/confirm-repayments` alone and passes after a one-line fix to `api.js`.
+- Commit 1 — `c9b7eaf`, the CLAUDE.md amendment.
+- **Commit 2 — the build was proven locally with Railpack itself, not on a Railway
+  environment.** A deviation from D4, and a more conservative one: Railpack is open source, so
+  `railpack build` on this machine runs the exact builder Railway runs, against an export of the
+  git index (what Railway checks out), for `linux/amd64` (what Railway builds for), with no
+  change to any Railway environment. Findings:
+  - A root `railpack.json` with `"packages": {"node": "24"}` and the build step extended by
+    `"..."` keeps Python as the provider and appends `cd frontend && npm ci && npm run build`
+    after `uv sync`.
+  - `npm ci` on Linux resolved the native binaries (Tailwind's engine, Vite's bundler) from a
+    lockfile generated on macOS — the failure mode the spike existed to catch did not occur.
+  - The image's `frontend/dist` assets carry the **same content hashes** as a local build, so
+    the build is deterministic across machines.
+  - Node stays in the runtime image (262 MB total). Trimming it is possible through Railpack's
+    `deploy` section; not worth it yet.
+  - `uv.lock` **is** tracked in git, so Railway installs with `uv sync --locked`. (A note in the
+    working memory said otherwise; it was stale.)
+  - A real Railway deploy is still verification item 6, after cutover.
 
 ## Still owed by the owner
 
