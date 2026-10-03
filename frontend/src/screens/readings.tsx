@@ -33,8 +33,6 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
-import { useGSAP } from "@gsap/react";
-import gsap from "gsap";
 import { AnchorIcon, CheckIcon, XIcon } from "@phosphor-icons/react";
 import { api } from "../api/client";
 import { useApiQuery, useRefreshApi } from "../api/queries";
@@ -45,12 +43,12 @@ import { quantity, reading } from "../lib/money";
 import { satisfies } from "../lib/roles";
 import { reportFailure } from "../ui/feedback";
 import { CheckboxField, TextField, useForm } from "../ui/form";
+import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
 import { useArrival } from "../ui/motion";
 import { Button, Card, Empty, ErrorCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
 
-gsap.registerPlugin(useGSAP);
 
 type Line = Schemas["WorksheetLine"];
 type Saved = Schemas["ReadingResponse"];
@@ -157,15 +155,13 @@ function NozzleTile({ line, onOpen }: { line: Line; onOpen: () => void }) {
   const scope = useRef<HTMLButtonElement>(null);
   const previous = useRef(pill.text);
 
-  useGSAP(
-    () => {
+  useMotion(
+    (play) => {
       if (previous.current === pill.text) return;
       previous.current = pill.text;
-      const mm = gsap.matchMedia();
-      mm.add("(prefers-reduced-motion: no-preference)", () => {
-        gsap.fromTo(scope.current, { scale: 0.96 }, { scale: 1, duration: 0.5, ease: "back.out(2.2)", clearProps: "transform" });
+      play(() => {
+        gsap.fromTo(scope.current, { scale: 0.96 }, { scale: 1, duration: DURATION.medium, ease: EASE.settle.gsap, clearProps: "transform" });
       });
-      return () => mm.revert();
     },
     { dependencies: [pill.text], scope },
   );

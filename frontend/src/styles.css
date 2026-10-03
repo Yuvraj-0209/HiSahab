@@ -89,6 +89,20 @@
   --on-photo-muted: rgb(244 245 248 / 0.78);
 }
 
+/* Motion tokens (Phase 24 D2): the CSS copy of src/motion/gsap.ts's DURATION and EASE, for the
+ * motion CSS does on its own. tests/test_frontend_assets.py holds the two copies equal -- one physics,
+ * whichever engine is moving the element. */
+:root {
+  --dur-tap: 140ms;
+  --dur-small: 240ms;
+  --dur-medium: 420ms;
+  --dur-large: 700ms;
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.55, 0.085, 0.68, 0.53);
+  --ease-move: cubic-bezier(0.645, 0.045, 0.355, 1);
+  --ease-settle: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
@@ -265,7 +279,7 @@
 /* Press feedback belongs on pointer-DOWN (:active), not on release: waiting for `click` is a
  * ~100ms lie that reads as lag. Transform only, so it never re-lays the page out. */
 @utility pressable {
-  transition: transform 140ms cubic-bezier(0.2, 0, 0, 1);
+  transition: transform var(--dur-tap) var(--ease-enter);
   &:active:not(:disabled) {
     transform: scale(0.98);
   }
@@ -304,7 +318,7 @@
  * lingering `transform` would make the screen a containing block for every `position: fixed`
  * element inside it, which is how a sheet ends up pinned to the wrong box. */
 .screen-enter {
-  animation: screen-in 240ms cubic-bezier(0.2, 0, 0, 1) backwards;
+  animation: screen-in var(--dur-small) var(--ease-enter) backwards;
 }
 
 @keyframes screen-in {
@@ -320,8 +334,8 @@
 
 .tab-indicator[data-placed="true"] {
   transition:
-    transform 380ms cubic-bezier(0.215, 0.61, 0.355, 1),
-    opacity 200ms ease;
+    transform var(--dur-medium) var(--ease-enter),
+    opacity var(--dur-small) ease;
 }
 
 /* The sheet is solid, never blurred: it animates `transform` under a finger, and a filter on

@@ -336,6 +336,21 @@ None.
   generated photographs), §13.43 (view-transition fallback), §14 (six guardrails), §15
   (`npm run budget`).
 
+- **Commit 2 — motion foundation.** `src/motion/gsap.ts` (core, tokens, `useMotion`,
+  `motionAllowed`), `scroll.ts`, `flip.ts`, `draw.ts`. The six GSAP users migrated, and with them
+  the six hand-written `matchMedia` gates: `useMotion` passes its callback a `play` function, and
+  only what goes through `play` is gated, so bookkeeping (the previous figure, which dots are new)
+  still runs under reduced motion.
+  - **Deviation:** the token mirror is checked from pytest, not Vitest. Vitest hands a test an
+    empty string for any CSS import, `?raw` included, and reading the file with `node:fs` would
+    need `@types/node`, a new dependency. It sits beside the CSP-equality test, which is the same
+    shape of check.
+  - Two new structural tests: `gsap` imported only from `src/motion/`; no animating module
+    touches `textContent` / `innerText`, and no text-rewriting GSAP plugin is used anywhere.
+  - e2e `settle()` now also waits on `document.getAnimations()` (CSS and view transitions), with
+    infinite animations excluded.
+  - Vitest 65, Playwright 126.
+
 ## Still owed by the owner
 
 - Approval of the front-door copy, and the contact for "Talk to us" (WhatsApp number or email).

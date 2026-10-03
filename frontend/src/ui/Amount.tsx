@@ -13,11 +13,8 @@
  */
 
 import { useRef } from "react";
-import { useGSAP } from "@gsap/react";
-import gsap from "gsap";
 import { format, type Money } from "../lib/money";
-
-gsap.registerPlugin(useGSAP);
+import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
 
 export interface AmountProps {
   value: Money | null | undefined;
@@ -33,8 +30,8 @@ export function Amount({ value, absent, sign = false, className = "" }: AmountPr
   const scope = useRef<HTMLSpanElement>(null);
   const previous = useRef<string | null>(null);
 
-  useGSAP(
-    () => {
+  useMotion(
+    (play) => {
       const before = previous.current;
       previous.current = text;
       if (before === null || before === text || isAbsent) return;
@@ -48,19 +45,17 @@ export function Amount({ value, absent, sign = false, className = "" }: AmountPr
       });
       if (changed.length === 0) return;
 
-      const mm = gsap.matchMedia();
-      mm.add("(prefers-reduced-motion: no-preference)", () => {
+      play(() => {
         gsap.from(changed.reverse(), {
           yPercent: 80,
           opacity: 0,
-          duration: 0.42,
-          ease: "power3.out",
+          duration: DURATION.medium,
+          ease: EASE.enter.gsap,
           stagger: 0.028,
         });
       });
-      return () => mm.revert();
     },
-    { dependencies: [text], scope },
+    { scope, dependencies: [text] },
   );
 
   if (isAbsent) {

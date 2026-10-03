@@ -238,3 +238,86 @@ def test_every_router_is_reachable_from_a_screen() -> None:
     source = "\n".join("\n".join(line for _, line in _code_lines(path)) for path in _modules())
     unreachable = sorted(name for name in routers - exempt if prefixes[name] not in source)
     assert unreachable == [], f"routers no screen calls -- the feature exists in the API and not in the app: {unreachable}"
+
+
+# --- motion (Phase 24) ------------------------------------------------------------------
+
+
+_GSAP_IMPORT = re.compile(r"""(from\s+|import\s*\(\s*)["'](gsap|@gsap/react)(/[^"']*)?["']""")
+_MOTION = _SRC / "motion"
+
+
+def _animating_modules() -> list[pathlib.Path]:
+    """Modules that choreograph with GSAP: the motion module itself, and everything importing
+    one of its GSAP files (the spring and gesture modules are a different engine)."""
+    gsap_files = {"gsap", "scroll", "flip", "draw", "story"}
+    importer = re.compile(r"""from\s+["'][./]*(?:\.\./)*motion/(%s)["']""" % "|".join(gsap_files))
+    return [
+        path
+        for path in _modules()
+        if (path.parent == _MOTION and path.stem in gsap_files)
+        or any(importer.search(line) for _, line in _code_lines(path))
+    ]
+
+
+def test_gsap_is_imported_only_through_the_motion_module() -> None:
+    """§14 (Phase 24): `frontend/src/motion/` applies `prefers-reduced-motion` once, for every
+    animation, and keeps each GSAP plugin in the chunk that uses it. A direct import skips both:
+    the reduced-motion gate becomes something each file has to remember, and a plugin imported
+    from a shared module lands in every chunk that shares it."""
+    offenders = [
+        f"{_name(path)}:{number}: {line.strip()}"
+        for path in _modules()
+        if _MOTION not in path.parents
+        for number, line in _code_lines(path)
+        if _GSAP_IMPORT.search(line)
+    ]
+    assert offenders == [], f"gsap imported outside src/motion/: {offenders}"
+
+
+def test_no_animation_writes_text() -> None:
+    """§14: a money figure is never tweened. Counting ₹0 up to ₹1,23,456 computes rupee values in
+    JavaScript that never existed and shows them; scrambling one shows digits nobody sent.
+
+    `Amount` rolls the *characters of the server's string* as elements React rendered, so no
+    animating module needs to write text at all. The rule is therefore mechanical: a module that
+    animates never touches `textContent` or `innerText`, and the GSAP plugins whose whole job is
+    rewriting text are not used anywhere. (The toast's live region writes `textContent` to be
+    announced, and does not animate with GSAP.)"""
+    animating = _animating_modules()
+    assert any(path.name == "Amount.tsx" for path in animating), "the scan found no animating modules"
+    offenders = [
+        f"{_name(path)}:{number}: {line.strip()}"
+        for path in animating
+        for number, line in _code_lines(path)
+        if "textContent" in line or "innerText" in line
+    ] + [
+        f"{_name(path)}:{number}: {line.strip()}"
+        for path in _modules()
+        for number, line in _code_lines(path)
+        if "ScrambleText" in line or "TextPlugin" in line
+    ]
+    assert offenders == [], f"animation that writes text: {offenders}"
+
+
+def test_the_css_motion_tokens_mirror_the_gsap_ones() -> None:
+    """One physics, two copies (Phase 24 D2). `src/motion/gsap.ts` names every duration and ease
+    GSAP uses; `styles.css` mirrors them as `--dur-*` / `--ease-*` for the motion CSS does on its
+    own (the screen entrance, the tab indicator, view transitions). If the copies drift, a
+    CSS-driven entrance and a GSAP-driven one stop feeling like the same app."""
+    source = (_SRC / "motion" / "gsap.ts").read_text()
+    css = (_SRC / "styles.css").read_text()
+
+    durations = re.findall(r"^\s+(\w+): (\d+\.\d+),$", source.split("export const DURATION", 1)[1].split("} as const", 1)[0], re.M)
+    eases = re.findall(r'^\s+(\w+): \{ gsap: "[^"]+", css: "([^"]+)" \},$', source.split("export const EASE", 1)[1].split("} as const", 1)[0], re.M)
+    assert len(durations) == 4 and len(eases) == 4, (durations, eases)
+
+    def token(name: str) -> str:
+        match = re.search(rf"--{name}:\s*([^;]+);", css)
+        assert match, f"--{name} is not defined in styles.css"
+        return match.group(1).strip()
+
+    for name, seconds in durations:
+        assert token(f"dur-{name}") == f"{round(float(seconds) * 1000)}ms", name
+    for name, curve in eases:
+        assert token(f"ease-{name}") == curve, name

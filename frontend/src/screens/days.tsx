@@ -21,8 +21,6 @@
 
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { useGSAP } from "@gsap/react";
-import gsap from "gsap";
 import { CaretRightIcon } from "@phosphor-icons/react";
 import { api, ApiError } from "../api/client";
 import { useApiQuery, useRefreshApi } from "../api/queries";
@@ -37,12 +35,12 @@ import { Amount } from "../ui/Amount";
 import { describeSource } from "../ui/chart";
 import { reportFailure } from "../ui/feedback";
 import { TextField, useForm } from "../ui/form";
+import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
 import { useArrival } from "../ui/motion";
 import { Button, Card, Empty, ErrorCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
 
-gsap.registerPlugin(useGSAP);
 
 type Summary = Schemas["app__api__v1__daily_summaries__SummaryResponse"];
 type Shift = Schemas["ShiftResponse"];
@@ -84,17 +82,15 @@ export function LifecycleStrip({ state }: { state: DayState }) {
   const scope = useRef<HTMLDivElement>(null);
   const previous = useRef(state.reached);
 
-  useGSAP(
-    () => {
+  useMotion(
+    (play) => {
       const before = previous.current;
       previous.current = state.reached;
       if (state.reached <= before) return;
-      const mm = gsap.matchMedia();
-      mm.add("(prefers-reduced-motion: no-preference)", () => {
+      play(() => {
         const fresh = Array.from(scope.current?.querySelectorAll("[data-step]") ?? []).slice(before, state.reached);
-        gsap.from(fresh, { scale: 0.3, opacity: 0, duration: 0.45, ease: "back.out(2.4)", stagger: 0.08 });
+        gsap.from(fresh, { scale: 0.3, opacity: 0, duration: DURATION.medium, ease: EASE.settle.gsap, stagger: 0.08 });
       });
-      return () => mm.revert();
     },
     { dependencies: [state.reached], scope },
   );

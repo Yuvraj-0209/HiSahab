@@ -23,15 +23,12 @@
  */
 
 import { type FormEvent, useRef, useState } from "react";
-import { useGSAP } from "@gsap/react";
-import gsap from "gsap";
-import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { SignInError, signIn } from "../auth/auth";
+import { DURATION, gsap, useMotion } from "../motion/gsap";
+import "../motion/scroll";
 import { useForm, TextField } from "../ui/form";
 import { Button } from "../ui/primitives";
 import { notify } from "../ui/toast";
-
-gsap.registerPlugin(useGSAP, ScrollTrigger);
 
 const STATEMENTS = [
   {
@@ -65,10 +62,9 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
   const scope = useRef<HTMLDivElement>(null);
   const band = useRef<HTMLDivElement>(null);
 
-  useGSAP(
-    () => {
-      const mm = gsap.matchMedia();
-      mm.add("(prefers-reduced-motion: no-preference)", () => {
+  useMotion(
+    (play) =>
+      play(() => {
         // The photograph moves slower than the page over it.
         gsap.to(band.current, {
           yPercent: -6,
@@ -80,15 +76,13 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
           gsap.from(section.querySelectorAll("[data-reveal]"), {
             opacity: 0,
             y: 28,
-            duration: 0.9,
+            duration: DURATION.large,
             ease: "power3.out",
             stagger: 0.12,
             scrollTrigger: { trigger: section, start: "top 72%", once: true },
           });
         });
-      });
-      return () => mm.revert();
-    },
+      }),
     { scope },
   );
 

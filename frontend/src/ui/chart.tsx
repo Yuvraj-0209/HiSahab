@@ -28,15 +28,12 @@
  */
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { useGSAP } from "@gsap/react";
-import gsap from "gsap";
 import { CaretLeftIcon, CaretRightIcon } from "@phosphor-icons/react";
 import type { Schemas } from "../api/types";
 import { format, varianceIsShort, varianceLabel } from "../lib/money";
 import { businessDate, businessDateShort, businessDateWeekday } from "../lib/time";
+import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
 import { PRESETS, Spring } from "../motion/spring";
-
-gsap.registerPlugin(useGSAP);
 
 type RangeDay = Schemas["RangeDayResponse"];
 
@@ -84,14 +81,11 @@ export function SalesBars<Day extends BarDay>({ days, onSelect, perPage = 10 }: 
   }, []);
 
   // Bars grow from the baseline once, on first view.
-  useGSAP(
-    () => {
-      const mm = gsap.matchMedia();
-      mm.add("(prefers-reduced-motion: no-preference)", () => {
-        gsap.from("[data-bar]", { scaleY: 0, transformOrigin: "50% 100%", duration: 0.6, ease: "power3.out", stagger: 0.025 });
-      });
-      return () => mm.revert();
-    },
+  useMotion(
+    (play) =>
+      play(() => {
+        gsap.from("[data-bar]", { scaleY: 0, transformOrigin: "50% 100%", duration: DURATION.large, ease: EASE.enter.gsap, stagger: 0.025 });
+      }),
     { scope },
   );
 
@@ -286,14 +280,12 @@ export function Donut({ slices, children }: { slices: Slice[]; children?: ReactN
     .map((slice) => ({ ...slice, pct: percentForGeometry(slice.share_pct) }))
     .filter((slice): slice is Slice & { pct: number } => slice.pct !== null && slice.pct > 0);
 
-  useGSAP(
-    () => {
+  useMotion(
+    (play) => {
       if (!scope.current) return;
-      const mm = gsap.matchMedia();
-      mm.add("(prefers-reduced-motion: no-preference)", () => {
-        gsap.from("[data-slice]", { attr: { "stroke-dasharray": "0 100" }, duration: 0.8, ease: "power3.out", stagger: 0.07 });
+      play(() => {
+        gsap.from("[data-slice]", { attr: { "stroke-dasharray": "0 100" }, duration: DURATION.large, ease: EASE.enter.gsap, stagger: 0.07 });
       });
-      return () => mm.revert();
     },
     { scope },
   );
@@ -349,14 +341,12 @@ export interface ShareRow {
  */
 export function ShareBars({ rows }: { rows: ShareRow[] }) {
   const scope = useRef<HTMLDivElement>(null);
-  useGSAP(
-    () => {
+  useMotion(
+    (play) => {
       if (!scope.current) return;
-      const mm = gsap.matchMedia();
-      mm.add("(prefers-reduced-motion: no-preference)", () => {
-        gsap.from("[data-share]", { scaleX: 0, transformOrigin: "0% 50%", duration: 0.6, ease: "power3.out", stagger: 0.04 });
+      play(() => {
+        gsap.from("[data-share]", { scaleX: 0, transformOrigin: "0% 50%", duration: DURATION.large, ease: EASE.enter.gsap, stagger: 0.04 });
       });
-      return () => mm.revert();
     },
     { scope },
   );

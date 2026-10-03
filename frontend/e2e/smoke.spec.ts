@@ -25,7 +25,12 @@ async function watch(page: Page) {
 }
 
 /** Wait for every entrance to finish. Measuring contrast mid-fade measures a blend that no one
- * ever reads, and reports it as a failure. */
+ * ever reads, and reports it as a failure.
+ *
+ * Two kinds of motion to wait for (Phase 24 M3): GSAP's, which runs on its own ticker and is
+ * invisible to the Web Animations API, so it is caught by its effect (opacity not yet 1); and
+ * CSS's -- the screen entrance, view transitions -- which `document.getAnimations()` reports. An
+ * infinite animation (the login photograph's slow drift) never finishes and is not waited on. */
 async function settle(page: Page) {
   const still = () =>
     page.waitForFunction(
@@ -33,7 +38,10 @@ async function settle(page: Page) {
         document.querySelector("[aria-busy='true']") === null &&
         Array.from(document.querySelectorAll<HTMLElement>("main, main *, [data-arrive]")).every(
           (node) => getComputedStyle(node).opacity === "1",
-        ),
+        ) &&
+        document
+          .getAnimations()
+          .every((animation) => animation.playState !== "running" || animation.effect?.getComputedTiming().iterations === Infinity),
     );
   // Twice, half a second apart: the first pass can land while a loading skeleton is on screen,
   // before the data arrives and the real entrance begins.

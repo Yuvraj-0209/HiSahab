@@ -1,8 +1,7 @@
 /* GSAP choreography: the motion that says something changed (Phase 23 D8).
  *
- * Every hook here runs inside `useGSAP` (so React's cleanup reverts it) and inside
- * `gsap.matchMedia()`, so under prefers-reduced-motion it does nothing and content is simply
- * there. Each animates `transform` and `opacity` only -- the two properties the compositor
+ * Every hook here runs through `useMotion` (src/motion/gsap.ts), so React's cleanup reverts it
+ * and under prefers-reduced-motion it does nothing and content is simply there. Each animates `transform` and `opacity` only -- the two properties the compositor
  * handles without laying the page out again, which is the difference between smooth and
  * stuttering on the cheap Android phone this is actually used on.
  *
@@ -18,12 +17,7 @@
  */
 
 import { type RefObject, useRef } from "react";
-import { useGSAP } from "@gsap/react";
-import gsap from "gsap";
-
-gsap.registerPlugin(useGSAP);
-
-const NO_PREFERENCE = "(prefers-reduced-motion: no-preference)";
+import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
 
 /**
  * Stagger the first eight `[data-arrive]` children of `scope` in, the first time `ready`
@@ -31,25 +25,23 @@ const NO_PREFERENCE = "(prefers-reduced-motion: no-preference)";
  */
 export function useArrival(scope: RefObject<HTMLElement | null>, ready: boolean) {
   const done = useRef(false);
-  useGSAP(
-    () => {
+  useMotion(
+    (play) => {
       if (!ready || done.current || !scope.current) return;
       done.current = true;
       const items = Array.from(scope.current.querySelectorAll("[data-arrive]")).slice(0, 8);
       if (items.length === 0) return;
-      const mm = gsap.matchMedia();
-      mm.add(NO_PREFERENCE, () => {
+      play(() => {
         gsap.from(items, {
           opacity: 0,
           y: 10,
-          duration: 0.36,
-          ease: "power2.out",
+          duration: DURATION.medium,
+          ease: EASE.enter.gsap,
           stagger: 0.03,
           clearProps: "transform,opacity",
         });
       });
-      return () => mm.revert();
     },
-    { dependencies: [ready], scope },
+    { scope, dependencies: [ready] },
   );
 }
