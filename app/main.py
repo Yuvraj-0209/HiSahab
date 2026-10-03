@@ -17,11 +17,17 @@ from app.core.config import Settings, get_settings
 from app.core.errors import install_error_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestIdMiddleware
+from app.core.security_headers import SecurityHeaders
 
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings | None = None, *, serve_ui: bool = True) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    serve_ui: bool = True,
+    static_dir: Path | None = None,
+) -> FastAPI:
     """Application factory.
 
     A factory rather than a module-level app so tests can build an instance with
@@ -41,6 +47,10 @@ def create_app(settings: Settings | None = None, *, serve_ui: bool = True) -> Fa
     an explicit parameter rather than something clever with `app.router.default`: the
     ordering constraint is real and a reader should be able to see it in the signature
     (CLAUDE.md §2 -- prefer boring and explicit over clever).
+
+    `static_dir` defaults to `app/static/`, which since Phase 23 is Vite's build output and is
+    gitignored. Tests pass a fixture directory instead, so the mount's behaviour is tested
+    whether or not anybody has run `npm run build`.
     """
     settings = settings or get_settings()
     configure_logging(settings.ENV)
@@ -92,19 +102,26 @@ def create_app(settings: Settings | None = None, *, serve_ui: bool = True) -> Fa
     # /#/shifts/{id}/readings never asks the server for a second document, so there is no SPA
     # fallback rewrite to get wrong.
     #
+    # Phase 23: what is mounted is Vite's build of frontend/, and it is wrapped so every
+    # response it serves carries the Content-Security-Policy header -- the policy moved out of
+    # a <meta> tag, which could not enforce frame-ancestors (app/core/security_headers.py).
+    # The API and /docs are outside the wrapper, deliberately.
+    #
     # Resolved from __file__ rather than the working directory, so `uvicorn app.main:app`
     # serves the same files whatever directory it was started from.
-    static_dir = Path(__file__).parent / "static"
+    static_dir = static_dir or Path(__file__).parent / "static"
     if not serve_ui:
         logger.debug("UI mount skipped at the caller's request")
-    elif static_dir.is_dir():
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="ui")
+    elif (static_dir / "index.html").is_file():
+        app.mount("/", SecurityHeaders(StaticFiles(directory=static_dir, html=True)), name="ui")
     else:
         # Not fatal. The API is useful without the UI, and a wheel installed without package
         # data should still serve data rather than refuse to boot -- but it says so loudly,
-        # because a silently missing frontend looks exactly like a broken deploy.
+        # because a silently missing frontend looks exactly like a broken deploy. Since Phase
+        # 23 the usual cause is that `npm run build` never ran: the directory may exist (a
+        # stray file) while index.html does not, hence the check on the file itself.
         logger.warning(
-            "static directory not found; UI not mounted",
+            "frontend build not found; UI not mounted (run `npm run build` in frontend/)",
             extra={"static_dir": str(static_dir)},
         )
 

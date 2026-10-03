@@ -37,6 +37,7 @@ conversion, not a runtime need, and CLAUDE.md 14 says to ask before adding one.
 macOS `sips` cannot be used: it reads WebP but cannot write it.
 
 The image is stored UNGRADED. The darkening, cool tint and vignette are stacked
-CSS gradients on `.backdrop-grade` (app.css 11), so the grade is tunable without
+CSS gradients on `.login-grade` (frontend/src/styles.css; `.backdrop-grade` in Phase
+12's app.css), so the grade is tunable without
 re-exporting -- and, per 13.29, so that no CSS `filter` ever sits on an element
 carrying an animated transform.

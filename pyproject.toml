@@ -42,27 +42,17 @@ include = ["app*"]
 
 # Phase 12. `packages.find` collects Python packages; the frontend is data files inside one,
 # so without this the wheel installs an `app` package with no `static/` and `create_app`
-# logs "static directory not found" in production while working perfectly from a source
+# logs "frontend build not found" in production while working perfectly from a source
 # checkout. That is a deployment-only failure, which is the worst kind to discover late.
 #
-# Not a build step: no bundler, no transpiler, nothing generated. setuptools copies the
-# files it is told to copy (CLAUDE.md §2, §14).
+# Phase 23: `static/` is Vite's build output (frontend/ -> app/static/), so the list became a
+# glob. A forgotten file can no longer fall outside it; what can go missing now is the BUILD
+# ITSELF, and the deploy configuration runs `npm run build` before anything is packaged
+# (CLAUDE.md §13.28). The licence files travel with the assets -- SIL OFL requires it for the
+# font, and CREDITS.txt is the Adobe Stock provenance for the photograph -- because Vite copies
+# frontend/public/ into the build verbatim.
 [tool.setuptools.package-data]
-# Binary assets are listed explicitly rather than by a broad glob, and CLAUDE.md
-# §13.28 makes keeping this list current a rule: a wheel that silently omits them
-# serves an app that looks correct in dev (where the source tree is on disk) and
-# loses its wordmark and its backdrop in production, with nothing failing anywhere.
-# The licence files travel with the assets -- SIL OFL requires it for the font, and
-# CREDITS.txt is the Adobe Stock provenance for the photograph.
-app = [
-  "static/*.html",
-  "static/*.css",
-  "static/js/**/*.js",
-  "static/fonts/*.woff2",
-  "static/fonts/OFL.txt",
-  "static/img/*.webp",
-  "static/img/CREDITS.txt",
-]
+app = ["static/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,54 +1,57 @@
-"""Structural guarantees over the frontend assets (CLAUDE.md §13.18, §14).
+"""Structural guarantees over the frontend source (CLAUDE.md §13.18, §14).
 
-§13.18 is honest that the JavaScript has no behavioural tests. These are the guarantees
-Python *can* make about it, and they are chosen for one property: **each catches a failure
-that is invisible in the Python suite and total in a browser.**
+Phase 12 wrote these against hand-written ES modules in `app/static/js/`. Phase 23 moved the
+frontend to `frontend/src/` (React + TypeScript, built by Vite) and retargeted every rule that
+still applies. Each catches a failure that is invisible in the Python suite and total, or
+silently wrong, in a browser.
 
-A syntax error in a module is the clearest case. Every Python test still passes -- the server
-serves the file perfectly, with the right content type -- and the application is a blank
-screen. Nothing in the suite before this file would have noticed.
+## What moved elsewhere, and why it is not lost
+
+Three Phase 12 checks existed because nothing compiled the JavaScript: every module parses,
+every module is reachable from the entry point, and every named import resolves to a real
+export. TypeScript now does all three -- `tsc --noEmit` refuses a syntax error and an import
+of something not exported, and Vite only bundles what the entry reaches -- and
+`tests/test_frontend_suite.py` runs the typecheck from pytest. The fourth, "the DOM helper is
+the only place that sets text", described a helper that no longer exists: React sets text, and
+the rule it protected is now `test_no_module_builds_markup_from_a_string` below.
 
 ## Why the checks are written the way they are
 
-Two of them scan source text, which this codebase has learned to be careful about. Phase 10
-recorded a structural test that tripped over the *comment documenting the rule it checked*,
-and concluded "left as a text search, it would have taught the next person to delete the
-comment". So the rules here are stated in **these docstrings**, in Python, and the scanners
-deliberately skip comment lines in the files they read. A rule's explanation must never be
-the thing that breaks its own test.
+They scan source text, which this codebase has learned to be careful about. Phase 10 recorded
+a structural test that tripped over the *comment documenting the rule it checked*, and Phase 12
+found the opposite: a comment describing an endpoint silently satisfied the search for it. So
+the rules are stated in **these docstrings**, and the scanners strip comments from the files
+they read.
 """
 
 from __future__ import annotations
 
 import pathlib
 import re
-import shutil
-import subprocess
 
-import pytest
-
-_STATIC = pathlib.Path(__file__).resolve().parents[1] / "app" / "static"
-_JS = sorted(_STATIC.rglob("*.js"))
-
-_node = shutil.which("node")
+_ROOT = pathlib.Path(__file__).resolve().parents[1]
+_SRC = _ROOT / "frontend" / "src"
 
 
-def _js_modules() -> list[pathlib.Path]:
-    """Discovered by walking the directory, never a hardcoded list.
-
-    The same construction `tests/test_audit_coverage.py` uses, for the same reason: a
-    hardcoded list silently stops covering the file somebody adds next week.
-    """
-    assert _JS, "no JavaScript modules found -- did the static directory move?"
-    return _JS
+def _modules() -> list[pathlib.Path]:
+    """Discovered by walking the directory, never a hardcoded list, so the file somebody adds
+    next week is covered. Tests and the generated API types are not application code."""
+    modules = sorted(
+        path
+        for path in _SRC.rglob("*")
+        if path.suffix in {".ts", ".tsx"}
+        and ".test." not in path.name
+        and path.name != "schema.d.ts"
+    )
+    assert len(modules) > 20, "frontend modules not found -- did frontend/src move?"
+    return modules
 
 
 def _code_lines(path: pathlib.Path) -> list[tuple[int, str]]:
-    """Source lines with comments and block comments stripped.
+    """Source lines with `//` and `/* */` comments stripped (JSX's `{/* */}` included).
 
-    Crude but sufficient, and the crudeness is deliberate: a real JS parser would be a
-    dependency (§14). What matters is that a rule documented in a comment cannot fail the
-    test that enforces it.
+    Crude on purpose: a real TypeScript parser would be a dependency for a check that only has
+    to stop prose from satisfying, or failing, a search.
     """
     out: list[tuple[int, str]] = []
     in_block = False
@@ -68,299 +71,127 @@ def _code_lines(path: pathlib.Path) -> list[tuple[int, str]]:
                 line = before
                 in_block = True
                 break
-        line = re.sub(r"//.*$", "", line)
+        line = re.sub(r"(?<![:\\])//.*$", "", line)
         if line.strip():
             out.append((number, line))
     return out
 
 
-# --- the assets are valid -----------------------------------------------------
+def _name(path: pathlib.Path) -> str:
+    return str(path.relative_to(_ROOT))
 
 
-@pytest.mark.skipif(_node is None, reason="node is not installed; §14 forbids requiring one")
-@pytest.mark.parametrize("path", _js_modules(), ids=lambda p: p.name)
-def test_every_module_parses(path: pathlib.Path) -> None:
-    """A syntax error is a blank page and a green suite.
-
-    `node --check` parses without executing, so this needs no DOM and no dependency. It is
-    the single highest-value check in this file: every other frontend failure at least shows
-    *something*.
-    """
-    result = subprocess.run(
-        [_node, "--check", str(path)], capture_output=True, text=True, timeout=30
-    )
-
-    assert result.returncode == 0, f"{path.name} does not parse:\n{result.stderr}"
-
-
-def test_every_module_is_reachable_from_the_entry_point() -> None:
-    """No orphans: a module nobody imports is dead code that still has to be maintained.
-
-    Walks the import graph from js/main.js the way the browser does, following relative
-    specifiers. Anything under js/ that the walk never reaches is either unused or was meant
-    to be wired up and was forgotten -- and the second case is a feature that silently does
-    not exist.
-    """
-    entry = _STATIC / "js" / "main.js"
-    assert entry.exists()
-
-    seen: set[pathlib.Path] = set()
-    queue = [entry]
-    pattern = re.compile(r"""(?:import|export)[^'"]*?from\s+['"]([^'"]+)['"]""")
-
-    while queue:
-        current = queue.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        for specifier in pattern.findall(current.read_text()):
-            if not specifier.startswith("."):
-                continue  # bare specifiers cannot occur -- see the CDN test below
-            target = (current.parent / specifier).resolve()
-            if target.exists():
-                queue.append(target)
-
-    orphans = sorted(path.name for path in set(_js_modules()) - seen)
-
-    assert orphans == [], f"modules nothing imports: {orphans}"
-
-
-def test_every_named_import_resolves_to_a_real_export() -> None:
-    """The blank-page bug, and the reason `node --check` did not catch it.
-
-    `ui/sheet.js` and `ui/toast.js` both imported `project` from `motion/gesture.js`, where it
-    does not exist -- it is exported by `motion/spring.js`. In ES modules that is a
-    **link-time** error, not a runtime one: the browser refuses the entire module graph, so
-    `main.js` never executes and the page renders as a blank white screen.
-
-    Every test in this file passed. `node --check` parses one file at a time and has no idea
-    what another module exports, the mount served all fifteen files with a 200, and the import
-    graph walk only checked that the *file* existed -- not that the names came out of it.
-
-    This is precisely the gap §13.18 admits to and the reason that section names structural
-    checks as the half that has to be automated: the failure is invisible in Python, total in a
-    browser, and produces no error anywhere a test was looking.
-
-    Parsing is deliberately shallow -- a real JS parser would be a dependency (§14) -- and
-    only handles the two forms this codebase actually uses: `export function/class/const NAME`
-    and `import { a, b as c } from "./x.js"`. Default and namespace imports are not used here;
-    if one ever is, this test skips it rather than guessing.
-    """
-    export_pattern = re.compile(r"^export\s+(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)")
-    import_pattern = re.compile(
-        r"""import\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]""", re.MULTILINE
-    )
-
-    exports: dict[pathlib.Path, set[str]] = {}
-    for path in _js_modules():
-        names = set()
-        for _, line in _code_lines(path):
-            match = export_pattern.match(line.strip())
-            if match:
-                names.add(match.group(1))
-        exports[path.resolve()] = names
-
-    offenders: list[str] = []
-    for path in _js_modules():
-        source = "\n".join(line for _, line in _code_lines(path))
-        for raw_names, specifier in import_pattern.findall(source):
-            if not specifier.startswith("."):
-                continue
-            target = (path.parent / specifier).resolve()
-            if target not in exports:
-                offenders.append(f"{path.name}: imports from missing module {specifier}")
-                continue
-            for entry in raw_names.split(","):
-                name = entry.strip().split(" as ")[0].strip()
-                if not name:
-                    continue
-                if name not in exports[target]:
-                    offenders.append(
-                        f"{path.name}: imports '{name}' from {specifier}, "
-                        f"which does not export it"
-                    )
-
-    assert offenders == [], "broken imports (the whole app fails to load):\n  " + "\n  ".join(
-        offenders
-    )
-
-
-def test_no_module_imports_from_outside_this_origin() -> None:
-    """§14 forbids the npm dependency; a bare or absolute specifier is one by another route.
-
-    Without a bundler a bare specifier (`import x from "motion"`) does not even resolve in a
-    browser, so this is also a correctness check -- but the reason it is enforced rather than
-    left to fail at runtime is §13.19: the session token is readable by script, so a
-    third-party module is a session theft waiting for that host to be compromised.
-    """
-    offenders: list[str] = []
-    pattern = re.compile(r"""(?:import|export)[^'"]*?from\s+['"]([^'"]+)['"]""")
-
-    for path in _js_modules():
-        for number, line in _code_lines(path):
-            for specifier in pattern.findall(line):
-                if not specifier.startswith("."):
-                    offenders.append(f"{path.name}:{number}: {specifier}")
-
-    assert offenders == [], f"non-relative imports: {offenders}"
-
-
-# --- the two rules that produce silently wrong money --------------------------
+# --- the two rules that produce silently wrong money, or a stolen session -----------------
 
 
 def test_no_module_builds_markup_from_a_string() -> None:
-    """§14: never innerHTML on a server-derived value.
+    """§14: never markup from a string, and `dangerouslySetInnerHTML` is that by another name.
 
     Every value this app renders is something a person typed into a database -- a customer
     name, an expense description, a reversal reason. With a script-readable token (§13.19),
-    one of those containing `<img src=x onerror=...>` is a stolen session rather than a
-    cosmetic glitch.
-
-    `textContent` cannot produce an element, so `js/dom.js` routes every node through it and
-    the safe path is also the shortest one to write. This test is what stops the first
-    "just this once" from being a quiet exception.
+    one containing `<img src=x onerror=...>` is a stolen session rather than a cosmetic glitch.
+    React escapes text it renders; these are the ways around that escaping.
     """
-    forbidden = ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write")
-    offenders: list[str] = []
-
-    for path in _js_modules():
-        for number, line in _code_lines(path):
-            for token in forbidden:
-                if token in line:
-                    offenders.append(f"{path.name}:{number}: {line.strip()}")
-
+    forbidden = ("dangerouslySetInnerHTML", "innerHTML", "outerHTML", "insertAdjacentHTML", "document.write")
+    offenders = [
+        f"{_name(path)}:{number}: {line.strip()}"
+        for path in _modules()
+        for number, line in _code_lines(path)
+        if any(token in line for token in forbidden)
+    ]
     assert offenders == [], f"markup built from strings: {offenders}"
 
 
 def test_no_money_value_is_parsed_into_a_float() -> None:
-    """§3 rule 1 does not stop at the API boundary, and §14 now says so explicitly.
+    """§3 rule 1 does not stop at the API boundary.
 
-    JavaScript has no decimal type: `0.1 + 0.2 !== 0.3` there exactly as in Python. Every
-    money figure this app displays -- totals, gaps, outstanding balances, variances -- is
-    already computed server-side and arrives as a **string**, so there is nothing left for
-    the client to add up. `parseFloat` on one is the same bug as `float` in a fixture, one
-    language further out, and it produces a plausible wrong number rather than an error.
-
-    `parseInt` is permitted: `max_upload_bytes` and a cursor limit are counts, not money.
+    JavaScript has no decimal type. Every money figure arrives from the server as a string,
+    already computed, so there is nothing left for the client to add up; `parseFloat` on one
+    produces a plausible wrong number rather than an error.
     """
-    offenders: list[str] = []
-
-    for path in _js_modules():
-        for number, line in _code_lines(path):
-            if "parseFloat" in line:
-                offenders.append(f"{path.name}:{number}: {line.strip()}")
-
+    offenders = [
+        f"{_name(path)}:{number}: {line.strip()}"
+        for path in _modules()
+        for number, line in _code_lines(path)
+        if "parseFloat" in line
+    ]
     assert offenders == [], f"float parsing in the money path: {offenders}"
 
 
 def test_chart_geometry_is_assigned_from_the_server_never_derived() -> None:
-    """The regression Phase 19b was one step away from, pinned (§14, §3 rule 1).
+    """A chart is where client-side maths looks harmless, because the output is a pixel.
 
-    A chart is the one place client-side maths looks harmless, because the output is a pixel
-    rather than a rupee. `bar_height_pct` and `share_pct` exist so it never happens: the
-    server divides in `Decimal` and the client **assigns a string**.
-
-    Paging the chart (Phase 19b) made the temptation concrete -- it would have been easy to
-    re-scale each page to its own tallest bar, which is `value / max` in JavaScript *and* a
-    lie, since every page's tallest bar would then reach 100% and a quiet week would look
-    like a record one.
-
-    So: the only `height`/`width` a chart module may set is one of the server's percentage
-    fields. A literal, a template string doing arithmetic, or a division fails here.
+    `bar_height_pct` and `share_pct` exist so it never happens: the server divides in Decimal
+    and the client assigns a string. Re-scaling a page of bars to its own tallest would be
+    `value / max` in JavaScript and a lie besides -- every page's tallest bar would reach the
+    top. So every inline `height` or `width` in the chart module must be one of those fields.
     """
-    chart = _STATIC / "js" / "ui" / "chart.js"
-    assert chart.exists(), "js/ui/chart.js moved -- update this test"
+    chart = _SRC / "ui" / "chart.tsx"
+    assert chart.exists(), "ui/chart.tsx moved -- update this test"
 
     allowed = ("bar_height_pct", "share_pct")
-    offenders: list[str] = []
+    assignments = [
+        (number, line.strip())
+        for number, line in _code_lines(chart)
+        if re.search(r"\b(height|width)\s*:", line)
+    ]
+    assert assignments, "no inline geometry found -- the scan is not looking at the chart"
+    offenders = [f"chart.tsx:{number}: {line}" for number, line in assignments if not any(name in line for name in allowed)]
+    assert offenders == [], f"chart geometry not assigned from a server percentage: {offenders}"
 
-    for number, line in _code_lines(chart):
-        stripped = line.strip()
-        # Only style assignments are interesting; a CSS class doing layout is fine.
-        if "height:" not in stripped and "width:" not in stripped:
-            continue
-        if any(name in stripped for name in allowed):
-            continue
-        # A bare `height: "100%"`-style constant is layout, not arithmetic -- but anything
-        # with an operator in it is deriving a size and must be justified.
-        if any(operator in stripped for operator in ("/", "*", "+")):
-            offenders.append(f"chart.js:{number}: {stripped}")
-
-    assert offenders == [], (
-        "chart geometry derived in the client rather than assigned from a server-computed "
-        f"percentage: {offenders}"
-    )
+    # The donut's arcs are sized by the server's share too, never by a computed fraction.
+    source = chart.read_text()
+    assert "percentForGeometry(slice.share_pct)" in source
+    assert 'pathLength={100}' in source
 
 
-# --- the rule that produces a silently dead button ----------------------------
+# --- the rule that produces a silently dead button ----------------------------------------
 
 
 def test_no_module_calls_a_secure_context_only_api_unguarded() -> None:
-    """A `[SecureContext]` API is `undefined` over LAN HTTP, and the failure is total.
+    """`crypto.randomUUID` is `[SecureContext]`: undefined over LAN HTTP, and the failure is total.
 
-    `Crypto.randomUUID()` is marked `[SecureContext]` in the Web Crypto spec. `localhost`
-    counts as a secure context and `http://192.168.1.23:8000` does not -- which is exactly
-    how this app is reached from a phone on the local network, and the only way it has ever
-    been tested by hand (§13.18: the behavioural half is checked by a person).
+    `http://192.168.1.23:8000` is how this app is reached from a phone on the local network,
+    and there the property is simply missing: calling it throws inside every Add button's
+    handler, and every money entry in the app is a dead tap with nothing to say why. A desktop
+    on localhost can never reproduce it.
 
-    So the property is simply missing there, and calling it throws a `TypeError`. Every
-    entry screen builds its `Submission` -- which mints §6.10's `Idempotency-Key` -- *before*
-    it calls `openSheet`, so the throw happens inside the click handler and the sheet never
-    opens. Nine screens plus `ui/reversal.js`: every Add button and every Reverse button in
-    the application is a dead tap, with nothing rendered to say why. Nozzle readings were the
-    one entry screen that still worked, because §6.10 makes a reading idempotent by
-    construction and `readings.js` therefore builds no `Submission` at all.
-
-    That is this file's stated criterion in its purest form: invisible in the Python suite,
-    total in a browser. It is also invisible in a *desktop* browser, which is worse -- the
-    developer's own machine is the one place the bug cannot reproduce.
-
-    The rule: `crypto.randomUUID` may be named only in `js/api.js`, and only in a file that
-    also carries a `crypto.getRandomValues` fallback. `getRandomValues` is **not**
-    secure-context-gated, so the fallback is real randomness rather than `Math.random` -- a
-    guessable idempotency key is a replay handed to whoever guesses it.
+    So it may be named only in `api/client.ts`, and only beside a `crypto.getRandomValues`
+    fallback -- which is not secure-context-gated, so the fallback is real randomness rather
+    than `Math.random` (a guessable idempotency key is a replay handed to whoever guesses it).
     """
     offenders: list[str] = []
-
-    for path in _js_modules():
+    for path in _modules():
         source = path.read_text()
         for number, line in _code_lines(path):
             if "crypto.randomUUID" not in line:
                 continue
-            if path.name == "api.js" and "crypto.getRandomValues" in source:
+            if path == _SRC / "api" / "client.ts" and "crypto.getRandomValues" in source and "typeof crypto.randomUUID" in line:
                 continue
-            offenders.append(f"{path.name}:{number}: {line.strip()}")
-
+            offenders.append(f"{_name(path)}:{number}: {line.strip()}")
     assert offenders == [], f"unguarded secure-context API: {offenders}"
 
 
+# --- every feature the API has is reachable from the app ----------------------------------
+
+
 def test_every_router_is_reachable_from_a_screen() -> None:
-    """A Phase 13 router that ships with no way to reach it fails here, not in review.
+    """A router that ships with no way to reach it fails here, not in review.
 
-    **This is the deliverable of Step 13**, and it is the same construction
-    `tests/test_audit_coverage.py` uses for the same reason. Phase 11's notes put it plainly:
-    the audit gap survived seven phases "because nothing failed when it was missing". A screen
-    that was never built is exactly that shape -- the API works, every test passes, and the
-    feature simply does not exist for anybody using the application.
-
-    Routers are discovered by **listing the directory**, never from a hardcoded list, so the
-    module somebody adds next week is covered without anyone remembering to add it here.
-
-    The check is deliberately loose about *how* a screen reaches a router: it looks for the
-    router's URL prefix appearing in an `api.get/post/patch` path anywhere under `js/`. A
-    stricter check would have to parse JavaScript properly, which needs a dependency (§14),
-    and would buy little -- the failure this guards against is a router with *nothing at all*
-    pointing at it, not a subtly wrong path.
+    The same construction as `tests/test_audit_coverage.py`, for the same reason: the audit gap
+    survived seven phases "because nothing failed when it was missing". Routers are discovered
+    by listing the directory, so the module added next week is covered without anyone
+    remembering to add it. The check is deliberately loose about HOW a screen reaches a router
+    -- its URL prefix appearing anywhere in non-comment source -- because the failure it guards
+    against is a router with nothing at all pointing at it.
     """
     routers = {
         path.stem
-        for path in (_STATIC.parent / "api" / "v1").glob("*.py")
+        for path in (_ROOT / "app" / "api" / "v1").glob("*.py")
         if path.stem not in {"__init__", "router"}
     }
     assert routers, "no routers found -- did app/api/v1 move?"
 
-    # Each router's URL prefix, as it appears in a client call. Derived from the module name
-    # where they agree, with the handful of genuine exceptions named.
     prefixes = {
         "health": "/health",
         "me": "/me",
@@ -387,11 +218,8 @@ def test_every_router_is_reachable_from_a_screen() -> None:
         "shortfalls": "shortfall",
         "daily_summaries": "/daily-summaries",
         "audit_logs": "/audit-logs",
-        # Phase 20. The module serves three prefixes -- /bank-accounts,
-        # /bank-statements and /bank-transactions -- and this map takes one, so it takes
-        # the one only this router can satisfy. /bank-accounts would be matched by
-        # bank_deposits.js's "/bank-deposits" under a looser check; "/bank-statements/"
-        # cannot be reached by any other screen.
+        # Serves /bank-accounts, /bank-statements and /bank-transactions; this takes the one
+        # only this router can satisfy.
         "bank_statements": "/bank-statements",
         "reports": "/reports",
         "users": "/users",
@@ -403,46 +231,10 @@ def test_every_router_is_reachable_from_a_screen() -> None:
         "Add the URL prefix, then make sure a screen actually calls it."
     )
 
-    # Routers that legitimately have no screen. Additions need a reason here, not just an
-    # entry -- the same discipline `tests/test_audit_coverage.py` applies to `uploads.py`.
-    #
-    # "health": an operator's liveness probe, not a feature. It answers whether the process
-    #           and Postgres are up, which is a thing a monitor asks and a salesman does not.
-    #           Rendering it would be inventing a screen to satisfy a test.
+    # "health": an operator's liveness probe, not a feature. Rendering it would be inventing a
+    # screen to satisfy a test.
     exempt = {"health"}
 
-    # Comments STRIPPED, and this is not a detail. The first version of this test searched
-    # raw source and passed while the audit-log screen was deliberately broken, because that
-    # module's own docstring says "Phase 11 built `GET /audit-logs`" -- the prose describing
-    # the endpoint satisfied the search for it.
-    #
-    # That is Phase 10's lesson arriving a third time: "left as a text search, it would have
-    # taught the next person to delete the comment." Here it was worse than that -- the
-    # comment did not break the test, it *silently satisfied* it, which is the version that
-    # never gets noticed.
-    source = "\n".join(
-        "\n".join(line for _, line in _code_lines(path)) for path in _js_modules()
-    )
-
-    unreachable = sorted(
-        name for name in routers - exempt if prefixes[name] not in source
-    )
-
-    assert unreachable == [], (
-        "routers no screen calls -- the feature exists in the API and not in the app: "
-        f"{unreachable}"
-    )
-
-
-def test_the_dom_helper_is_the_only_place_that_sets_text() -> None:
-    """A weaker guarantee than it sounds, and worth stating precisely.
-
-    It does not forbid `textContent` elsewhere -- toasts and the nav set it directly, and
-    that is fine because `textContent` is the *safe* operation. What this pins is that
-    `js/dom.js` exists and is the module the others build through, so the innerHTML rule
-    above has one place to be enforced rather than being a convention everybody remembers.
-    """
-    dom = _STATIC / "js" / "dom.js"
-
-    assert dom.exists(), "js/dom.js is where the innerHTML rule is enforced"
-    assert "textContent" in dom.read_text()
+    source = "\n".join("\n".join(line for _, line in _code_lines(path)) for path in _modules())
+    unreachable = sorted(name for name in routers - exempt if prefixes[name] not in source)
+    assert unreachable == [], f"routers no screen calls -- the feature exists in the API and not in the app: {unreachable}"

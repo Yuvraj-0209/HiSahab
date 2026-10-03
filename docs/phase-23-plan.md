@@ -339,6 +339,23 @@ None.
 - Every router in `app/api/v1/` is reached by a call in `frontend/src` (comments excluded), the
   same check `test_every_router_is_reachable_from_a_screen` makes of the old `js/`; the test is
   retargeted at cutover.
+- **Commit 9 (cutover) was verified locally end to end, not yet on Railway.** Railpack built the
+  staged tree for `linux/amd64` with no `app/static` in it; inside the image, `uvicorn
+  app.main:app` imported `app` from `/app/app`, found the build Vite had written there, and
+  served the shell with the Content-Security-Policy header. The non-production Railway deploy
+  (verification item 6) is the step left, and it is the owner's call.
+- The CSP wraps the UI mount, not the app: the API returns JSON, and `/docs` in development loads
+  Swagger UI from a CDN, which a global policy would break. `test_static_mount.py` holds the
+  Python and Vite copies of the policy equal.
+- `create_app` mounts the UI only when `static_dir/index.html` exists, rather than when the
+  directory does: after cutover a stray file or a failed build can leave the directory without
+  a shell, and mounting it would serve 404 at `/` with no warning.
+- Retired, with their replacements: the per-file "every module parses", "reachable from the
+  entry" and "named imports resolve" checks (`tsc --noEmit`, now run from pytest by
+  `test_frontend_suite.py`); `test_motion.py` and the two `.mjs` harnesses (Vitest
+  `spring.test.ts` and `money.test.ts`); "the DOM helper is the only place that sets text"
+  (React escapes text; `dangerouslySetInnerHTML` is banned instead). The suite went from 1,741
+  to 1,697 tests by removing those per-file rows, not by losing a rule.
 
 ## Still owed by the owner
 

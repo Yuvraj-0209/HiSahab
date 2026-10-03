@@ -3,13 +3,15 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-// Phase 23 (CLAUDE.md §2). Until the cutover commit, the build lands in frontend/dist/ and
-// production keeps serving the Phase 12 frontend from app/static/. The cutover changes
-// `outDir` to "../app/static" and nothing else here.
+// Phase 23 (CLAUDE.md §2). The build lands in app/static/, inside the Python package, which
+// FastAPI mounts after every API route. That directory is build output and gitignored;
+// emptyOutDir is explicit because it lies outside this project root, where Vite otherwise
+// refuses to clear it.
 
-/** The production Content-Security-Policy (§13.19). FastAPI sends it as a header in production;
- * `vite preview` sends the same one so the smoke suite runs under the real policy. The dev
- * server deliberately runs without it (HMR injects inline styles). */
+/** The production Content-Security-Policy (§13.19). FastAPI sends it as a header
+ * (app/core/security_headers.py); `vite preview` sends the same one so the smoke suite runs under
+ * the real policy, and tests/test_static_mount.py holds the two equal. The dev server
+ * deliberately runs without it (HMR injects inline styles). */
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "script-src 'self'",
@@ -33,7 +35,7 @@ export default defineConfig({
     headers: { "Content-Security-Policy": CONTENT_SECURITY_POLICY },
   },
   build: {
-    outDir: "dist",
+    outDir: "../app/static",
     emptyOutDir: true,
   },
   test: {

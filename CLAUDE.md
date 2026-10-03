@@ -71,9 +71,10 @@ what stops the mount shadowing `/api/v1`. The mount is a Starlette `Mount` rathe
 `<script type="module">`.~~ **Phase 23 amendment.** The source lives in `frontend/`, with its
 own `package.json` and lockfile, and Vite builds it **into `app/static/`** — which becomes build
 output, gitignored, and still inside the package, so deployment still ships one artefact. The
-mount, its position after `include_router`, and everything above about it are unchanged. Until
-Phase 23's cutover commit, `app/static/` still holds the hand-written Phase 12 frontend and
-Vite builds into `frontend/dist/`.
+mount, its position after `include_router`, and everything above about it are unchanged. The
+mount is wrapped so everything it serves carries the Content-Security-Policy as a **header**
+(`app/core/security_headers.py`); the API and `/docs` sit outside the wrapper. If the build has
+not run, `create_app` logs a warning and serves the API alone.
 
 Routing stays hash-based (`#/shifts/{id}/readings`, now through React Router's
 `createHashRouter`) so a deep link never reaches the server and needs no SPA rewrite, and every

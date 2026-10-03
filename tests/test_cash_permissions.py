@@ -329,8 +329,9 @@ def test_every_reporting_endpoint_is_reached_by_a_screen() -> None:
     way: prose describing an endpoint silently satisfies a raw text search, and that is the
     version of the failure nobody notices.
     """
-    screens = sorted(Path("app/static/js/screens").glob("*.js"))
-    assert screens, "no screens found -- did app/static/js/screens move?"
+    # Phase 23: the screens are frontend/src/screens/*.tsx.
+    screens = sorted(Path("frontend/src/screens").glob("*.tsx"))
+    assert screens, "no screens found -- did frontend/src/screens move?"
 
     source = "\n".join(_strip_comments(path.read_text()) for path in screens)
 

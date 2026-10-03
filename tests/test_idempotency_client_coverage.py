@@ -1,7 +1,8 @@
 """The client sends an Idempotency-Key to every endpoint that asks for one (§6.10).
 
-`app/static/js/api.js` attaches the header only to paths on its `NEEDS_IDEMPOTENCY` list, and
-silently omits it everywhere else. That made the list a second, hand-kept copy of a fact the
+The client attaches the header only to paths on its `NEEDS_IDEMPOTENCY` list, and silently
+omits it everywhere else (Phase 12's `api.js`; since Phase 23, `frontend/src/api/client.ts`,
+which refuses loudly instead of omitting -- but only for paths on the list). That made the list a second, hand-kept copy of a fact the
 server already publishes: every route that requires a key declares an `Idempotency-Key` header
 parameter, so it appears in the OpenAPI document.
 
@@ -22,8 +23,8 @@ import re
 
 from app.main import create_app
 
-_STATIC_JS = pathlib.Path(__file__).resolve().parents[1] / "app" / "static" / "js"
-_API_JS = _STATIC_JS / "api.js"
+_SRC = pathlib.Path(__file__).resolve().parents[1] / "frontend" / "src"
+_CLIENT = _SRC / "api" / "client.ts"
 
 # A path parameter is a UUID everywhere in this API.
 _SAMPLE_ID = "00000000-0000-0000-0000-000000000001"
@@ -54,14 +55,14 @@ def _client_patterns() -> list[re.Pattern[str]]:
     JS regex literals escape `/` as `\\/`; Python needs a bare `/`. Nothing else in these
     patterns differs between the two dialects.
     """
-    source = _API_JS.read_text()
-    block = source.split("const NEEDS_IDEMPOTENCY = [", 1)[1].split("];", 1)[0]
+    source = _CLIENT.read_text()
+    block = source.split("export const NEEDS_IDEMPOTENCY: readonly RegExp[] = [", 1)[1].split("];", 1)[0]
     patterns = []
     for line in block.splitlines():
         match = re.fullmatch(r"\s*/(.+)/,\s*", line)
         if match:
             patterns.append(re.compile(match.group(1).replace(r"\/", "/")))
-    assert patterns, "no patterns parsed out of NEEDS_IDEMPOTENCY -- did api.js change shape?"
+    assert patterns, "no patterns parsed out of NEEDS_IDEMPOTENCY -- did client.ts change shape?"
     return patterns
 
 
@@ -83,7 +84,7 @@ def test_every_json_route_requiring_a_key_is_on_the_clients_list() -> None:
         and not any(pattern.search(_concrete(route)) for pattern in patterns)
     ]
     assert missing == [], (
-        "These endpoints require an Idempotency-Key, but api.js NEEDS_IDEMPOTENCY does not "
+        "These endpoints require an Idempotency-Key, but client.ts NEEDS_IDEMPOTENCY does not "
         f"list them, so request() silently drops the header: {missing}"
     )
 
@@ -91,7 +92,7 @@ def test_every_json_route_requiring_a_key_is_on_the_clients_list() -> None:
 def test_every_multipart_route_requiring_a_key_is_sent_one() -> None:
     """Multipart bypasses `request()` (FormData sets its own boundary), so the key travels in
     `postMultipart`'s `extraHeaders`. The screen that posts it must say so."""
-    sources = {path: path.read_text() for path in _STATIC_JS.rglob("*.js")}
+    sources = {path: path.read_text() for path in _SRC.rglob("*.ts*") if ".test." not in path.name}
     unsent = []
     for route, content_type in sorted(_routes_requiring_a_key().items()):
         if content_type != "multipart/form-data":

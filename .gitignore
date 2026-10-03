@@ -28,9 +28,10 @@ coverage.xml
 # that build and runs the frontend build inside it.
 node_modules/
 
-# Vite build output. Until Phase 23's cutover it lands in frontend/dist/; after it,
-# in app/static/ -- build output either way, never source.
-frontend/dist/
+# Vite build output (Phase 23). `npm run build` in frontend/ writes it into app/static/, inside
+# the package, so the wheel still ships one artefact (CLAUDE.md §2). Build output, never source:
+# the source is frontend/, and the fonts and photograph live in frontend/public/.
+app/static/
 
 # Generated from the committed frontend/src/api/openapi.json on every dev, build and test run
 # (`npm run api:types`), so it can never disagree with the snapshot it came from.

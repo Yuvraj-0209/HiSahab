@@ -11,9 +11,9 @@ error nobody notices until it has put a shortage on the wrong side of somebody's
 
 Two layers, because either alone can pass vacuously:
 
-* `money_assertions.mjs`, run under node where present (the `test_motion.py` exception to
-  §13.18 -- money.js is pure, so nothing is installed), checks the labels themselves.
-* A structural check, which needs no node, refuses any screen passing a variance to
+* `frontend/src/lib/money.test.ts` (Vitest, run from pytest by `test_frontend_suite.py`) checks
+  the labels themselves. Phase 23 moved it there from `money_assertions.mjs`.
+* The structural checks below, which need no Node, refuse any screen passing a variance to
   `gapLabel` -- so the bug cannot come back through a new screen copying an old one.
 """
 
@@ -21,35 +21,16 @@ from __future__ import annotations
 
 import pathlib
 import re
-import shutil
-import subprocess
-
-import pytest
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
-_ASSERTIONS = _ROOT / "tests" / "money_assertions.mjs"
-_JS = _ROOT / "app" / "static" / "js"
-
-_node = shutil.which("node")
-
-
-@pytest.mark.skipif(_node is None, reason="node is not installed; see test_motion.py")
-def test_the_money_label_assertions_pass() -> None:
-    result = subprocess.run(
-        [_node, str(_ASSERTIONS)], capture_output=True, text=True, timeout=60
-    )
-    assert result.returncode == 0, (
-        f"money assertions failed\n\n--- stdout ---\n{result.stdout}\n"
-        f"--- stderr ---\n{result.stderr}"
-    )
-    # Not passing vacuously: the harness reports its own count as its last line.
-    reported = int(result.stdout.strip().split("\n")[-1].split()[0])
-    assert reported >= 8, f"only {reported} assertions ran"
+_SRC = _ROOT / "frontend" / "src"
 
 
 def test_no_screen_labels_a_variance_with_gap_label() -> None:
+    sources = [path for path in _SRC.rglob("*.tsx") if ".test." not in path.name]
+    assert sources, "no screens found -- did frontend/src move?"
     offenders = []
-    for path in sorted(_JS.rglob("*.js")):
+    for path in sorted(sources):
         for number, line in enumerate(path.read_text().splitlines(), start=1):
             if re.search(r"gapLabel\([^)]*variance", line):
                 offenders.append(f"{path.relative_to(_ROOT)}:{number}: {line.strip()}")
@@ -60,10 +41,10 @@ def test_no_screen_labels_a_variance_with_gap_label() -> None:
 
 
 def test_the_variance_chart_does_not_read_the_sign_itself() -> None:
-    """The chart used its own `startsWith("-")` test and called a positive variance short.
+    """The chart once used its own `startsWith("-")` test and called a positive variance short.
 
-    Direction comes from `varianceIsShort` in money.js, the one place the convention lives.
+    Direction comes from `varianceIsShort` in lib/money.ts, the one place the convention lives.
     """
-    chart = (_JS / "ui" / "chart.js").read_text()
+    chart = (_SRC / "ui" / "chart.tsx").read_text()
     assert "variance.trim().startsWith" not in chart
     assert "varianceIsShort(" in chart

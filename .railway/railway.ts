@@ -12,9 +12,9 @@
 // the `railway` package to be evaluated, and the owner granted an explicit exception for
 // it. The exception is narrow and worth stating precisely: it is a DEPLOY-TIME developer
 // tool, it is devDependencies-only, and NOTHING it installs is served to a browser or
-// imported by the application. §14's rule is about the frontend — no framework, no
-// bundler, no build step for the assets in app/static — and that rule is untouched: the
-// browser still loads hand-written ES modules from this origin and nothing is compiled.
+// imported by the application. (Phase 23 later gave the FRONTEND its own npm build, in
+// frontend/ with its own lockfile, run by railpack.json during the build step; that is a
+// separate, owner-approved change to §2 and §14 and does not widen this exception.)
 //
 // The alternative was railway.json, which is deprecated and stops being read on
 // 2026-12-01. Choosing it would have meant doing this migration twice.
