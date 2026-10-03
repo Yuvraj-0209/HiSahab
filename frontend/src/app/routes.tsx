@@ -11,7 +11,7 @@
  */
 
 import { useEffect } from "react";
-import { Navigate, Outlet, type RouteObject, useLocation } from "react-router";
+import { Navigate, Outlet, type RouteObject, useLocation, useParams } from "react-router";
 import { satisfies, type Role } from "../lib/roles";
 import { notify } from "../ui/toast";
 import { Button, Card } from "../ui/primitives";
@@ -51,6 +51,11 @@ function NotFound() {
 
 const tab = (id: RouteHandle["tab"]): RouteHandle => ({ tab: id });
 
+function RedirectToDay() {
+  const { businessDate = "" } = useParams();
+  return <Navigate to={`/days/${businessDate}`} replace />;
+}
+
 /* --- the tabs, one chunk each ---------------------------------------------------------- */
 
 const today = () => import("../screens/today");
@@ -63,6 +68,11 @@ const creditSales = () => import("../screens/credit_sales");
 const creditRepayments = () => import("../screens/credit_repayments");
 const bankDeposits = () => import("../screens/bank_deposits");
 const cashPosition = () => import("../screens/cash_position");
+const cash = () => import("../screens/cash");
+const days = () => import("../screens/days");
+const reports = () => import("../screens/reports");
+const shortfalls = () => import("../screens/shortfalls");
+const flagged = () => import("../screens/flagged_expenses");
 
 export const routes: RouteObject[] = [
   {
@@ -129,6 +139,22 @@ export const routes: RouteObject[] = [
             handle: tab("cash"),
             lazy: () => cashPosition().then((m) => ({ Component: m.CashPositionScreen })),
           },
+          { path: "cash", handle: tab("cash"), lazy: () => cash().then((m) => ({ Component: m.CashScreen })) },
+          { path: "days", handle: tab("cash"), lazy: () => days().then((m) => ({ Component: m.DaysScreen })) },
+          { path: "days/:businessDate", handle: tab("cash"), lazy: () => days().then((m) => ({ Component: m.DayScreen })) },
+          // Phase 15's merge: the old per-day routes redirect, so old links keep working.
+          { path: "daily-summaries", element: <Navigate to="/days" replace /> },
+          { path: "daily-summaries/:businessDate", Component: RedirectToDay },
+          // "/reports/alerts" before "/reports/:businessDate", which would swallow it.
+          { path: "reports", handle: tab("cash"), lazy: () => reports().then((m) => ({ Component: m.ReportsScreen })) },
+          { path: "reports/alerts", handle: tab("cash"), lazy: () => reports().then((m) => ({ Component: m.AlertsScreen })) },
+          { path: "reports/:businessDate", Component: RedirectToDay },
+          {
+            path: "salesmen/:salesmanId/ledger",
+            handle: tab("cash"),
+            lazy: () => shortfalls().then((m) => ({ Component: m.ShortfallLedgerScreen })),
+          },
+          { path: "expenses/flagged", handle: tab("cash"), lazy: () => flagged().then((m) => ({ Component: m.FlaggedExpensesScreen })) },
         ],
       },
 

@@ -76,6 +76,21 @@ export async function signedIn(page: Page, { role = "admin", responses = {} }: M
   return writes;
 }
 
+/** Everything the Cash tab reads, over the three-day scenario in fixtures.ts. */
+export function cashResponses(): Responses {
+  return {
+    ...todayResponses("open"),
+    "GET /shifts": fixture.shiftPage,
+    "GET /daily-summaries": fixture.summaryPage,
+    "GET /reports/range": fixture.rangeReport,
+    "GET /reports/variance-alerts": fixture.alerts,
+    "GET /salesman-shortfalls/outstanding": fixture.shortfallOutstanding,
+    [`GET /salesman-shortfalls/${fixture.SALESMAN_ID}/ledger`]: fixture.shortfallLedger,
+    "GET /expenses/flagged": fixture.flaggedPage,
+    [`GET /reports/daily/${fixture.PREVIOUS_DATE}`]: { ...fixture.dailyReport, business_date: fixture.PREVIOUS_DATE, shifts: [] },
+  };
+}
+
 /** Everything a manager's Today screen reads for an open shift. */
 export function todayResponses(status: "open" | "closed" | "locked" = "open"): Responses {
   const id = fixture.SHIFT_ID;
@@ -89,7 +104,7 @@ export function todayResponses(status: "open" | "closed" | "locked" = "open"): R
     [`GET /shifts/${id}/credit-repayments`]: fixture.repayments,
     [`GET /shifts/${id}/bank-deposits`]: fixture.deposits,
     "GET /credit-customers": fixture.customers,
-    [`GET /reports/daily/${fixture.BUSINESS_DATE}`]: { cash: fixture.dayCash },
+    [`GET /reports/daily/${fixture.BUSINESS_DATE}`]: fixture.dailyReport,
     [`GET /shifts/${id}/readings`]: fixture.worksheet,
     [`GET /shifts/${id}/non-fuel-sales`]: fixture.nonFuelSales,
     [`GET /shifts/${id}/cash-position`]: fixture.cashPosition,

@@ -7,8 +7,8 @@
 
 import { expect, type Page, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { SHIFT_ID, worksheet } from "./fixtures";
-import { Failure, signedIn, todayResponses } from "./mock";
+import { PREVIOUS_DATE, RECONCILED_DATE, SALESMAN_ID, SHIFT_ID, worksheet } from "./fixtures";
+import { cashResponses, Failure, signedIn, todayResponses } from "./mock";
 
 async function watch(page: Page) {
   const problems: string[] = [];
@@ -241,4 +241,76 @@ test("cash position: the gap carries its word, and booking never names the sales
   await expect(sheet).toHaveCount(0);
   expect(writes[0]?.body).toEqual({ amount: "500.00", reason: "Counted twice, still ₹500 short" });
   expect(problems).toEqual([]);
+});
+
+/* --- the Cash tab ----------------------------------------------------------------------- */
+
+for (const [name, path] of [
+  ["cash hub", "/#/cash"],
+  ["days", "/#/days"],
+  ["one day", `/#/days/${PREVIOUS_DATE}`],
+  ["reports", "/#/reports"],
+  ["alerts", "/#/reports/alerts"],
+  ["salesman ledger", `/#/salesmen/${SALESMAN_ID}/ledger`],
+  ["flagged expenses", "/#/expenses/flagged"],
+] as const) {
+  test(`renders: ${name}`, async ({ page }, info) => {
+    const problems = await watch(page);
+    await signedIn(page, { role: "admin", responses: cashResponses() });
+    await page.goto(path);
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await settle(page);
+    await page.screenshot({ path: info.outputPath(`${name.replace(/ /g, "-")}.png`), fullPage: true });
+    await expectAccessible(page);
+    expect(problems).toEqual([]);
+  });
+}
+
+test("cash: only the oldest unreconciled day can be reconciled, and reconciling writes the day", async ({ page }) => {
+  const problems = await watch(page);
+  const writes = await signedIn(page, {
+    role: "manager",
+    responses: { ...cashResponses(), "POST /daily-summaries": { business_date: PREVIOUS_DATE } },
+  });
+  await page.goto("/#/cash");
+  const reconcile = page.getByRole("button", { name: "Reconcile this day" });
+  // One day waits on reconciliation (1 Oct); 30 Sep is reconciled already. Exactly one button.
+  await expect(reconcile).toHaveCount(1);
+  // §6.5's variance is counted − expected: −₹200 is a shortage, and says so in words.
+  await expect(page.getByText("−₹200.00 · short").first()).toBeVisible();
+
+  await reconcile.click();
+  await expect(page).toHaveURL(new RegExp(`#/days/${PREVIOUS_DATE}$`));
+  expect(writes).toEqual([
+    expect.objectContaining({ method: "POST", path: "/daily-summaries", body: { business_date: PREVIOUS_DATE } }),
+  ]);
+  // Naturally idempotent by UNIQUE (outlet_id, business_date): no key (§6.10).
+  expect(writes[0]?.headers["idempotency-key"]).toBeUndefined();
+  expect(problems).toEqual([]);
+});
+
+test("day: a fuel with no commission is unknown, never zero (§13.21)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: cashResponses() });
+  await page.goto(`/#/days/${PREVIOUS_DATE}`);
+  await expect(page.getByText("no commission entered")).toBeVisible();
+  await expect(page.getByText(/no dealer commission has been entered for CBG/)).toBeVisible();
+  // The combined margin is withheld, as a word, rather than a partial total.
+  const marginRow = page.getByText("Gross fuel margin", { exact: true }).locator("xpath=../..");
+  await expect(marginRow.getByText("not known")).toBeVisible();
+});
+
+test("old per-day links still land on the merged day screen (Phase 15)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: cashResponses() });
+  await page.goto(`/#/daily-summaries/${PREVIOUS_DATE}`);
+  await expect(page).toHaveURL(new RegExp(`#/days/${PREVIOUS_DATE}$`));
+  await page.goto(`/#/reports/${RECONCILED_DATE}`);
+  await expect(page).toHaveURL(new RegExp(`#/days/${RECONCILED_DATE}$`));
+});
+
+test("an attendant is turned away from the Cash tab, politely (§8)", async ({ page }) => {
+  await signedIn(page, { role: "attendant", responses: cashResponses() });
+  await page.goto("/#/cash");
+  await expect(page).toHaveURL(/#\/today$/);
+  // The toast, not the screen-reader live region that carries the same words on purpose.
+  await expect(page.getByRole("status").filter({ hasText: "That section is not available for your role." })).toBeVisible();
 });

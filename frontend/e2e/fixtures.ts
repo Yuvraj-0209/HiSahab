@@ -230,3 +230,147 @@ export const cashPosition: Schemas["CashPositionResponse"] = {
   gap_basis: "accountable minus declared",
   margin_basis: "not used",
 };
+
+/* --- the Cash tab: three days in three different states ----------------------------------
+ *   30 Sep  locked, reconciled, counted ₹200 short (§6.5's worked example)
+ *   1 Oct   locked, never reconciled -- the oldest unreconciled day, so the only one offered
+ *           "Reconcile this day" (§6.5)
+ *   2 Oct   still open: entry in progress
+ */
+
+export const PREVIOUS_DATE = "2026-10-01";
+export const RECONCILED_DATE = "2026-09-30";
+
+function lockedShift(id: string, business_date: string): Schemas["ShiftResponse"] {
+  return {
+    ...shift("locked"),
+    id,
+    business_date,
+    started_at: `${business_date}T00:30:00Z`,
+    ended_at: `${business_date}T16:30:00Z`,
+  };
+}
+
+export const shiftPage: Schemas["ShiftPage"] = {
+  items: [shift("open"), lockedShift("shift-oct1", PREVIOUS_DATE), lockedShift("shift-sep30", RECONCILED_DATE)],
+  next_cursor: null,
+};
+
+export const summaryPage: Schemas["SummaryPage"] = {
+  truncated: false,
+  items: [
+    {
+      id: "sum-sep30",
+      business_date: RECONCILED_DATE,
+      opening_balance: "45000.00",
+      opening_balance_source: "carried",
+      metered_fuel_sales: "288410.00",
+      non_fuel_sales_total: "0.00",
+      card_total: "90120.00",
+      upi_total: "160300.00",
+      wallet_total: "0.00",
+      credit_sales_total: "12000.00",
+      card_upi_credit_repayments: "0.00",
+      cash_credit_repayments: "0.00",
+      cash_shortfall_settlements: "0.00",
+      cash_expenses: "1780.00",
+      bank_deposits_total: "0.00",
+      shortfalls_booked: "0.00",
+      expected_closing: "69210.00",
+      actual_counted: "69010.00",
+      variance: "-200.00",
+      variance_basis: "counted minus expected",
+      is_finalised: false,
+      requires_review: false,
+      review_note: null,
+      notes: null,
+    },
+  ],
+};
+
+export const dailyReport: Schemas["DailyReportResponse"] = {
+  business_date: BUSINESS_DATE,
+  cash: dayCash,
+  cash_basis: "computed live: this day has not been reconciled",
+  fuel: [
+    {
+      fuel_type_id: "ft-1", code: "PETROL", display_name: "Petrol", unit_of_measure: "litre", quantity: "2841.370",
+      rate_per_unit: "94.72", sale_value: "269134.57", margin_per_unit: "3.99", gross_fuel_margin: "11337.07",
+      margin_unavailable_reason: null,
+    },
+    {
+      fuel_type_id: "ft-2", code: "CBG", display_name: "CBG", unit_of_measure: "kilogram", quantity: "212.400",
+      rate_per_unit: "86.00", sale_value: "18266.40", margin_per_unit: null, gross_fuel_margin: null,
+      margin_unavailable_reason: "NO_MARGIN_FOR_DATE",
+    },
+  ],
+  fuel_basis: "valued at the rate effective at each shift's start",
+  fuel_sales_total: "287400.97",
+  gross_fuel_margin_total: null,
+  fuels_missing_margin: ["CBG"],
+  profit_basis: "Gross fuel margin on quantity sold, not business profit. It excludes stock revaluation.",
+  quantity_by_unit: { litre: "2841.370", kilogram: "212.400" },
+  expenses_by_category: { TEA: "240.00", MAINTENANCE: "1850.00" },
+  expenses_total: "2090.00",
+  shifts: [{ id: SHIFT_ID, sequence: 1, status: "open", attendant_id: ME_ID, started_at: "2026-10-02T00:30:00Z", ended_at: null }],
+  breakdown_reconciles: null,
+  snapshot_metered_fuel_sales: null,
+};
+
+function rangeDay(business_date: string, extra: Partial<Schemas["RangeDayResponse"]>): Schemas["RangeDayResponse"] {
+  return {
+    business_date, source: "computed", shift_count: 1, is_finalised: false, requires_review: false, alert: false,
+    total_sales: "290000.00", metered_fuel_sales: "290000.00", non_fuel_sales_total: "0.00", expected_closing: null,
+    actual_counted: null, variance: null, unavailable_reason: null, bar_height_pct: "95.00%", ...extra,
+  };
+}
+
+export const rangeReport: Schemas["RangeReportResponse"] = {
+  from: "2026-09-26",
+  to: BUSINESS_DATE,
+  threshold: "100.00",
+  basis: "Snapshot days are read as stored; unreconciled days are computed now and can still move.",
+  days: [
+    rangeDay("2026-09-26", { source: "no_trading", total_sales: null, metered_fuel_sales: null, bar_height_pct: "0.00%", shift_count: 0 }),
+    rangeDay("2026-09-27", { total_sales: "301220.00", bar_height_pct: "99.47%" }),
+    rangeDay("2026-09-28", { total_sales: "276110.00", bar_height_pct: "91.18%" }),
+    rangeDay("2026-09-29", { total_sales: "260004.00", bar_height_pct: "85.86%" }),
+    rangeDay(RECONCILED_DATE, { source: "snapshot", total_sales: "288410.00", bar_height_pct: "95.24%", variance: "-200.00", alert: true, expected_closing: "69210.00", actual_counted: "69010.00" }),
+    rangeDay(PREVIOUS_DATE, { total_sales: "282001.00", bar_height_pct: "93.12%" }),
+    rangeDay(BUSINESS_DATE, { total_sales: "302827.45", bar_height_pct: "100.00%" }),
+  ],
+};
+
+export const alerts: Schemas["AlertsResponse"] = {
+  from: "2026-09-26",
+  to: BUSINESS_DATE,
+  threshold: "100.00",
+  basis: "Every alert is derived from a stored signal on each read.",
+  items: [
+    { kind: "variance_exceeds_threshold", business_date: RECONCILED_DATE, detail: "Counted ₹200.00 below expected.", amount: "-200.00", count: null, shift_id: null },
+    { kind: "day_not_reconciled", business_date: PREVIOUS_DATE, detail: "Every shift is locked and no summary exists.", amount: null, count: null, shift_id: null },
+  ],
+};
+
+export const SALESMAN_ID = "5f6c1a2e-0000-4000-8000-000000000002";
+
+export const shortfallOutstanding: Schemas["OutstandingReport"] = {
+  basis: "booked shortfalls less settlements, reversals included",
+  items: [{ salesman_id: SALESMAN_ID, full_name: "Gurpreet Singh", outstanding: "500.00" }],
+};
+
+export const shortfallLedger: Schemas["app__api__v1__shortfalls__LedgerPage"] = {
+  next_cursor: null,
+  items: [
+    { id: "le-1", kind: "shortfall", amount: "700.00", balance_delta: "700.00", is_reversal: false, created_at: "2026-09-28T17:05:00Z", shift_id: "shift-sep28" },
+    { id: "le-2", kind: "settlement", amount: "200.00", balance_delta: "-200.00", is_reversal: false, created_at: "2026-09-30T06:40:00Z", shift_id: "shift-sep30" },
+  ],
+};
+
+export const flaggedPage: Schemas["FlaggedExpensePage"] = {
+  next_cursor: null,
+  items: [
+    { id: "fx-1", shift_id: "shift-sep30", business_date: RECONCILED_DATE, category_id: "cat-2", category_code: "MAINTENANCE", amount: "600.00", description: "Nozzle hose clamp" },
+    { id: "fx-2", shift_id: "shift-sep30", business_date: RECONCILED_DATE, category_id: "cat-2", category_code: "MAINTENANCE", amount: "650.00", description: "Electrician call-out" },
+  ],
+};
