@@ -33,11 +33,21 @@ explicit code over clever abstractions. Explain non-obvious decisions in comment
 | Database | PostgreSQL (Supabase free tier) |
 | Object storage | Supabase Storage (bucket: `receipts`) |
 | Auth | Supabase Auth (JWT verified server-side) |
-| Frontend | Static HTML/CSS/vanilla JS, served by FastAPI `StaticFiles` |
-| Tests | pytest + httpx `AsyncClient` |
+| Frontend | React 19 + TypeScript + Tailwind v4 + GSAP, built by Vite from `frontend/` into `app/static/`, served by FastAPI `StaticFiles` (Phase 23) |
+| Tests | pytest + httpx `AsyncClient`; Vitest + Testing Library for the frontend (Phase 23) |
 
-**No frontend framework in V1.** No React/Vue/build step. Plain `fetch()` calls.
-Do not introduce npm, Vite, Tailwind, or a bundler without being asked.
+**The frontend is React, built by Vite. Phase 23 amendment, the owner's decision.** This line
+used to read *"No frontend framework in V1. No React/Vue/build step. Plain `fetch()` calls. Do
+not introduce npm, Vite, Tailwind, or a bundler without being asked."* The owner asked: Phase 23
+rebuilds every screen on React, Tailwind and GSAP for an interface that feels premium.
+
+What that rule governed was **how the frontend is built**, never what it may do with money or
+with the session. So everything this document says about the client survives the rebuild word
+for word, because none of it conflicted with a framework: money is a string end to end, the
+`Idempotency-Key` belongs to a submission, `null` is never `0`, an opening reading is confirmed
+and never assumed, a read-only screen carries no write verb, and the CSP stays `'self'` (§14).
+Adding an npm dependency still needs asking — each one is code running in this origin with the
+session token in reach (§13.19).
 
 ### Note on "decoupled" vs `StaticFiles`
 
@@ -57,11 +67,21 @@ artefact rather than two that can drift — and are mounted **after** `include_r
 what stops the mount shadowing `/api/v1`. The mount is a Starlette `Mount` rather than an
 `APIRoute`, so `tests/test_routes.py` neither sees it nor is broken by it.
 
-No bundler, no transpiler, no `package.json`: the browser loads ES modules natively via
-`<script type="module">`, and routing is hash-based (`#/shifts/{id}/readings`) so a deep link
-never reaches the server and needs no SPA rewrite. The mount serving `index.html` is still not
-rendering: FastAPI hands over a file it did not generate, which is the distinction this section
-is about.
+~~No bundler, no transpiler, no `package.json`: the browser loads ES modules natively via
+`<script type="module">`.~~ **Phase 23 amendment.** The source lives in `frontend/`, with its
+own `package.json` and lockfile, and Vite builds it **into `app/static/`** — which becomes build
+output, gitignored, and still inside the package, so deployment still ships one artefact. The
+mount, its position after `include_router`, and everything above about it are unchanged. Until
+Phase 23's cutover commit, `app/static/` still holds the hand-written Phase 12 frontend and
+Vite builds into `frontend/dist/`.
+
+Routing stays hash-based (`#/shifts/{id}/readings`, now through React Router's
+`createHashRouter`) so a deep link never reaches the server and needs no SPA rewrite, and every
+existing bookmark keeps working. The mount serving `index.html` is still not rendering: FastAPI
+hands over a file it did not generate, which is the distinction this section is about.
+
+The root `package.json` is a different thing and stays separate: Railway's IaC tooling
+(Phase 18), nothing served to a browser.
 
 ---
 
@@ -2260,7 +2280,9 @@ ahead — no empty modules for later phases.
     The motion and material vocabulary is hand-written — §14 forbids npm, so the spring,
     momentum projection and rubber-banding are about 200 lines of vanilla JS over
     `requestAnimationFrame`. See `docs/phase-12-plan.md` for the decisions and §13.18–19 for
-    what this phase deliberately does not test.
+    what this phase deliberately does not test. *(Phase 23 lifted the npm rule and rebuilt the
+    screens on React; the spring survives it, ported to TypeScript, because GSAP has no physics
+    spring that carries velocity through an interruption.)*
 13. **Reporting** — daily summary, 7-day rolling view, variance alerts. Three manager-floor
     read endpoints under `/api/v1/reports/`, three screens on the Cash tab, **no migration and
     no new table**: every figure already exists, and this phase is about *presenting* it.
@@ -2548,6 +2570,47 @@ ahead — no empty modules for later phases.
     Phase 20 supplies bank balance and bank expenses, and Phase 21 the **as-of-date**
     outstanding (the statement's `billed` column, §6.6). Still to build: stock and IOCL
     balances typed per period.
+23. **The React frontend** — built **before** Phase 22, and numbered after it only because 22
+    was already the spec's name for the profit bridge. Every screen rebuilt on React 19,
+    TypeScript, Tailwind v4 and GSAP, built by Vite (§2). **No migration, no new table, no new
+    endpoint, no new business rule**: like Phases 13 and 19, every figure already exists and the
+    phase is about presenting it. The owner's brief was an interface that feels premium.
+
+    **It is a rewrite, not a reskin.** Twenty-seven screens behind forty-three hash routes, about
+    14,000 lines, rebuilt one tab at a time against a parity checklist of the screen each
+    replaces — same endpoints, same Submission-guarded POSTs, same null-versus-zero wording,
+    same role gates — with the old frontend serving production until the new one matches it
+    everywhere. Phase 12's notes (§6) had already listed what having no framework cost: every
+    mutation re-rendered the whole screen and refetched, `readings.js` grew to 700 lines, and
+    nothing could test behaviour (§13.18). A framework fixes all three.
+
+    **(a) What changed is how the frontend is built; what it may do with money did not.** §2
+    says this in full. Every client guardrail in §14 survives — and gains its first behavioural
+    tests, because Vitest is now possible.
+
+    **(b) Motion has to say something.** GSAP does the choreography and the Phase 12 spring
+    keeps the gestures; one element is never driven by both. Every animation names what it
+    communicates — a route changing, a list arriving, a sheet under a finger, a lifecycle step
+    completing, a figure changing after a save — and collapses under `prefers-reduced-motion`.
+    **A money figure is never counted up from zero**: that computes rupee values in JavaScript
+    that never existed, which is §3 rule 1 one language further out. What moves is a per-digit
+    roll over the server's own string.
+
+    **(c) Two palettes, chosen by the phone, never by a setting.** Salesmen enter the day at
+    night; the owner reviews and prints bills by day. Light and dark follow
+    `prefers-color-scheme` alone — §12's objection to a *toggle* stands, and its single-palette
+    rule is amended. Components use semantic tokens only, so a screen is designed once and
+    checked twice. One accent; red, green and amber already mean short, surplus and warning.
+
+    **(d) The CSP becomes a response header.** Same policy; a `<meta>` tag cannot carry
+    `frame-ancestors`, so that directive was silently ignored until now (§13.19).
+
+    **(e) The audit found a live bug first.** Phase 20's bank review sent its Idempotency-Key to
+    `POST /bank-transactions/confirm-repayments`, and the client's hand-kept list of keyed paths
+    dropped it, so every "Record" was refused with 400. `tests/test_idempotency_client_coverage.py`
+    now compares that list with the server's OpenAPI document, so the copy cannot drift again.
+
+    See `docs/phase-23-plan.md`.
 
 ---
 
@@ -2640,7 +2703,13 @@ and ask.
   gesture tracking retained — reduced motion means gentler, not dead),
   `prefers-reduced-transparency` (materials go solid, `backdrop-filter` dropped) and
   `prefers-contrast: more`. Refusing those would not be scope discipline, it would be a bug
-- Any frontend framework or build step
+
+  **Phase 23 amendment: two palettes, still no toggle.** The rebuild ships a light palette and a
+  dark one, chosen by `prefers-color-scheme` and nothing else — no switch, no persistence, no
+  setting. That is the shape the paragraph above already permits for every other signal the
+  phone sends, extended to one more; the *toggle* stays out for exactly the reason given. The
+  cost is real and was accepted: every screen is checked in both palettes
+- ~~Any frontend framework or build step~~ — **moved into scope by Phase 23** (§2, §11)
 
 ---
 
@@ -2756,6 +2825,19 @@ future reader must be able to tell the difference.
     The consequence to be honest about: a refactor of `api.js` can break a form without failing
     the suite. Revisit if the frontend grows past what one person can re-check in an afternoon.
 
+    **Phase 23 amendment: revisited, and the reason for this entry is gone.** With npm admitted
+    (§2), the frontend has a Vitest + Testing Library suite covering the behaviour this entry
+    could only describe: the money labels and their two sign conventions, a `Submission` reusing
+    its key across a retry, `null` rendering as a word while `"0.00"` renders as ₹0.00, an
+    opening-confirm box that starts unticked, and no write verb on a read-only screen. A small
+    Playwright smoke suite checks every tab renders in both palettes with no console error, no
+    CSP violation and no accessibility failure. Every structural test above survives, retargeted
+    to `frontend/src/`.
+
+    What is **still** checked by a person, and always will be: whether motion feels right, the
+    print preview of a statement, and one real trading day entered end to end before a rebuilt
+    screen replaces the one it copies.
+
 19. **The access token lives in the browser, not in an httpOnly cookie.** Phase 12. Supabase
     issues a bearer token to the client and §8 verifies it server-side on every request, so the
     token has to be readable by JavaScript to be sent at all. The access token is held **in
@@ -2766,6 +2848,21 @@ future reader must be able to tell the difference.
     `Content-Security-Policy` of `default-src 'self'`, no third-party script of any kind, and
     no `innerHTML` on a server-derived value anywhere in the app. Recorded here so the next
     person to reach for a CDN convenience knows what it costs. §7.3, §8
+
+    **Phase 23 amendment — two changes, one of them a cost.** The CSP moves from a `<meta>` tag
+    to a response header set by FastAPI, with the policy unchanged. That fixes a latent defect:
+    browsers ignore `frame-ancestors` when it arrives by `<meta>`, so the clickjacking half of
+    the policy never applied. React's `style` prop and GSAP both write through the CSSOM, which
+    `style-src 'self'` permits; a library that injects `<style>` or inline `<script>` elements
+    does not survive the policy and must not be added (§14).
+
+    The cost: "no third-party script of any kind" is no longer true. React, React Router, TanStack
+    Query and GSAP are third-party code, bundled into our own files and served from this origin —
+    no CDN, so the CSP still holds — but running here, with the token in reach. That is the price
+    of the rebuild, accepted by the owner, and the mitigation is the boring one: a short,
+    pinned dependency list in `frontend/package-lock.json`, installed with `npm ci`, every
+    addition asked for (§14). `dangerouslySetInnerHTML` is `innerHTML` with a warning label and
+    is banned the same way.
 
 20. **A report reads the snapshot where one exists and computes live where none does — and
     always says which.** Phase 13. §5.2 keeps `expected_closing` and its eleven components so a
@@ -2913,6 +3010,18 @@ future reader must be able to tell the difference.
     files sit on disk in development and the app looks correct, then a built wheel omits them
     and production loses its wordmark and its backdrop with nothing failing. §2's
     one-artefact rule is what makes this the only place the list can live. §7.1, §13.19, §14
+
+    **Phase 23 amendment.** Self-hosted assets move to `frontend/public/` (fonts may also come
+    from an `@fontsource` package, which Vite bundles into our own files), and the rule above
+    holds unchanged: nothing from an external host. Instrument Serif keeps dressing the wordmark
+    and the two login headlines only; every other surface moves from the system stack to one
+    self-hosted UI sans, chosen for tabular figures **and** the ₹ glyph (U+20B9) — a face
+    without it silently falls back to a system font for the one character on every money figure.
+
+    **The silent failure moves.** After cutover `pyproject.toml` packages `static/**/*`, so a
+    forgotten file can no longer fall outside the list. What can now go missing is the build
+    itself: a deploy that packages before `npm run build` ships no frontend at all. The deploy
+    configuration runs the build first, and a build failure fails the deploy.
 
 29. **The login backdrop is a photograph, and nothing about it is recomputed.** Two earlier
     versions of this screen stuttered, both for the same reason, and the reason generalises
@@ -3253,7 +3362,9 @@ to occur on this specific project.
   net out, and dropping them makes a cancelled udhaar reappear as debt (§6.6)
 - Use offset pagination
 - Set `allow_origins=["*"]`
-- Add a frontend framework, bundler, or npm dependency
+- ~~Add a frontend framework, bundler, or npm dependency~~ **Phase 23 amendment:** add an npm
+  dependency **without asking**. Phase 23 admits a fixed list in `frontend/package.json`; each
+  addition is third-party code running in this origin with the session token in reach (§13.19)
 - Hardcode `1000` for the expense review threshold, or `5000` for the receipt threshold —
   both are config, and they are deliberately **separate dials** (§6.11)
 - Create scaffolding for out-of-scope features
@@ -3324,7 +3435,9 @@ to occur on this specific project.
   `package-data`.** It will work perfectly in development, where the source tree is on disk,
   and be missing from the built wheel. Nothing fails; the wordmark and the backdrop simply do
   not arrive in production. §2 ships one artefact precisely so there is one list to keep
-  right (§13.28)
+  right (§13.28). *Phase 23: assets live in `frontend/public/` and the list becomes a
+  `static/**/*` glob, so the rule becomes — never package or deploy without running the build
+  first, and never let a build failure pass silently*
 - **Put a CSS `filter` or `backdrop-filter` on an element that also carries an animated
   `transform`** — or on one sitting over animating content. The filtered result has to be
   re-rasterised every frame, and this has already cost this project one visibly janky login
@@ -3334,10 +3447,37 @@ to occur on this specific project.
   `opacity`, on the compositor. A canvas that repaints per frame to shift some rectangles is
   the shape of the bug §13.29 records, and it looks like a slow device rather than like a
   mistake (§13.29)
-- **Add a `<script src>`, stylesheet, or font from an external host.** §14 forbids the npm
-  dependency and a CDN is the same dependency with worse failure modes — plus §13.19 makes any
-  third-party script able to read the session token. The CSP refuses it and a structural test
-  refuses it; do not weaken either (§13.19)
+- **Add a `<script src>`, stylesheet, or font from an external host.** A CDN is an npm
+  dependency with worse failure modes — it can change underneath a deployed build, and §13.19
+  makes any third-party script able to read the session token. Phase 23 bundles every
+  dependency into this origin's own files for exactly that reason. The CSP refuses an external
+  host and a structural test refuses it; do not weaken either (§13.19)
+- **Use `dangerouslySetInnerHTML`, or add a library that injects `<style>` or inline
+  `<script>` elements.** The first is `innerHTML` with a warning label. The second is refused
+  by `style-src 'self'` / `script-src 'self'` and fails in production only — the Vite dev
+  server runs without the CSP. React's `style` prop and GSAP write through the CSSOM, which
+  the policy permits (§13.19, Phase 23)
+- **Tween a money value.** Counting a figure up from ₹0 to ₹1,23,456 computes rupee values in
+  JavaScript that never existed and shows them on screen — §3 rule 1, one language further out,
+  and the worst kind: plausible for a few hundred milliseconds. The only permitted motion on a
+  money figure is a per-character roll over the server's own string, which does no arithmetic
+  (Phase 23)
+- **Drive one element from both GSAP and the spring, or mix GSAP with another animation
+  engine (Motion / Framer Motion) in one component tree.** They write the same `transform` on
+  the same frame and the result is a judder nobody can attribute. GSAP choreographs; the spring
+  owns gestures — sheets, toasts, anything under a finger (Phase 23)
+- **Animate something that does not communicate.** Every animation must name what it says — a
+  state changed, a list arrived, a gesture is being followed, a step completed. A salesman
+  typing a whole day in at 10pm is slowed by decoration, and an infinite loop or parallax on a
+  data screen says nothing. Everything collapses under `prefers-reduced-motion` (Phase 23)
+- **Hardcode a colour in a component.** Use the semantic tokens (`surface`, `ink`, `accent`,
+  `short`, `surplus`, `warning`, …). Phase 23 ships two palettes chosen by
+  `prefers-color-scheme`, and a raw colour is correct in one of them at most. Red, green and
+  amber *mean* short, surplus and warning — never use them as decoration
+- **Keep a hand-written list of idempotent paths without its test.** The client's list of
+  routes that need an `Idempotency-Key` is a copy of a fact the OpenAPI document already
+  publishes. It drifted once — Phase 20's bank review lost every "Record" to a 400 — and
+  `tests/test_idempotency_client_coverage.py` now compares the two (§6.10, Phase 23)
 - **Recompute a snapshotted day's cash figures in a report.** Read the stored row. §5.2 keeps
   `expected_closing` and its eleven components so a reader can see what the manager was told on
   the day, and a report is the one thing whose whole job is to show that. §6.5 chains days, so a
@@ -3595,6 +3735,14 @@ railway config apply
 
 # Cleanup orphaned attachments
 python -m app.jobs.cleanup_attachments
+
+# Frontend (Phase 23) -- run inside frontend/
+npm ci                        # install exactly what the lockfile pins
+npm run dev                   # Vite on :5173, proxying /api to uvicorn on :8000
+npm run build                 # production build (into app/static/ after cutover)
+npm test                      # Vitest behavioural suite
+npm run e2e                   # Playwright smoke: every tab, both palettes, CSP, axe
+npm run gen:api               # regenerate the API types from FastAPI's /openapi.json
 ```
 
 ---
