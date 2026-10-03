@@ -374,3 +374,176 @@ export const flaggedPage: Schemas["FlaggedExpensePage"] = {
     { id: "fx-2", shift_id: "shift-sep30", business_date: RECONCILED_DATE, category_id: "cat-2", category_code: "MAINTENANCE", amount: "650.00", description: "Electrician call-out" },
   ],
 };
+
+/* --- the Credit tab ----------------------------------------------------------------------- */
+
+export const CUSTOMER_2 = "c0ffee00-0000-4000-8000-000000000202";
+export const CUSTOMER_3 = "c0ffee00-0000-4000-8000-000000000203";
+
+export const moreCustomers: Schemas["CreditCustomerListItem"][] = [
+  { id: CUSTOMER_2, name: "Sandhu Dairy", vehicle_numbers: null, is_active: true },
+  { id: CUSTOMER_3, name: "Old Mill Traders", vehicle_numbers: null, is_active: false },
+];
+
+/** Bhullar is anchored with history; Sandhu has never had an opening balance entered; Old Mill
+ * was entered at exactly ₹0.00 -- the three states §6.8 says must read differently. */
+export const openingBalances: Schemas["OpeningBalancePage"] = {
+  items: [
+    {
+      credit_customer_id: CUSTOMER_ID, name: "Bhullar Transport", is_active: true, opening_balance: "12400.00",
+      opening_balance_id: "ob-1", as_of_date: "2026-07-01", outstanding: "26510.00",
+    },
+    {
+      credit_customer_id: CUSTOMER_2, name: "Sandhu Dairy", is_active: true, opening_balance: null,
+      opening_balance_id: null, as_of_date: null, outstanding: "4200.00",
+    },
+    {
+      credit_customer_id: CUSTOMER_3, name: "Old Mill Traders", is_active: false, opening_balance: "0.00",
+      opening_balance_id: "ob-3", as_of_date: "2026-07-01", outstanding: "0.00",
+    },
+  ],
+};
+
+export const customerDetail: Schemas["CreditCustomerResponse"] = {
+  id: CUSTOMER_ID, name: "Bhullar Transport", phone: "9876543210", vehicle_numbers: ["PB65AX1204"],
+  credit_limit: null, is_active: true, outstanding: "26510.00",
+};
+
+export const customerLedger: Schemas["app__api__v1__credit_customers__LedgerPage"] = {
+  opening_balance: "12400.00",
+  outstanding: "26510.00",
+  truncated: false,
+  items: [
+    { id: "lg-3", kind: "repayment", amount: "5000.00", balance_delta: "-5000.00", balance_after: "26510.00", business_date: BUSINESS_DATE, created_at: "2026-10-02T11:40:00Z", is_reversal: false, shift_id: SHIFT_ID },
+    { id: "lg-2", kind: "sale", amount: "19110.00", balance_delta: "19110.00", balance_after: "31510.00", business_date: BUSINESS_DATE, created_at: "2026-10-02T09:15:00Z", is_reversal: false, shift_id: SHIFT_ID },
+    { id: "lg-1", kind: "opening", amount: "12400.00", balance_delta: "12400.00", balance_after: "12400.00", business_date: "2026-07-01", created_at: "2026-08-29T10:00:00Z", is_reversal: false, shift_id: null },
+  ],
+};
+
+export const datedRepayments: Schemas["DatedCreditRepaymentPage"] = {
+  next_cursor: null,
+  items: [
+    {
+      id: "dr-1", shift_id: null, business_date: "2026-09-29", credit_customer_id: CUSTOMER_2, mode: "bank_transfer",
+      amount: "10000.00", attachment_id: null, reverses_id: null, reversal_reason: null, is_reversed: false,
+      created_at: "2026-09-30T08:00:00Z",
+    },
+  ],
+};
+
+function statementRow(over: Partial<Schemas["StatementRowResponse"]>): Schemas["StatementRowResponse"] {
+  return {
+    customer_id: CUSTOMER_ID, name: "Bhullar Transport", phone: "9876543210", is_active: true, opening_balance_entered: true,
+    owed_before: "0.00", udhaar_in: "0.00", repaid_in: "0.00", billed: "0.00", udhaar_since: "0.00", opening_since: "0.00",
+    paid_since: "0.00", owes_today: "0.00", lines: [], ...over,
+  };
+}
+
+export const statement: Schemas["StatementResponse"] = {
+  from: "2026-09-16",
+  to: "2026-09-30",
+  today: BUSINESS_DATE,
+  open_shift_count: 0,
+  lines_truncated: false,
+  rows: [
+    statementRow({
+      owed_before: "12400.00", udhaar_in: "8400.00", repaid_in: "0.00", billed: "20800.00",
+      udhaar_since: "19110.00", paid_since: "5000.00", owes_today: "34910.00",
+      lines: [
+        {
+          id: "sl-1", kind: "sale", period: "in_range", business_date: "2026-09-22", amount: "8400.00", fuel_display_name: "Diesel",
+          quantity: "93.640", unit_of_measure: "litre", vehicle_number: "PB65AX1204", mode: null, shift_id: "shift-sep22",
+          bank_reference: null, bank_status: null, is_reversal: false, is_reversed: false, reversal_reason: null,
+        },
+        {
+          id: "sl-2", kind: "repayment", period: "since", business_date: BUSINESS_DATE, amount: "5000.00", fuel_display_name: null,
+          quantity: null, unit_of_measure: null, vehicle_number: null, mode: "cash", shift_id: SHIFT_ID,
+          bank_reference: null, bank_status: null, is_reversal: false, is_reversed: false, reversal_reason: null,
+        },
+      ],
+    }),
+    // Never entered and nothing before the window: ₹0.00 by arithmetic, "not entered" in fact.
+    statementRow({
+      customer_id: CUSTOMER_2, name: "Sandhu Dairy", phone: "9814000000", opening_balance_entered: false,
+      udhaar_in: "14200.00", repaid_in: "10000.00", billed: "4200.00", owes_today: "4200.00",
+      lines: [
+        {
+          id: "sl-3", kind: "repayment", period: "in_range", business_date: "2026-09-29", amount: "10000.00", fuel_display_name: null,
+          quantity: null, unit_of_measure: null, vehicle_number: null, mode: "bank_transfer", shift_id: null,
+          bank_reference: "UTR 4417", bank_status: "verified", is_reversal: false, is_reversed: false, reversal_reason: null,
+        },
+      ],
+    }),
+  ],
+  totals: {
+    owed_before: "12400.00", udhaar_in: "22600.00", repaid_in: "10000.00", billed: "25000.00",
+    udhaar_since: "19110.00", opening_since: "0.00", paid_since: "5000.00", owes_today: "39110.00",
+  },
+};
+
+export const BANK_ACCOUNT_ID = "ba000000-0000-4000-8000-000000000401";
+
+export const bankAccounts: Schemas["BankAccountResponse"][] = [
+  { id: BANK_ACCOUNT_ID, label: "BoB Current", bank_name: "Bank of Baroda", account_number_last4: "4471", is_active: true },
+];
+
+export const imports: Schemas["ImportPage"] = {
+  next_cursor: null,
+  items: [
+    {
+      id: "im-1", bank_account_id: BANK_ACCOUNT_ID, period_from: "2026-09-01", period_to: "2026-10-01", original_filename: "OpTransactionHistory.csv",
+      row_count: 61, imported_count: 61, skipped_count: 0, opening_balance: "184220.50", closing_balance: "212904.17",
+    },
+  ],
+};
+
+function line(over: Partial<Schemas["TransactionResponse"]>): Schemas["TransactionResponse"] {
+  return {
+    id: "tx", txn_date: "2026-09-29", narration: "", amount: "0.00", direction: "credit", running_balance: null,
+    classification: "udhaar_repayment", is_expense: "undecided", suggested_expense: "undecided",
+    matched_business_date: null, credit_repayment_id: null, ...over,
+  };
+}
+
+/** Three incoming lines, one of each kind the review must tell apart: one already typed in by
+ * hand (verified), one a remembered sender proposes, one that matches two typed-in payments. */
+export const creditLines: Schemas["TransactionPage"] = {
+  next_cursor: null,
+  items: [
+    line({ id: "tx-verified", txn_date: "2026-09-29", narration: "NEFT UTR 4417 SANDHU DAIRY", amount: "10000.00" }),
+    line({ id: "tx-proposed", txn_date: "2026-09-27", narration: "UPI/BHULLAR TPT/PAYMENT", amount: "7500.00" }),
+    line({ id: "tx-ambiguous", txn_date: "2026-09-24", narration: "IMPS 99812 TRANSFER", amount: "2000.00" }),
+  ],
+};
+
+export const debitLines: Schemas["TransactionPage"] = {
+  next_cursor: null,
+  items: [
+    line({ id: "tx-iocl", direction: "debit", narration: "INDIAN OIL CORPORATION LTD", amount: "500000.00", classification: "iocl_ms_hsd", suggested_expense: "no" }),
+    line({ id: "tx-charge", direction: "debit", narration: "Charges for PORD", amount: "59.00", classification: "bank_charge", suggested_expense: "yes" }),
+  ],
+};
+
+export const reconciliation: Schemas["ReconciliationResponse"] = {
+  date_from: "2026-09-01",
+  date_to: "2026-10-01",
+  boundary_settlement: "48211.30",
+  boundary_settled_on: "2026-10-02",
+  settlements: [
+    { business_date: "2026-09-29", settled_on: "2026-09-30", expected: "265617.00", settled: "265617.00", difference: "0.00", matches: true, source: "snapshot" },
+    { business_date: "2026-09-30", settled_on: "2026-10-01", expected: "251004.00", settled: "250504.00", difference: "-500.00", matches: false, source: "computed" },
+    { business_date: "2026-10-01", settled_on: "2026-10-02", expected: "48211.30", settled: null, difference: null, matches: false, source: "computed" },
+  ],
+  deposits: [
+    { kind: "matched", txn_date: "2026-09-22", amount: "60000.00", transaction_id: "tx-d1", bank_deposit_id: "bd-1", days_late: 1 },
+    { kind: "missing_from_bank", txn_date: "2026-09-26", amount: "40000.00", transaction_id: null, bank_deposit_id: "bd-2", days_late: null },
+  ],
+  credits: [
+    { transaction_id: "tx-verified", txn_date: "2026-09-29", narration: "NEFT UTR 4417 SANDHU DAIRY", amount: "10000.00", verified_repayment_id: "dr-1", ambiguous: false, proposals: [] },
+    {
+      transaction_id: "tx-proposed", txn_date: "2026-09-27", narration: "UPI/BHULLAR TPT/PAYMENT", amount: "7500.00", verified_repayment_id: null, ambiguous: false,
+      proposals: [{ credit_customer_id: CUSTOMER_ID, name: "Bhullar Transport", reason: "Remembered sender “BHULLAR TPT”", confidence: "high" }],
+    },
+    { transaction_id: "tx-ambiguous", txn_date: "2026-09-24", narration: "IMPS 99812 TRANSFER", amount: "2000.00", verified_repayment_id: null, ambiguous: true, proposals: [] },
+  ],
+};

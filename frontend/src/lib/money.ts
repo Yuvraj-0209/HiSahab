@@ -205,3 +205,14 @@ export function compareMoney(a: Money, b: Money): number {
   const bf = bFrac.padEnd(width, "0");
   return af === bf ? 0 : af > bf ? 1 : -1;
 }
+
+/** `compareMoney` for signed strings: a balance may legitimately be negative (§6.6, a customer
+ * who paid in advance), and a negative sorts below every positive. Still no parsing. */
+export function compareSignedMoney(a: Money, b: Money): number {
+  const negA = isNegative(a) && !isZero(a);
+  const negB = isNegative(b) && !isZero(b);
+  if (negA !== negB) return negA ? -1 : 1;
+  const magnitude = compareMoney(a.trim().replace(/^-/, ""), b.trim().replace(/^-/, ""));
+  // Among negatives, the larger magnitude is the smaller number.
+  return negA ? -magnitude : magnitude;
+}

@@ -17,13 +17,15 @@ import { api } from "../api/client";
 import { useApiQuery, useRefreshApi } from "../api/queries";
 import { useSubmission } from "../api/submission";
 import type { Schemas } from "../api/types";
-import { ScreenTitle } from "../app/chrome";
+import { ScreenActions, ScreenTitle } from "../app/chrome";
 import { useSession } from "../app/session";
 import { satisfies } from "../lib/roles";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { SelectField, TextField, useForm } from "../ui/form";
-import { Button, ErrorCard, ListRow, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, ListRow, Skeleton } from "../ui/primitives";
+import { PlusIcon } from "@phosphor-icons/react";
+import { businessDate, todayAtOutlet } from "../lib/time";
 import { ReceiptUpload } from "../ui/ReceiptUpload";
 import { isLive, ReversalBadge, ReversalForm } from "../ui/reversal";
 import { Sheet } from "../ui/Sheet";
@@ -237,6 +239,170 @@ function RepaymentForm({
       )}
       <Button variant="primary" block disabled={busy} onClick={() => void submit()}>
         {busy ? "Saving…" : existing ? "Save" : "Record repayment"}
+      </Button>
+    </div>
+  );
+}
+
+/* --- Repayments that arrived at the bank (§5.2, Phase 16) ------------------------------
+ *
+ * The Credit tab's write screen, and the one that makes a ledger reconstructable: a transfer
+ * against a day already locked, or on a day the outlet was shut, has no shift to hang off.
+ *
+ * Cash is deliberately absent from this form. Cash lands in a drawer, so it belongs to the
+ * shift it arrived on; the server refuses `mode = cash` here with 422 and the database refuses
+ * it too, so omitting it is a courtesy rather than the control (§8).
+ */
+
+const BANK_MODES = [
+  { value: "bank_transfer", label: "Bank transfer" },
+  { value: "upi", label: "UPI, to a bank account, not the pump's QR" },
+  { value: "card", label: "Card, not on the pump's machine" },
+];
+
+type BankAction = { kind: "add" } | { kind: "reverse"; repayment: Repayment };
+
+export function LedgerRepaymentsScreen() {
+  const page = useApiQuery<Schemas["DatedCreditRepaymentPage"]>("/credit-repayments", { limit: 25 });
+  const customers = useApiQuery<Customer[]>("/credit-customers", { include_inactive: true });
+  const [action, setAction] = useState<BankAction | null>(null);
+
+  if (page.isPending || customers.isPending) {
+    return (
+      <>
+        <ScreenTitle title="Payments received" />
+        <Skeleton rows={3} />
+      </>
+    );
+  }
+  if (!page.data || !customers.data) {
+    return (
+      <>
+        <ScreenTitle title="Payments received" />
+        <ErrorCard error={page.error ?? customers.error} onRetry={() => void Promise.all([page.refetch(), customers.refetch()])} />
+      </>
+    );
+  }
+  const customerName = (id: string) => customers.data?.find((customer) => customer.id === id)?.name ?? "Unknown customer";
+
+  return (
+    <>
+      <ScreenTitle title="Payments received" />
+      <ScreenActions>
+        <Button variant="primary" size="sm" icon={<PlusIcon size={16} weight="bold" aria-hidden />} onClick={() => setAction({ kind: "add" })}>
+          Add
+        </Button>
+      </ScreenActions>
+      <div className="flex flex-col gap-5">
+        <Card>
+          <p className="text-[0.8125rem] font-medium text-ink-muted">Money that reached the bank</p>
+          <p className="mt-1 text-[0.9375rem] text-ink">
+            A settlement that arrived by transfer rather than at the pump. It reduces what the customer owes and changes no day's cash: the locker never saw it.
+          </p>
+          <p className="mt-2 text-[0.8125rem] text-ink-muted">Cash belongs on the shift it arrived on. Enter that under Entry, Credit repayments.</p>
+        </Card>
+        {page.data.items.length ? (
+          <div className="flex flex-col gap-3">
+            {page.data.items.map((repayment) => (
+              <MoneyRowCard
+                key={repayment.id}
+                title={customerName(repayment.credit_customer_id)}
+                caption={`${businessDate(repayment.business_date)} · ${repayment.mode.replace("_", " ")}${repayment.shift_id === null ? "" : " · on a shift"}`}
+                amount={repayment.amount}
+                badges={<ReversalBadge row={repayment} />}
+                notes={repayment.reversal_reason ? <p className="mt-2 text-[0.8125rem] text-ink-muted">Reason: {repayment.reversal_reason}</p> : null}
+                actions={
+                  // §6.9: a shift-less row cannot reach the shift-scoped reversal route, so it has
+                  // its own. Without it a mistyped transfer would sit in a ledger permanently.
+                  isLive(repayment) && repayment.shift_id === null ? (
+                    <Button size="sm" variant="danger" onClick={() => setAction({ kind: "reverse", repayment })}>
+                      Reverse
+                    </Button>
+                  ) : null
+                }
+              />
+            ))}
+          </div>
+        ) : (
+          <Empty>Nothing recorded yet.</Empty>
+        )}
+      </div>
+
+      <Sheet open={action !== null} onClose={() => setAction(null)} title={action?.kind === "reverse" ? "Reverse payment" : "Record a bank payment"}>
+        {action?.kind === "add" ? <BankRepaymentForm customers={customers.data} onDone={() => setAction(null)} /> : null}
+        {action?.kind === "reverse" ? (
+          <ReversalForm
+            path={`/credit-repayments/${action.repayment.id}/reversals`}
+            amount={action.repayment.amount}
+            description={customerName(action.repayment.credit_customer_id)}
+            onDone={() => setAction(null)}
+          />
+        ) : null}
+      </Sheet>
+    </>
+  );
+}
+
+function BankRepaymentForm({ customers, onDone }: { customers: Customer[]; onDone: () => void }) {
+  const submission = useSubmission("POST", "/credit-repayments");
+  const refresh = useRefreshApi();
+  const form = useForm({ credit_customer_id: "", amount: "", mode: "", business_date: todayAtOutlet() });
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    form.clearErrors();
+    const values = form.values;
+    if (!values.credit_customer_id) return form.setError("credit_customer_id", "Choose a customer.");
+    if (!values.mode) return form.setError("mode", "Choose how the money arrived.");
+    setBusy(true);
+    try {
+      const body: Schemas["DatedCreditRepaymentCreate"] = {
+        credit_customer_id: values.credit_customer_id,
+        amount: values.amount,
+        mode: values.mode as Schemas["DatedCreditRepaymentCreate"]["mode"],
+        business_date: values.business_date,
+      };
+      await submission.run(body);
+      onDone();
+      notify.success("Payment recorded.");
+      await refresh();
+    } catch (error) {
+      reportFailure(error, form, () => void submit());
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <SelectField
+        form={form}
+        name="credit_customer_id"
+        label="Customer"
+        options={[
+          { value: "", label: "Choose…" },
+          ...customers.map((customer) => ({ value: customer.id, label: customer.is_active ? customer.name : `${customer.name} (deactivated)` })),
+        ]}
+        hint="A deactivated customer can still pay off what they owe."
+      />
+      <TextField form={form} name="amount" label="Amount" inputMode="decimal" required hint="More than they owe is accepted. The balance simply goes negative." />
+      <SelectField
+        form={form}
+        name="mode"
+        label="How did it arrive?"
+        options={[{ value: "", label: "Choose…" }, ...BANK_MODES]}
+        hint="None of these touch the locker, so no day's cash position changes."
+      />
+      <TextField
+        form={form}
+        name="business_date"
+        label="Date it arrived"
+        type="date"
+        required
+        hint="The day the money reached the account, not the day you are typing this in."
+      />
+      <Button variant="primary" block disabled={busy} onClick={() => void submit()}>
+        {busy ? "Saving…" : "Record payment"}
       </Button>
     </div>
   );

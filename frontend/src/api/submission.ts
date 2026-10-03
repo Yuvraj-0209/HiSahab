@@ -20,7 +20,7 @@
  * the key, and opening the sheet again for the next entry gets a new one.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { newIdempotencyKey, request } from "./client";
 
 export class Submission {
@@ -47,4 +47,25 @@ export class Submission {
 export function useSubmission(method: "POST", path: string): Submission {
   const [submission] = useState(() => new Submission(method, path));
   return submission;
+}
+
+/** For a screen that stays open and submits more than once -- the bank review's batch confirm.
+ *
+ * There is no sheet whose unmounting ends the submission, so the rule is stated on the body:
+ * **the same body is a retry and reuses the key; a different body is a new submission and gets
+ * a new one.** That is what a retry means. Reusing the key across a change of ticks would be
+ * refused with 422 IDEMPOTENCY_KEY_REUSED; minting one per call is the duplicate §6.10 forbids.
+ * After a success the next call always mints, even for an identical body, because by then it is
+ * a second record rather than a second attempt at the first.
+ */
+export function useRepeatableSubmission(method: "POST", path: string): <T>(body: unknown) => Promise<T> {
+  const current = useRef<{ body: string; submission: Submission } | null>(null);
+  return <T,>(body: unknown) => {
+    const text = JSON.stringify(body);
+    const held = current.current;
+    if (!held || held.submission.done || held.body !== text) {
+      current.current = { body: text, submission: new Submission(method, path) };
+    }
+    return (current.current as { submission: Submission }).submission.run<T>(body);
+  };
 }

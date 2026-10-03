@@ -40,10 +40,12 @@ export interface ReversalFormProps {
   /** What is being reversed, in words. */
   description?: string | undefined;
   replacementText?: ReplacementText | undefined;
+  /** Overrides the corrected-amount hint, where a table's correction has its own rule. */
+  replacementHint?: string | undefined;
   onDone: () => void;
 }
 
-export function ReversalForm({ path, amount, description, replacementText, onDone }: ReversalFormProps) {
+export function ReversalForm({ path, amount, description, replacementText, replacementHint, onDone }: ReversalFormProps) {
   // One key for this sheet's lifetime: a timeout-then-retry must not create two reversals, which
   // is what each table's uq_<table>_reverses_id exists to lose loudly.
   const submission = useSubmission("POST", path);
@@ -101,7 +103,7 @@ export function ReversalForm({ path, amount, description, replacementText, onDon
         name="replacement_amount"
         label="Corrected amount (optional)"
         inputMode="decimal"
-        hint="Leave blank to cancel outright. Enter a figure to cancel and re-record in one step."
+        hint={replacementHint ?? "Leave blank to cancel outright. Enter a figure to cancel and re-record in one step."}
       />
       {replacementText ? (
         <TextField form={form} name="replacement_text" label={replacementText.label} hint="Used only when a corrected amount is entered." />

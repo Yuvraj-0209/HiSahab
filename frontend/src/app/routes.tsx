@@ -51,6 +51,12 @@ function NotFound() {
 
 const tab = (id: RouteHandle["tab"]): RouteHandle => ({ tab: id });
 
+/** Phase 16 moved a customer's ledger from Admin to Credit; old links still land. */
+function RedirectToLedger() {
+  const { customerId = "" } = useParams();
+  return <Navigate to={`/credit/customers/${customerId}`} replace />;
+}
+
 function RedirectToDay() {
   const { businessDate = "" } = useParams();
   return <Navigate to={`/days/${businessDate}`} replace />;
@@ -73,6 +79,10 @@ const days = () => import("../screens/days");
 const reports = () => import("../screens/reports");
 const shortfalls = () => import("../screens/shortfalls");
 const flagged = () => import("../screens/flagged_expenses");
+const credit = () => import("../screens/credit");
+const openingBalances = () => import("../screens/credit_opening_balances");
+const statement = () => import("../screens/credit_statement");
+const bank = () => import("../screens/bank");
 
 export const routes: RouteObject[] = [
   {
@@ -155,6 +165,40 @@ export const routes: RouteObject[] = [
             lazy: () => shortfalls().then((m) => ({ Component: m.ShortfallLedgerScreen })),
           },
           { path: "expenses/flagged", handle: tab("cash"), lazy: () => flagged().then((m) => ({ Component: m.FlaggedExpensesScreen })) },
+
+          { path: "credit", handle: tab("credit"), lazy: () => credit().then((m) => ({ Component: m.CreditHubScreen })) },
+          {
+            path: "credit/repayments",
+            handle: tab("credit"),
+            lazy: () => creditRepayments().then((m) => ({ Component: m.LedgerRepaymentsScreen })),
+          },
+          { path: "credit/statement", handle: tab("credit"), lazy: () => statement().then((m) => ({ Component: m.CreditStatementScreen })) },
+          { path: "credit/bank", handle: tab("credit"), lazy: () => bank().then((m) => ({ Component: m.BankHubScreen })) },
+          { path: "credit/bank/review", handle: tab("credit"), lazy: () => bank().then((m) => ({ Component: m.BankReviewScreen })) },
+          {
+            path: "credit/bank/reconciliation",
+            handle: tab("credit"),
+            lazy: () => bank().then((m) => ({ Component: m.BankReconciliationScreen })),
+          },
+          {
+            path: "credit/customers/:customerId",
+            handle: tab("credit"),
+            lazy: () => credit().then((m) => ({ Component: m.CustomerLedgerScreen })),
+          },
+          { path: "admin/customers/:customerId/ledger", Component: RedirectToLedger },
+        ],
+      },
+
+      {
+        element: <RoleGate role="admin" />,
+        children: [
+          // Inside the manager's Credit tab, but admin-only: nothing else can check the figure
+          // (§5.2, §8). The server refuses a manager with 403 regardless.
+          {
+            path: "credit/opening-balances",
+            handle: tab("credit"),
+            lazy: () => openingBalances().then((m) => ({ Component: m.OpeningBalancesScreen })),
+          },
         ],
       },
 

@@ -13,6 +13,8 @@ import * as fixture from "./fixtures";
 
 const SUPABASE = "https://e2e-test.supabase.co";
 
+/** A body, a Failure, or -- where one path answers differently by query string -- a function
+ * of the request URL. */
 export type Responses = Record<string, unknown>;
 
 /** A response that is the API's error envelope rather than a 200, e.g. 404 NO_OPEN_SHIFT. */
@@ -64,7 +66,8 @@ export async function signedIn(page: Page, { role = "admin", responses = {} }: M
       writes.push({ method: request.method(), path, body: request.postDataJSON(), headers: request.headers() });
     }
     if (key in responses) {
-      const answer = responses[key];
+      let answer = responses[key];
+      if (typeof answer === "function") answer = (answer as (url: URL) => unknown)(url);
       if (answer instanceof Failure) {
         return json(route, answer.status, { detail: answer.detail, code: answer.code, request_id: "e2e" });
       }
@@ -110,5 +113,22 @@ export function todayResponses(status: "open" | "closed" | "locked" = "open"): R
     [`GET /shifts/${id}/cash-position`]: fixture.cashPosition,
     "GET /expense-categories": fixture.categories,
     "GET /fuel-types": fixture.fuelTypes,
+  };
+}
+
+/** Everything the Credit tab and its Bank screens read. */
+export function creditResponses(): Responses {
+  return {
+    "GET /credit-opening-balances": fixture.openingBalances,
+    "GET /credit-customers": [...fixture.customers, ...fixture.moreCustomers],
+    [`GET /credit-customers/${fixture.CUSTOMER_ID}`]: fixture.customerDetail,
+    [`GET /credit-customers/${fixture.CUSTOMER_ID}/ledger`]: fixture.customerLedger,
+    "GET /credit-repayments": fixture.datedRepayments,
+    "GET /credit-customers/statement": fixture.statement,
+    "GET /bank-accounts": fixture.bankAccounts,
+    "GET /bank-statements/imports": fixture.imports,
+    "GET /bank-transactions": (url: URL) =>
+      url.searchParams.get("direction") === "debit" ? fixture.debitLines : fixture.creditLines,
+    "GET /bank-statements/reconciliation": fixture.reconciliation,
   };
 }

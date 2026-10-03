@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { compareMoney, format, gapLabel, isZero, quantity, varianceIsShort, varianceLabel } from "./money";
+import { compareMoney, compareSignedMoney, format, gapLabel, isZero, quantity, varianceIsShort, varianceLabel } from "./money";
 
 describe("variance: counted − expected", () => {
   it("a positive variance is a surplus", () => {
@@ -108,5 +108,15 @@ describe("compareMoney orders strings without parsing them", () => {
   });
   it("ignores leading zeros", () => {
     expect(compareMoney("0500.00", "500")).toBe(0);
+  });
+});
+
+describe("compareSignedMoney", () => {
+  it("orders a negative balance below zero and below any debt", () => {
+    const sorted = ["1200.00", "-50.00", "0.00", "12400.00", "-900.00"].sort(compareSignedMoney);
+    expect(sorted).toEqual(["-900.00", "-50.00", "0.00", "1200.00", "12400.00"]);
+  });
+  it("treats negative zero as zero", () => {
+    expect(compareSignedMoney("-0.00", "0.00")).toBe(0);
   });
 });

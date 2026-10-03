@@ -447,4 +447,28 @@ select.field-control {
   .tabbar {
     display: none !important;
   }
+  .print-only {
+    display: block !important;
+  }
+  /* Every customer's entries print, whether or not they were opened on screen. */
+  .statement-detail[data-collapsed="true"] {
+    display: block !important;
+  }
+  .statement-customer,
+  .statement-totals {
+    break-inside: avoid;
+  }
+  /* "Print this customer": one card, nothing else. */
+  body.print-one .statement-customer:not(.print-target),
+  body.print-one .statement-totals {
+    display: none !important;
+  }
+}
+
+.print-only {
+  display: none;
+}
+
+.statement-detail[data-collapsed="true"] {
+  display: none;
 }

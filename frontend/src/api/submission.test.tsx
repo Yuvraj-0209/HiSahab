@@ -8,7 +8,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NetworkError, request } from "./client";
-import { Submission, useSubmission } from "./submission";
+import { Submission, useRepeatableSubmission, useSubmission } from "./submission";
 
 function keysSent(fetchMock: ReturnType<typeof vi.fn>): (string | undefined)[] {
   return fetchMock.mock.calls.map(([, init]) => (init as RequestInit).headers as Record<string, string>).map(
@@ -76,5 +76,47 @@ describe("useSubmission", () => {
     const one = renderHook(() => useSubmission("POST", "/x")).result.current.key;
     const two = renderHook(() => useSubmission("POST", "/x")).result.current.key;
     expect(one).not.toBe(two);
+  });
+});
+
+describe("useRepeatableSubmission", () => {
+  const path = "/bank-transactions/confirm-repayments";
+  const one = { items: [{ transaction_id: "t1", credit_customer_id: "c1", remember_sender: true }] };
+  const two = { items: [{ transaction_id: "t2", credit_customer_id: "c1", remember_sender: true }] };
+
+  it("retries the same body with the same key", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(new Response("{}", { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useRepeatableSubmission("POST", path));
+    await expect(result.current(one)).rejects.toBeInstanceOf(NetworkError);
+    await result.current(one);
+    const [first, second] = keysSent(fetchMock);
+    expect(second).toBe(first);
+  });
+
+  it("gives a changed body a new key, so it is never refused as a reused one", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(new Response("{}", { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useRepeatableSubmission("POST", path));
+    await expect(result.current(one)).rejects.toBeInstanceOf(NetworkError);
+    await result.current(two);
+    const [first, second] = keysSent(fetchMock);
+    expect(second).not.toBe(first);
+  });
+
+  it("mints a new key after a success, even for an identical body", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response("{}", { status: 201 })));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useRepeatableSubmission("POST", path));
+    await result.current(one);
+    await result.current(one);
+    const [first, second] = keysSent(fetchMock);
+    expect(second).not.toBe(first);
   });
 });

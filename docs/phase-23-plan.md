@@ -295,6 +295,26 @@ None.
   - `uv.lock` **is** tracked in git, so Railway installs with `uv sync --locked`. (A note in the
     working memory said otherwise; it was stale.)
   - A real Railway deploy is still verification item 6, after cutover.
+- **Commit 6 (Credit) found a money defect in the old bank review, and the port does not repeat
+  it.** `bank.js` offered every unlinked incoming udhaar line for recording. But "unlinked" includes
+  a line that §13.37's live `(date, amount)` match ties to a repayment somebody already *typed in*,
+  and recording that line created a second repayment for the same money: the customer's balance
+  went down twice. The new review asks `GET /bank-statements/reconciliation` what each line is and
+  offers recording only for a line that matches nothing; a verified line reads "already on the
+  ledger", and an ambiguous one is explained and not offered either. **The server still accepts
+  the duplicate** — `confirm-repayments` checks `credit_repayment_id` but not the live match. That
+  is a business-rule decision (refuse it, or link the line to the existing repayment instead) and
+  is raised with the owner rather than made here.
+- Commit 6 also stopped the old review breaking its own promise. Its hint said a remembered sender
+  "will pre-select them", and the picker never did. A single high-confidence proposal now
+  pre-selects; name matches show as suggestions; the Confirm tick still starts empty (§5.3a).
+- The opening-balance correction form in `credit_opening_balances.js` passed a string where
+  `reversal.js` expected a field spec, rendering an unlabelled field that sent an `undefined` key.
+  The port takes a `replacementHint` instead.
+- `useRepeatableSubmission` (in `submission.ts`) exists for the one screen that stays open and
+  submits repeatedly. The key follows the body: same body is a retry, a changed body or a
+  post-success call is a new submission. The old review reused one key across changed ticks,
+  which the server refuses as `IDEMPOTENCY_KEY_REUSED`.
 
 ## Still owed by the owner
 

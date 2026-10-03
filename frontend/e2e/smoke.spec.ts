@@ -7,8 +7,8 @@
 
 import { expect, type Page, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { PREVIOUS_DATE, RECONCILED_DATE, SALESMAN_ID, SHIFT_ID, worksheet } from "./fixtures";
-import { cashResponses, Failure, signedIn, todayResponses } from "./mock";
+import { CUSTOMER_2, CUSTOMER_ID, PREVIOUS_DATE, RECONCILED_DATE, SALESMAN_ID, SHIFT_ID, worksheet } from "./fixtures";
+import { cashResponses, creditResponses, Failure, signedIn, todayResponses } from "./mock";
 
 async function watch(page: Page) {
   const problems: string[] = [];
@@ -313,4 +313,117 @@ test("an attendant is turned away from the Cash tab, politely (§8)", async ({ p
   await expect(page).toHaveURL(/#\/today$/);
   // The toast, not the screen-reader live region that carries the same words on purpose.
   await expect(page.getByRole("status").filter({ hasText: "That section is not available for your role." })).toBeVisible();
+});
+
+/* --- the Credit tab --------------------------------------------------------------------- */
+
+for (const [name, path] of [
+  ["credit hub", "/#/credit"],
+  ["customer ledger", `/#/credit/customers/${CUSTOMER_ID}`],
+  ["bank repayments", "/#/credit/repayments"],
+  ["opening balances", "/#/credit/opening-balances"],
+  ["statement", "/#/credit/statement?from=2026-09-16&to=2026-09-30"],
+  ["bank hub", "/#/credit/bank"],
+  ["bank review", "/#/credit/bank/review"],
+  ["reconciliation", "/#/credit/bank/reconciliation"],
+] as const) {
+  test(`renders: ${name}`, async ({ page }, info) => {
+    const problems = await watch(page);
+    await signedIn(page, { role: "admin", responses: creditResponses() });
+    await page.goto(path);
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await settle(page);
+    await page.screenshot({ path: info.outputPath(`${name.replace(/ /g, "-")}.png`), fullPage: true });
+    await expectAccessible(page);
+    expect(problems).toEqual([]);
+  });
+}
+
+test("statement: an opening balance nobody entered reads as unknown, never as ₹0.00 (§6.8)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: creditResponses() });
+  await page.goto("/#/credit/statement?from=2026-09-16&to=2026-09-30");
+  const sandhu = page.locator(".statement-customer").filter({ hasText: "Sandhu Dairy" });
+  await expect(sandhu.getByText("not entered")).toBeVisible();
+  await expect(page.getByText(/1 customer has no opening balance entered/)).toBeVisible();
+  // The totals arrive summed from the server, and are rendered as received.
+  await expect(page.locator(".statement-totals").getByText("₹39,110.00").first()).toBeVisible();
+});
+
+test("bank review: money already on a ledger is never offered again, and nothing is pre-ticked", async ({ page }) => {
+  const problems = await watch(page);
+  const writes = await signedIn(page, {
+    role: "manager",
+    responses: {
+      ...creditResponses(),
+      "POST /bank-transactions/confirm-repayments": { created: ["dr-9"], failed: [] },
+    },
+  });
+  await page.goto("/#/credit/bank/review");
+
+  // A line matching a payment typed in by hand, and one matching two of them: neither can be
+  // recorded, because recording would count the money twice.
+  await expect(page.getByText("already on the ledger")).toBeVisible();
+  await expect(page.getByText("matches more than one")).toBeVisible();
+  const ticks = page.getByLabel("Record this repayment");
+  await expect(ticks).toHaveCount(1);
+  // The remembered sender pre-selects the customer; the tick still starts empty (§5.3a).
+  await expect(page.getByLabel("Who sent it")).toHaveValue(CUSTOMER_ID);
+  await expect(ticks).not.toBeChecked();
+
+  await ticks.check();
+  await page.getByRole("button", { name: "Record ticked repayments" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Recorded 1 repayment." })).toBeVisible();
+  expect(writes[0]?.body).toEqual({ items: [{ transaction_id: "tx-proposed", credit_customer_id: CUSTOMER_ID, remember_sender: true }] });
+  // The Phase 20 bug: this POST's key used to be dropped, and the server refused every record.
+  expect(writes[0]?.headers["idempotency-key"]).toMatch(/^[0-9a-f-]{36}$/);
+  expect(problems).toEqual([]);
+});
+
+test("bank review: whether a debit was a cost is the person's answer", async ({ page }) => {
+  const writes = await signedIn(page, {
+    role: "manager",
+    responses: { ...creditResponses(), "PATCH /bank-transactions/tx-iocl": {} },
+  });
+  await page.goto("/#/credit/bank/review");
+  const iocl = page.locator("[data-arrive]").filter({ hasText: "INDIAN OIL CORPORATION" });
+  await expect(iocl.getByText("Money moved between your own accounts, not spent.")).toBeVisible();
+  await iocl.getByRole("button", { name: "Not an expense" }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).toEqual(expect.objectContaining({ method: "PATCH", path: "/bank-transactions/tx-iocl", body: { is_expense: "no" } }));
+});
+
+test("reconciliation: a day Paytm has not paid is pending, never a ₹0.00 discrepancy", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: creditResponses() });
+  await page.goto("/#/credit/bank/reconciliation");
+  await expect(page.getByText(/Nothing has arrived yet for this day/)).toBeVisible();
+  await expect(page.getByText("pending")).toBeVisible();
+  await expect(page.getByText("−₹500.00").first()).toBeVisible();
+  await expect(page.getByText("In the app, never reached the bank")).toBeVisible();
+});
+
+test("opening balances: zero is a deliberate answer, dated on its face, and sends 0.00", async ({ page }) => {
+  const writes = await signedIn(page, {
+    role: "admin",
+    responses: { ...creditResponses(), "POST /credit-opening-balances": {} },
+  });
+  await page.goto("/#/credit/opening-balances");
+  await page.getByRole("button", { name: "Enter what they owed" }).click();
+  const sheet = page.getByRole("dialog", { name: "Sandhu Dairy" });
+  // The date defaults to the ledger's start, not to today: the batch shares one date.
+  await expect(sheet.getByLabel("As of")).toHaveValue("2026-07-01");
+  await sheet.getByRole("button", { name: "They owed nothing on 1 Jul 2026" }).click();
+  await expect(sheet).toHaveCount(0);
+  expect(writes[0]?.body).toEqual({ credit_customer_id: CUSTOMER_2, amount: "0.00", as_of_date: "2026-07-01" });
+});
+
+test("a manager is turned away from opening balances, which only an admin may enter (§8)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: creditResponses() });
+  await page.goto("/#/credit/opening-balances");
+  await expect(page).toHaveURL(/#\/today$/);
+});
+
+test("old admin ledger links land on the Credit tab (Phase 16)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: creditResponses() });
+  await page.goto(`/#/admin/customers/${CUSTOMER_ID}/ledger`);
+  await expect(page).toHaveURL(new RegExp(`#/credit/customers/${CUSTOMER_ID}$`));
 });
