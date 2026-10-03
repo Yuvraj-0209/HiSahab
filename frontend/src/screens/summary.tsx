@@ -27,11 +27,12 @@
  */
 
 import { type ReactNode, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 import { CalendarDotsIcon } from "@phosphor-icons/react";
 import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
+import { useGo } from "../app/navigation";
 import { lastMonth, lastThreeMonths, type Range, thisMonth, thisYear } from "../lib/calendar";
 import { format, quantity } from "../lib/money";
 import { businessDateRange, todayAtOutlet } from "../lib/time";
@@ -48,7 +49,7 @@ type Report = Schemas["app__api__v1__reports__SummaryResponse"];
 const MIX_LABEL: Record<string, string> = { cash: "Cash", card: "Card", upi: "UPI", wallet: "Wallet", credit: "Udhaar" };
 
 export function SummaryScreen() {
-  const navigate = useNavigate();
+  const navigate = useGo();
   const [params] = useSearchParams();
   const from = params.get("from") ?? undefined;
   const to = params.get("to") ?? undefined;

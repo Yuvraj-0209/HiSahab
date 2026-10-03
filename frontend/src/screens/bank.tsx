@@ -34,13 +34,13 @@
  */
 
 import { type ChangeEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router";
 import { ArrowLeftIcon, ArrowRightIcon, FileCsvIcon } from "@phosphor-icons/react";
 import { ApiError, api, explain, newIdempotencyKey, postMultipart } from "../api/client";
 import { useApiQuery, useRefreshApi } from "../api/queries";
 import { useRepeatableSubmission } from "../api/submission";
 import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
+import { useGo } from "../app/navigation";
 import { format } from "../lib/money";
 import { businessDate, businessDateRange } from "../lib/time";
 import { Amount } from "../ui/Amount";
@@ -78,7 +78,7 @@ const NOT_A_COST = new Set(["iocl_ms_hsd", "iocl_cbg", "self_transfer"]);
 const classificationLabel = (value: string) => CLASSIFICATION_LABELS[value] ?? value;
 
 function BackToBank() {
-  const navigate = useNavigate();
+  const navigate = useGo();
   return (
     <ScreenActions>
       <Button size="sm" variant="plain" icon={<ArrowLeftIcon size={16} aria-hidden />} onClick={() => navigate("/credit/bank")}>
@@ -91,7 +91,7 @@ function BackToBank() {
 /* --- the hub: accounts, imports, and the way in ------------------------------------------ */
 
 export function BankHubScreen() {
-  const navigate = useNavigate();
+  const navigate = useGo();
   const accounts = useApiQuery<Account[]>("/bank-accounts");
   const imports = useApiQuery<Schemas["ImportPage"]>("/bank-statements/imports");
   const list = useRef<HTMLDivElement>(null);
@@ -704,7 +704,7 @@ function DebitLine({ item }: { item: Transaction }) {
 /* --- reconciliation: three comparisons, discrepancies first ------------------------------ */
 
 export function BankReconciliationScreen() {
-  const navigate = useNavigate();
+  const navigate = useGo();
   const imports = useApiQuery<Schemas["ImportPage"]>("/bank-statements/imports");
   const latest = imports.data?.items[0];
   const report = useApiQuery<Schemas["ReconciliationResponse"]>(

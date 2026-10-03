@@ -27,7 +27,6 @@
  */
 
 import { type ReactNode, useState } from "react";
-import { useNavigate } from "react-router";
 import {
   AddressBookIcon,
   BankIcon,
@@ -46,6 +45,7 @@ import { api } from "../api/client";
 import { useApiQuery, useRefreshApi } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
+import { useGo } from "../app/navigation";
 import { quantity, reading } from "../lib/money";
 import { localTime, toOffsetISO } from "../lib/time";
 import { reportFailure } from "../ui/feedback";
@@ -70,7 +70,7 @@ const SECTIONS: { label: string; hint: string; route: string; Icon: typeof GasPu
 ];
 
 export function AdminHubScreen() {
-  const navigate = useNavigate();
+  const navigate = useGo();
   return (
     <>
       <ScreenTitle title="Admin" />

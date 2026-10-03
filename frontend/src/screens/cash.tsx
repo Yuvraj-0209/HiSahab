@@ -11,11 +11,11 @@
  */
 
 import { type ReactNode, useRef } from "react";
-import { useNavigate } from "react-router";
 import { BellIcon, CaretRightIcon, ChartBarIcon, FlagIcon } from "@phosphor-icons/react";
 import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenTitle } from "../app/chrome";
+import { useGo } from "../app/navigation";
 import { oldestUnreconciled } from "../lib/days";
 import { isNegative, isZero } from "../lib/money";
 import { businessDate } from "../lib/time";
@@ -27,7 +27,7 @@ import { DayRow, useDays, useReconcile, WorklistCard } from "./days";
 const RECENT = 8;
 
 export function CashScreen() {
-  const navigate = useNavigate();
+  const navigate = useGo();
   const shift = useApiQuery<Schemas["ShiftResponse"]>("/shifts/current", undefined, { absentOn: ["NO_OPEN_SHIFT"] });
   const outstanding = useApiQuery<Schemas["OutstandingReport"]>("/salesman-shortfalls/outstanding");
   const { days, pending, error, refetch } = useDays();

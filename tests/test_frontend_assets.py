@@ -321,3 +321,18 @@ def test_the_css_motion_tokens_mirror_the_gsap_ones() -> None:
         assert token(f"dur-{name}") == f"{round(float(seconds) * 1000)}ms", name
     for name, curve in eases:
         assert token(f"ease-{name}") == curve, name
+
+
+def test_every_navigation_goes_through_use_go() -> None:
+    """Phase 24 D3: `useGo` (src/app/navigation.ts) is `useNavigate` with a direction and a view
+    transition. A screen that calls `useNavigate` directly arrives with no sense of where it came
+    from -- not broken, just quietly unlike every other screen, which is how a consistent motion
+    language erodes one file at a time."""
+    offenders = [
+        f"{_name(path)}:{number}: {line.strip()}"
+        for path in _modules()
+        if path != _SRC / "app" / "navigation.ts"
+        for number, line in _code_lines(path)
+        if "useNavigate" in line
+    ]
+    assert offenders == [], f"navigation that bypasses useGo: {offenders}"

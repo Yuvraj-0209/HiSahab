@@ -10,11 +10,12 @@
  */
 
 import { type ReactNode, useMemo, useRef } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useParams } from "react-router";
 import { BankIcon, CaretRightIcon, HandCoinsIcon, ReceiptIcon } from "@phosphor-icons/react";
 import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
+import { sharedSource, useGo } from "../app/navigation";
 import { useSession } from "../app/session";
 import { compareSignedMoney, format, isNegative, isZero } from "../lib/money";
 import { satisfies } from "../lib/roles";
@@ -39,7 +40,7 @@ function standing(entry: Balance): string {
 
 export function CreditHubScreen() {
   const { me } = useSession();
-  const navigate = useNavigate();
+  const navigate = useGo();
   const balances = useApiQuery<Schemas["OpeningBalancePage"]>("/credit-opening-balances");
   const list = useRef<HTMLDivElement>(null);
   useArrival(list, Boolean(balances.data));
@@ -105,12 +106,14 @@ export function CreditHubScreen() {
                 key={entry.credit_customer_id}
                 type="button"
                 data-arrive
-                onClick={() => navigate(`/credit/customers/${entry.credit_customer_id}`)}
+                onClick={(event) => navigate(`/credit/customers/${entry.credit_customer_id}`, { shared: sharedSource(event) })}
                 className="pressable flex w-full items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
               >
                 <span className="min-w-0 grow">
                   <span className="flex items-center gap-2">
-                    <span className="truncate text-[0.9375rem] font-semibold text-ink">{entry.name}</span>
+                    <span data-shared-source className="truncate text-[0.9375rem] font-semibold text-ink">
+                      {entry.name}
+                    </span>
                     {entry.is_active ? null : <Pill kind="neutral">inactive</Pill>}
                   </span>
                   <span className={`block text-[0.8125rem] ${entry.opening_balance === null ? "t-absent" : "text-ink-muted"}`}>
@@ -150,7 +153,7 @@ function HubLink({ icon, label, onClick }: { icon: ReactNode; label: string; onC
 
 export function CustomerLedgerScreen() {
   const { customerId = "" } = useParams();
-  const navigate = useNavigate();
+  const navigate = useGo();
   const customer = useApiQuery<Schemas["CreditCustomerResponse"]>(`/credit-customers/${customerId}`);
   const ledger = useApiQuery<Schemas["app__api__v1__credit_customers__LedgerPage"]>(`/credit-customers/${customerId}/ledger`);
   const list = useRef<HTMLDivElement>(null);

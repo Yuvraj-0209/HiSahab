@@ -20,12 +20,13 @@
  */
 
 import { type ReactNode, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useParams } from "react-router";
 import { CaretRightIcon } from "@phosphor-icons/react";
 import { api, ApiError } from "../api/client";
 import { useApiQuery, useRefreshApi } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
+import { sharedSource, useGo } from "../app/navigation";
 import { useSession } from "../app/session";
 import { type Day, dayState, type DayState, LIFECYCLE, mergeDays, oldestUnreconciled } from "../lib/days";
 import { format, varianceLabel } from "../lib/money";
@@ -117,7 +118,7 @@ export function LifecycleStrip({ state }: { state: DayState }) {
 /** Reconcile straight from a row. The first day ever needs a seeded opening, so the server's
  * OPENING_BALANCE_REQUIRED opens the sheet that can ask for one. */
 export function useReconcile() {
-  const navigate = useNavigate();
+  const navigate = useGo();
   const refresh = useRefreshApi();
   const [seeding, setSeeding] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -146,7 +147,7 @@ export function useReconcile() {
 }
 
 function CreateSummaryForm({ businessDate: date, onDone }: { businessDate: string; onDone: () => void }) {
-  const navigate = useNavigate();
+  const navigate = useGo();
   const refresh = useRefreshApi();
   const form = useForm({ business_date: date, opening_balance: "", notes: "" });
   const [busy, setBusy] = useState(false);
@@ -195,19 +196,21 @@ function CreateSummaryForm({ businessDate: date, onDone }: { businessDate: strin
 
 export function DayRow({ day, unblocked }: { day: MergedDay; unblocked: string | null }) {
   const { me } = useSession();
-  const navigate = useNavigate();
+  const navigate = useGo();
   const state = dayState(day, { role: me.role, unblocked });
   const variance = varianceLabel(day.summary?.variance ?? null);
   return (
     <button
       type="button"
       data-arrive
-      onClick={() => navigate(`/days/${day.business_date}`)}
+      onClick={(event) => navigate(`/days/${day.business_date}`, { shared: sharedSource(event) })}
       // A review flag is named by the lifecycle label ("Needs review"), not by tinting the row.
       className="pressable flex w-full items-center gap-3 border-b border-hairline py-3 text-left last:border-b-0"
     >
       <div className="min-w-0 grow">
-        <p className="text-[0.9375rem] text-ink">{businessDate(day.business_date)}</p>
+        <p data-shared-source className="text-[0.9375rem] text-ink">
+          {businessDate(day.business_date)}
+        </p>
         <LifecycleStrip state={state} />
       </div>
       <div className="flex shrink-0 flex-col items-end">
@@ -233,13 +236,15 @@ export function WorklistCard({
   busy: boolean;
 }) {
   const { me } = useSession();
-  const navigate = useNavigate();
+  const navigate = useGo();
   const state = dayState(day, { role: me.role, unblocked });
   return (
-    <div data-arrive>
+    <div data-arrive data-shared-scope>
       <Card className={day.summary?.requires_review ? "border-warning" : ""}>
         <div className="flex items-start justify-between gap-3">
-          <p className="text-[1.125rem] font-semibold tracking-[-0.015em] text-ink">{businessDate(day.business_date)}</p>
+          <p data-shared-source className="text-[1.125rem] font-semibold tracking-[-0.015em] text-ink">
+            {businessDate(day.business_date)}
+          </p>
           <Pill kind={state.kind}>{state.label}</Pill>
         </div>
         <div className="mt-2">
@@ -263,7 +268,7 @@ export function WorklistCard({
               {busy ? "Reconciling…" : state.action.text}
             </Button>
           ) : null}
-          <Button variant="plain" block onClick={() => navigate(`/days/${day.business_date}`)}>
+          <Button variant="plain" block onClick={(event) => navigate(`/days/${day.business_date}`, { shared: sharedSource(event) })}>
             Open the day
           </Button>
         </div>
@@ -326,7 +331,7 @@ type Act = "count" | "unfinalise" | null;
 export function DayScreen() {
   const { businessDate: date = "" } = useParams();
   const { me } = useSession();
-  const navigate = useNavigate();
+  const navigate = useGo();
   const refresh = useRefreshApi();
   const report = useApiQuery<Schemas["DailyReportResponse"]>(`/reports/daily/${date}`);
   const { days, pending, error, refetch } = useDays();

@@ -12,12 +12,12 @@
  */
 
 import { useState } from "react";
-import { useNavigate } from "react-router";
 import { CaretRightIcon } from "@phosphor-icons/react";
 import { api } from "../api/client";
 import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenTitle } from "../app/chrome";
+import { useGo } from "../app/navigation";
 import { businessDate, todayAtOutlet } from "../lib/time";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
@@ -28,7 +28,7 @@ import { Sheet } from "../ui/Sheet";
 type Flagged = Schemas["FlaggedExpenseResponse"];
 
 export function FlaggedExpensesScreen() {
-  const navigate = useNavigate();
+  const navigate = useGo();
   const page = useApiQuery<Schemas["FlaggedExpensePage"]>("/expenses/flagged", { limit: 100 });
   const [summaryOpen, setSummaryOpen] = useState(false);
 

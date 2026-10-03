@@ -3282,8 +3282,9 @@ future reader must be able to tell the difference.
     Phase 24. A tab change slides, a drill-down pushes and a day row's date flies into the day
     screen's title — in browsers that implement same-document view transitions. Elsewhere a
     screen arrives with a plain CSS fade, which is what Phase 23 did everywhere. The browser's
-    own back and forward buttons swap screens without a transition, because the router starts
-    one only for navigations it initiates. A difference in feel, never in what a screen shows.
+    own back and forward buttons get that plain fade too, because the router starts a view
+    transition only for navigations it initiates. A difference in feel, never in what a screen
+    shows.
 
 ---
 

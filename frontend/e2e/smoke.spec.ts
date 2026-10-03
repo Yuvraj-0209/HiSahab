@@ -297,6 +297,61 @@ test("cash: only the oldest unreconciled day can be reconciled, and reconciling 
   expect(problems).toEqual([]);
 });
 
+/** Record what every view transition did. A transition the browser aborts -- a duplicate
+ * `view-transition-name` is the classic cause -- is skipped silently: the page still changes, and
+ * nothing but this record would notice that the motion never happened. */
+async function recordTransitions(page: Page) {
+  await page.addInitScript(() => {
+    const log: string[] = [];
+    (window as unknown as { __transitions: string[] }).__transitions = log;
+    const start = document.startViewTransition?.bind(document);
+    if (!start) return;
+    document.startViewTransition = ((update: ViewTransitionUpdateCallback) => {
+      const transition = start(update);
+      log.push("started");
+      transition.ready.then(
+        () => log.push("ready"),
+        (error: Error) => log.push(`aborted: ${error.name}`),
+      );
+      transition.finished.then(() => log.push("finished"));
+      return transition;
+    }) as typeof document.startViewTransition;
+  });
+  return () => page.evaluate(() => (window as unknown as { __transitions: string[] }).__transitions);
+}
+
+test("navigation: a day row flies into its day, a tab change slides, and every transition completes (Phase 24 D3)", async ({ page }) => {
+  const problems = await watch(page);
+  const transitions = await recordTransitions(page);
+  await signedIn(page, { role: "admin", responses: { ...cashResponses(), ...summaryResponses() } });
+  await page.goto("/#/days");
+  await settle(page);
+
+  // A drill-down: the row's date is the shared element, the day screen's subtitle its landing.
+  const row = page.locator("button:has([data-shared-source])").first();
+  const date = (await row.locator("[data-shared-source]").textContent())?.trim();
+  await row.click();
+  await expect(page).toHaveURL(/#\/days\/\d{4}-\d{2}-\d{2}$/);
+  await expect(page.getByRole("heading", { level: 1, name: "Day" })).toBeVisible();
+  await expect(page.locator("[data-shared-target]")).toHaveText(date ?? "");
+  await expect.poll(transitions).toEqual(["started", "ready", "finished"]);
+
+  // A tab change to the right.
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("button", { name: "Summary" }).click();
+  await expect.poll(transitions).toEqual(["started", "ready", "finished", "started", "ready", "finished"]);
+  expect(problems).toEqual([]);
+});
+
+test("navigation: under reduced motion no transition is started at all (Phase 24 D3)", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const transitions = await recordTransitions(page);
+  await signedIn(page, { role: "admin", responses: cashResponses() });
+  await page.goto("/#/days");
+  await page.locator("button:has([data-shared-source])").first().click();
+  await expect(page.getByRole("heading", { level: 1, name: "Day" })).toBeVisible();
+  expect(await transitions()).toEqual([]);
+});
+
 test("day: a fuel with no commission is unknown, never zero (§13.21)", async ({ page }) => {
   await signedIn(page, { role: "manager", responses: cashResponses() });
   await page.goto(`/#/days/${PREVIOUS_DATE}`);

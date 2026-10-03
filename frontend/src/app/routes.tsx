@@ -17,7 +17,8 @@ import { notify } from "../ui/toast";
 import { Button, Card } from "../ui/primitives";
 import { ScreenTitle } from "./chrome";
 import { useSession } from "./session";
-import { type RouteHandle, Shell } from "./Shell";
+import { Shell } from "./Shell";
+import type { RouteHandle } from "./tabs";
 
 function Refused() {
   useEffect(() => {

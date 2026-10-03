@@ -16,11 +16,12 @@
  */
 
 import { type FormEvent, type ReactNode, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 import { CaretDownIcon, PrinterIcon } from "@phosphor-icons/react";
 import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
+import { useGo } from "../app/navigation";
 import { lastCompletedHalf } from "../lib/billing";
 import { format, isZero } from "../lib/money";
 import { businessDate, businessDateRange, todayAtOutlet } from "../lib/time";
@@ -169,7 +170,7 @@ function Notice({ children, className = "" }: { children: ReactNode; className?:
 }
 
 function DateForm({ from, to }: { from: string; to: string }) {
-  const navigate = useNavigate();
+  const navigate = useGo();
   const form = useForm({ from, to });
 
   function submit(event: FormEvent) {
@@ -201,7 +202,7 @@ function DateForm({ from, to }: { from: string; to: string }) {
 }
 
 function CustomerCard({ entry, to }: { entry: Row; to: string }) {
-  const navigate = useNavigate();
+  const navigate = useGo();
   const [open, setOpen] = useState(false);
   const card = useRef<HTMLDivElement>(null);
   const inRange = entry.lines.filter((line) => line.period === "in_range");

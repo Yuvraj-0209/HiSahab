@@ -119,7 +119,7 @@ AI-generated now and replaced with real photos of the pump later.
   customer row's name flies into the ledger header. The name is set on the tapped row only, at
   click time, because names must be unique at capture.
 - **Fallback:** browsers without the API get a CSS keyframe entrance on the keyed screen `div`.
-  Browser back/forward is instant (§13 approximation, D10).
+  Browser back/forward gets that plain entrance too (§13.43).
 - **Reduced motion:** `::view-transition-group(*) { animation: none }`.
 - A structural test bans bare `useNavigate` in `screens/`, so new screens get transitions
   automatically.
@@ -350,6 +350,28 @@ None.
   - e2e `settle()` now also waits on `document.getAnimations()` (CSS and view transitions), with
     infinite animations excluded.
   - Vitest 65, Playwright 126.
+
+- **Commit 3 — navigation.** `src/app/navigation.ts`: `useGo()` (all 41 `navigate` calls in 12
+  screens and the shell migrated mechanically; same signature), `directionOf`, `sharedSource`.
+  `TABS` moved to `src/app/tabs.ts` so navigation can read it without importing the shell.
+  Shared elements: day rows, worklist cards, report and alert rows fly their date into the day
+  screen's subtitle; credit rows fly the customer's name into the ledger's.
+  - **Fade-through, found by looking.** Frames captured mid-transition showed the first timing
+    (outgoing over 240 ms on a slow-start curve) as a double exposure: two screens of figures on
+    top of each other at 60 ms. The outgoing screen now clears within 140 ms on a fast-start
+    curve and the incoming one starts 60 ms in.
+  - **The budget caught its first regression.** `navigation.ts` asked `motionAllowed` of
+    `motion/gsap.ts`, which brought GSAP's core back into the first paint (150.3 KiB). The answer
+    moved to a GSAP-free `motion/preference.ts`: 123.8 KiB.
+  - The scroll reset in the shell became a layout effect, so it lands inside the transition's
+    update rather than after the new screen was captured.
+  - **Deviation:** back/forward gets the plain CSS entrance rather than nothing (§13.43 amended
+    to match). `data-nav` marks a router-started transition and suppresses the plain entrance
+    only while one plays.
+  - Tests: `directionOf` (Vitest, 7); `useNavigate` banned outside navigation.ts (pytest);
+    Playwright records every `startViewTransition` and asserts each reaches `ready` and
+    `finished` (a duplicate `view-transition-name` aborts one silently), plus none under reduced
+    motion.
 
 ## Still owed by the owner
 

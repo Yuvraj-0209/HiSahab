@@ -20,13 +20,13 @@
 import { type RefObject } from "react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
+import { NO_PREFERENCE } from "./preference";
 
 gsap.registerPlugin(useGSAP);
 
 export { gsap };
+export { motionAllowed, NO_PREFERENCE } from "./preference";
 
-/** The media query every tween runs under. Reduced motion means the content simply arrives. */
-export const NO_PREFERENCE = "(prefers-reduced-motion: no-preference)";
 
 /** Seconds, as GSAP takes them. CSS mirrors these in milliseconds. */
 export const DURATION = {
@@ -52,12 +52,6 @@ export const EASE = {
   /** A state landing, with a small overshoot. */
   settle: { gsap: "back.out(1.8)", css: "cubic-bezier(0.34, 1.56, 0.64, 1)" },
 } as const;
-
-/** Whether motion is welcome right now, for code that is not a tween (a view transition, a
- * vibration). Tweens should go through `useMotion` instead. */
-export function motionAllowed(): boolean {
-  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(NO_PREFERENCE).matches;
-}
 
 /** Starts the tweens inside it only when motion is welcome. */
 export type Play = (animate: () => void) => void;

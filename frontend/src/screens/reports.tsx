@@ -14,11 +14,12 @@
  */
 
 import { useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 import { CaretRightIcon } from "@phosphor-icons/react";
 import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
+import { sharedSource, useGo } from "../app/navigation";
 import { varianceLabel } from "../lib/money";
 import { businessDate } from "../lib/time";
 import { Amount } from "../ui/Amount";
@@ -33,7 +34,7 @@ function useWindow() {
 }
 
 export function ReportsScreen() {
-  const navigate = useNavigate();
+  const navigate = useGo();
   const window = useWindow();
   const report = useApiQuery<Schemas["RangeReportResponse"]>("/reports/range", window);
   const list = useRef<HTMLDivElement>(null);
@@ -89,11 +90,13 @@ export function ReportsScreen() {
                       key={day.business_date}
                       type="button"
                       data-arrive
-                      onClick={() => navigate(`/days/${day.business_date}`)}
+                      onClick={(event) => navigate(`/days/${day.business_date}`, { shared: sharedSource(event) })}
                       className="pressable flex w-full items-center gap-3 border-b border-hairline py-3 text-left last:border-b-0"
                     >
                       <div className="min-w-0 grow">
-                        <p className="text-[0.9375rem] text-ink">{businessDate(day.business_date)}</p>
+                        <p data-shared-source className="text-[0.9375rem] text-ink">
+                          {businessDate(day.business_date)}
+                        </p>
                         <div className="mt-1 flex flex-wrap gap-1.5">
                           <Pill kind={SOURCE_PILL[day.source] ?? "neutral"}>{day.source.replace("_", " ")}</Pill>
                           {day.is_finalised ? <Pill kind="locked">finalised</Pill> : null}
@@ -137,7 +140,7 @@ const ALERT_LABEL: Record<string, string> = {
 };
 
 export function AlertsScreen() {
-  const navigate = useNavigate();
+  const navigate = useGo();
   const window = useWindow();
   const report = useApiQuery<Schemas["AlertsResponse"]>("/reports/variance-alerts", window);
   const list = useRef<HTMLDivElement>(null);
@@ -177,13 +180,15 @@ export function AlertsScreen() {
                 key={`${alert.kind}-${alert.business_date}-${index}`}
                 type="button"
                 data-arrive
-                onClick={() => navigate(`/days/${alert.business_date}`)}
+                onClick={(event) => navigate(`/days/${alert.business_date}`, { shared: sharedSource(event) })}
                 className="pressable flex w-full items-center gap-3 rounded-[var(--radius-card)] border border-warning bg-surface px-4 py-3.5 text-left shadow-1"
               >
                 <div className="min-w-0 grow">
                   <p className="text-[0.9375rem] font-medium text-ink">{ALERT_LABEL[alert.kind] ?? alert.kind}</p>
                   <p className="text-[0.8125rem] text-ink-muted">{alert.detail}</p>
-                  <p className="text-[0.75rem] text-ink-faint">{businessDate(alert.business_date)}</p>
+                  <p data-shared-source className="text-[0.75rem] text-ink-faint">
+                    {businessDate(alert.business_date)}
+                  </p>
                 </div>
                 {alert.amount !== null ? (
                   <span className="shrink-0 text-[0.9375rem] text-ink">

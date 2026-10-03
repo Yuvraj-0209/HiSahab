@@ -3,7 +3,7 @@
  * hands a test an empty string for any CSS import. */
 
 import { describe, expect, it, vi } from "vitest";
-import { motionAllowed } from "./gsap";
+import { motionAllowed } from "./preference";
 
 describe("motionAllowed", () => {
   it("is false when the phone asks for reduced motion", () => {

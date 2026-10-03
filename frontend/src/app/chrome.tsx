@@ -28,7 +28,13 @@ export function ScreenTitle({ title, subtitle }: { title: string; subtitle?: str
   return createPortal(
     <div className="min-w-0">
       <h1 className="truncate text-[1.0625rem] leading-tight font-semibold tracking-[-0.015em] text-ink">{title}</h1>
-      {subtitle ? <p className="truncate text-[0.8125rem] leading-tight text-ink-muted">{subtitle}</p> : null}
+      {/* The landing place for a shared-element transition (navigation.ts): a day row's date
+       * flies in here as the day screen's subtitle. Named only for the length of one transition. */}
+      {subtitle ? (
+        <p data-shared-target className="truncate text-[0.8125rem] leading-tight text-ink-muted">
+          {subtitle}
+        </p>
+      ) : null}
     </div>,
     slot,
   );

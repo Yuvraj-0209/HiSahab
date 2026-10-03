@@ -21,7 +21,6 @@
  */
 
 import { useState } from "react";
-import { useNavigate } from "react-router";
 import { api } from "../api/client";
 import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
@@ -31,11 +30,12 @@ import { CheckboxField, TextField, useForm } from "../ui/form";
 import { Button, Empty, ListRow, Pill } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { ActivePill, AddAction, AdminCard, AdminGrid, AdminList, type Editing, Fields, SaveButton, useSave } from "./admin";
+import { useGo } from "../app/navigation";
 
 type Customer = Schemas["CreditCustomerResponse"];
 
 export function CustomersScreen() {
-  const navigate = useNavigate();
+  const navigate = useGo();
   // The manager-floor report, which carries phone, limit and balance -- unlike the lean list
   // every role can read (§8).
   const customers = useApiQuery<Customer[]>("/credit-customers/outstanding", { include_settled: true });

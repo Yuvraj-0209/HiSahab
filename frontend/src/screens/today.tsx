@@ -25,13 +25,14 @@
  */
 
 import { type ReactNode, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { CaretRightIcon, LockIcon, NotePencilIcon } from "@phosphor-icons/react";
 import { api } from "../api/client";
 import { apiKey, useApiQuery, useRefreshApi } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenTitle } from "../app/chrome";
+import { useGo } from "../app/navigation";
 import { useSession } from "../app/session";
 import { format, quantity, reading, varianceLabel } from "../lib/money";
 import { satisfies } from "../lib/roles";
@@ -122,7 +123,7 @@ function ShiftDetail({ shift }: { shift: Shift }) {
 
 function ShiftHeader({ shift }: { shift: Shift }) {
   const { me } = useSession();
-  const navigate = useNavigate();
+  const navigate = useGo();
   const queryClient = useQueryClient();
   const refresh = useRefreshApi();
   const [busy, setBusy] = useState<"close" | "lock" | null>(null);
@@ -627,7 +628,7 @@ function dayCashLines(cash: Schemas["DayCashResponse"] | null): Line[] {
 
 function NoShift() {
   const { me } = useSession();
-  const navigate = useNavigate();
+  const navigate = useGo();
   const isManager = satisfies(me.role, "manager");
   const [opening, setOpening] = useState(false);
   // A closed-but-unlocked shift has no other page pointing at it, so manager+ gets a way back.

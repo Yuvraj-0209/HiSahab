@@ -18,53 +18,20 @@
  * choreograph something.
  */
 
-import { type ComponentType, type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
-import { Outlet, useLocation, useMatches, useNavigate } from "react-router";
-import {
-  ChartPieSliceIcon,
-  CurrencyInrIcon,
-  GearSixIcon,
-  NotebookIcon,
-  NotePencilIcon,
-  type IconProps,
-  SignOutIcon,
-  SunHorizonIcon,
-} from "@phosphor-icons/react";
-import { satisfies, type Role } from "../lib/roles";
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Outlet, useLocation, useMatches } from "react-router";
+import { SignOutIcon } from "@phosphor-icons/react";
+import { satisfies } from "../lib/roles";
 import { ChromeContext, type ChromeSlots } from "./chrome";
+import { useGo } from "./navigation";
+import { type RouteHandle, type Tab, TABS } from "./tabs";
 import { useSession } from "./session";
-
-export type TabId = "today" | "entry" | "cash" | "credit" | "summary" | "admin";
-
-export interface RouteHandle {
-  tab?: TabId;
-}
-
-interface Tab {
-  id: TabId;
-  label: string;
-  route: string;
-  role: Role;
-  Icon: ComponentType<IconProps>;
-}
-
-/* Direct, specific names: what is inside, rather than an umbrella like "Home". The order runs
- * entry-first -- what you do today, then what you owe, then how it went. */
-export const TABS: readonly Tab[] = [
-  { id: "today", label: "Today", route: "/today", role: "attendant", Icon: SunHorizonIcon },
-  { id: "entry", label: "Entry", route: "/entry", role: "attendant", Icon: NotePencilIcon },
-  { id: "cash", label: "Cash", route: "/cash", role: "manager", Icon: CurrencyInrIcon },
-  // Manager floor (§8): a customer's balance has never been an attendant's business.
-  { id: "credit", label: "Credit", route: "/credit", role: "manager", Icon: NotebookIcon },
-  { id: "summary", label: "Summary", route: "/summary", role: "manager", Icon: ChartPieSliceIcon },
-  { id: "admin", label: "Admin", route: "/admin", role: "admin", Icon: GearSixIcon },
-];
 
 export function Shell() {
   const { me, signOut } = useSession();
   const location = useLocation();
   const matches = useMatches();
-  const navigate = useNavigate();
+  const navigate = useGo();
 
   const visible = TABS.filter((tab) => satisfies(me.role, tab.role));
   const activeId = [...matches].reverse().map((m) => (m.handle as RouteHandle | undefined)?.tab).find(Boolean);
@@ -86,8 +53,10 @@ export function Shell() {
     return () => observer.disconnect();
   }, []);
 
-  // Every screen starts at the top, as the Phase 12 router did.
-  useEffect(() => {
+  // Every screen starts at the top, as the Phase 12 router did. A layout effect, so it happens
+  // inside the view transition's update (navigation.ts) -- after the effect would be after the
+  // new screen was captured, and the page would jump once the transition ended.
+  useLayoutEffect(() => {
     window.scrollTo(0, 0);
   }, [location.pathname]);
 

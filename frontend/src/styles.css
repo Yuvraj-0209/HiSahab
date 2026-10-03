@@ -338,6 +338,137 @@
     opacity var(--dur-small) ease;
 }
 
+/* Route transitions (Phase 24 D3, src/app/navigation.ts). The browser snapshots the page before
+ * and after a navigation, and these rules animate the snapshots -- never the live elements, so
+ * this engine cannot fight GSAP or the spring for a transform.
+ *
+ * The chrome and the tab bar are captured on their own and do not move: only the screen region
+ * (the root snapshot) travels. The tab bar shows its live self, so its indicator's own slide is
+ * what you see. Shared-axis motion: the outgoing screen leaves a short distance the way you are
+ * going and fades; the incoming one arrives from the other side. A short distance, not a full
+ * slide -- the point is direction, not spectacle.
+ *
+ * "Fade through" timing: the outgoing screen is gone within --dur-tap, on a fast-start curve,
+ * before the incoming one begins. Two text-dense screens crossfading at once read as a double
+ * exposure, which on a money screen is two sets of figures on top of each other. */
+.chrome {
+  view-transition-name: chrome;
+}
+
+.tabbar {
+  view-transition-name: tabbar;
+}
+
+::view-transition-group(chrome),
+::view-transition-group(tabbar) {
+  animation: none;
+}
+
+::view-transition-old(chrome),
+::view-transition-new(chrome) {
+  animation-duration: var(--dur-small);
+}
+
+::view-transition-old(tabbar) {
+  display: none;
+}
+
+::view-transition-new(tabbar) {
+  animation: none;
+}
+
+::view-transition-group(shared) {
+  animation-duration: var(--dur-medium);
+  animation-timing-function: var(--ease-move);
+}
+
+html[data-shared] [data-shared-target]:not([data-leaving]) {
+  view-transition-name: shared;
+}
+
+/* While a view transition plays, the CSS entrance stays out of its way. */
+html[data-nav] .screen-enter {
+  animation: none;
+}
+
+html[data-nav="forward"],
+html[data-nav="back"] {
+  --vt-distance: 32px;
+}
+
+html[data-nav="left"],
+html[data-nav="right"] {
+  --vt-distance: 20px;
+}
+
+html[data-nav="forward"]::view-transition-old(root),
+html[data-nav="right"]::view-transition-old(root) {
+  animation: vt-leave-left var(--dur-tap) var(--ease-enter) both;
+}
+
+html[data-nav="forward"]::view-transition-new(root),
+html[data-nav="right"]::view-transition-new(root) {
+  animation: vt-arrive-right var(--dur-medium) var(--ease-enter) 60ms both;
+}
+
+html[data-nav="back"]::view-transition-old(root),
+html[data-nav="left"]::view-transition-old(root) {
+  animation: vt-leave-right var(--dur-tap) var(--ease-enter) both;
+}
+
+html[data-nav="back"]::view-transition-new(root),
+html[data-nav="left"]::view-transition-new(root) {
+  animation: vt-arrive-left var(--dur-medium) var(--ease-enter) 60ms both;
+}
+
+html[data-nav="fade"]::view-transition-old(root) {
+  animation: vt-fade-out var(--dur-tap) var(--ease-enter) both;
+}
+
+html[data-nav="fade"]::view-transition-new(root) {
+  animation: vt-fade-in var(--dur-medium) var(--ease-enter) 60ms both;
+}
+
+@keyframes vt-leave-left {
+  to {
+    opacity: 0;
+    transform: translate3d(calc(-1 * var(--vt-distance)), 0, 0);
+  }
+}
+
+@keyframes vt-leave-right {
+  to {
+    opacity: 0;
+    transform: translate3d(var(--vt-distance), 0, 0);
+  }
+}
+
+@keyframes vt-arrive-right {
+  from {
+    opacity: 0;
+    transform: translate3d(var(--vt-distance), 0, 0);
+  }
+}
+
+@keyframes vt-arrive-left {
+  from {
+    opacity: 0;
+    transform: translate3d(calc(-1 * var(--vt-distance)), 0, 0);
+  }
+}
+
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes vt-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
 /* The sheet is solid, never blurred: it animates `transform` under a finger, and a filter on
  * a moving element re-rasterises every frame (§13.29). */
 .sheet {
@@ -451,6 +582,12 @@ select.field-control {
 @media (prefers-reduced-motion: reduce) {
   .login-plate {
     animation: none;
+  }
+  /* navigation.ts starts no view transition under reduced motion; this is the belt to that. */
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
   *,
   *::before,

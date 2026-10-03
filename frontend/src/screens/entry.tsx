@@ -7,7 +7,6 @@
  */
 
 import { type ComponentType, useRef } from "react";
-import { useNavigate } from "react-router";
 import {
   BankIcon,
   CaretRightIcon,
@@ -22,6 +21,7 @@ import {
 import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenTitle } from "../app/chrome";
+import { useGo } from "../app/navigation";
 import { useSession } from "../app/session";
 import { satisfies, type Role } from "../lib/roles";
 import { businessDate } from "../lib/time";
@@ -48,7 +48,7 @@ const LINES: readonly EntryLine[] = [
 
 export function EntryScreen() {
   const { me } = useSession();
-  const navigate = useNavigate();
+  const navigate = useGo();
   const current = useApiQuery<Schemas["ShiftResponse"]>("/shifts/current", undefined, { absentOn: ["NO_OPEN_SHIFT"] });
   const list = useRef<HTMLDivElement>(null);
   useArrival(list, Boolean(current.data));
