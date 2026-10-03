@@ -40,7 +40,9 @@
   /* Ink. A cool near-black -- never pure #000, which flattens every shadow to nothing. */
   --ink: #14161a;
   --ink-muted: #545a64;
-  --ink-faint: #737a85;
+  /* AA (4.5:1) for small text on every surface, sunken included -- this is the colour every
+   * "not declared" and "not counted" is written in, so it must stay readable (§14). */
+  --ink-faint: #616874;
 
   --hairline: rgb(20 22 26 / 0.09);
   --hairline-strong: rgb(20 22 26 / 0.16);
@@ -87,7 +89,7 @@
 
     --ink: #eceef1;
     --ink-muted: #a3a8b0;
-    --ink-faint: #7a808a;
+    --ink-faint: #8a909a;
 
     --hairline: rgb(255 255 255 / 0.08);
     --hairline-strong: rgb(255 255 255 / 0.15);

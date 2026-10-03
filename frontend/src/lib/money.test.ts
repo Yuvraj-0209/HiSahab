@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { format, gapLabel, isZero, quantity, varianceIsShort, varianceLabel } from "./money";
+import { compareMoney, format, gapLabel, isZero, quantity, varianceIsShort, varianceLabel } from "./money";
 
 describe("variance: counted − expected", () => {
   it("a positive variance is a surplus", () => {
@@ -93,5 +93,20 @@ describe("quantity reads the unit, never assumes litres (§4.5)", () => {
   it("CBG is kilograms", () => {
     expect(quantity("12.500", "kilogram")).toBe("12.500 kg");
     expect(quantity("40.000", "litre")).toBe("40.000 L");
+  });
+});
+
+describe("compareMoney orders strings without parsing them", () => {
+  it("compares by magnitude, not by text", () => {
+    expect(compareMoney("10000.00", "5000.00")).toBe(1);
+    expect(compareMoney("999.99", "1000.00")).toBe(-1);
+  });
+  it("is exact at the boundary §6.11 cares about", () => {
+    expect(compareMoney("5000.00", "5000.00")).toBe(0);
+    expect(compareMoney("5000", "5000.00")).toBe(0);
+    expect(compareMoney("5000.01", "5000.00")).toBe(1);
+  });
+  it("ignores leading zeros", () => {
+    expect(compareMoney("0500.00", "500")).toBe(0);
   });
 });

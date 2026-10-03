@@ -1,7 +1,7 @@
 {
   "name": "hisahab-frontend",
   "private": true,
-  "description": "HiSahab's frontend (Phase 23, CLAUDE.md §2): React + TypeScript + Tailwind + GSAP, built by Vite. Served by FastAPI's StaticFiles mount; it holds no business rule of its own.",
+  "description": "HiSahab's frontend (Phase 23, CLAUDE.md \u00a72): React + TypeScript + Tailwind + GSAP, built by Vite. Served by FastAPI's StaticFiles mount; it holds no business rule of its own.",
   "type": "module",
   "engines": {
     "node": ">=24"
@@ -16,7 +16,8 @@
     "preview": "vite preview",
     "pretest": "npm run api:types",
     "test": "vitest run",
-    "typecheck": "npm run api:types && tsc --noEmit"
+    "typecheck": "npm run api:types && tsc --noEmit",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.3.0",

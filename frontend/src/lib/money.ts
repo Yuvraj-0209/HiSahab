@@ -182,3 +182,26 @@ export function reading(
   if (value === null || value === undefined) return absent;
   return String(value);
 }
+
+/**
+ * Compare two non-negative decimal money strings without turning either into a number.
+ *
+ * The one ordering the client genuinely needs: whether a typed amount is over the receipt
+ * threshold, so a person is warned *before* the server refuses with 422. Integer-part length
+ * first (leading zeros stripped), then the digits lexically, then the fraction padded -- exact
+ * for this shape of input, and only ever used to show a warning, never to decide anything the
+ * server does not decide again for itself. Returns -1, 0 or 1. Ported from expenses.js and
+ * credit.js, which each had a copy.
+ */
+export function compareMoney(a: Money, b: Money): number {
+  const [aWhole = "0", aFrac = ""] = String(a).trim().split(".");
+  const [bWhole = "0", bFrac = ""] = String(b).trim().split(".");
+  const aw = aWhole.replace(/^0+(?=\d)/, "");
+  const bw = bWhole.replace(/^0+(?=\d)/, "");
+  if (aw.length !== bw.length) return aw.length > bw.length ? 1 : -1;
+  if (aw !== bw) return aw > bw ? 1 : -1;
+  const width = Math.max(aFrac.length, bFrac.length);
+  const af = aFrac.padEnd(width, "0");
+  const bf = bFrac.padEnd(width, "0");
+  return af === bf ? 0 : af > bf ? 1 : -1;
+}
