@@ -43,7 +43,7 @@ import { quantity, reading } from "../lib/money";
 import { satisfies } from "../lib/roles";
 import { reportFailure } from "../ui/feedback";
 import { CheckboxField, TextField, useForm } from "../ui/form";
-import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
+import { useFlipList } from "../motion/flip";
 import { useArrival } from "../ui/motion";
 import { Button, Card, Empty, ErrorCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
@@ -123,11 +123,7 @@ export function ReadingsScreen() {
           {groupByFuel(data.lines).map((group) => (
             <section key={group.code}>
               <SectionLabel>{group.code}</SectionLabel>
-              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
-                {group.lines.map((member) => (
-                  <NozzleTile key={member.nozzle_id} line={member} onOpen={() => setSelected(member.nozzle_id)} />
-                ))}
-              </div>
+              <NozzleGrid lines={group.lines} onOpen={setSelected} />
             </section>
           ))}
         </div>
@@ -147,28 +143,29 @@ export function ReadingsScreen() {
   );
 }
 
-/** One nozzle as a tile. When its state changes after a save, it settles in with a brief scale
- * -- a state transition the attendant can see land, not decoration. */
+/** One fuel's tiles. When a reading lands, its tile changes shape (a pill, then three figures)
+ * and the grid reflows; Flip moves every tile from where it was to where it now is, so the
+ * attendant sees the reading land in place rather than the grid jumping (Phase 23 D8's intent,
+ * delivered in Phase 24). */
+function NozzleGrid({ lines, onOpen }: { lines: Line[]; onOpen: (nozzleId: string) => void }) {
+  const grid = useRef<HTMLDivElement>(null);
+  useFlipList(grid, lines.map((line) => `${line.nozzle_id}:${status(line).text}:${line.reading?.closing_reading ?? ""}`).join("|"));
+  return (
+    <div ref={grid} className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+      {lines.map((member) => (
+        <NozzleTile key={member.nozzle_id} line={member} onOpen={() => onOpen(member.nozzle_id)} />
+      ))}
+    </div>
+  );
+}
+
+/** One nozzle as a tile. */
 function NozzleTile({ line, onOpen }: { line: Line; onOpen: () => void }) {
   const saved = line.reading;
   const pill = status(line);
-  const scope = useRef<HTMLButtonElement>(null);
-  const previous = useRef(pill.text);
-
-  useMotion(
-    (play) => {
-      if (previous.current === pill.text) return;
-      previous.current = pill.text;
-      play(() => {
-        gsap.fromTo(scope.current, { scale: 0.96 }, { scale: 1, duration: DURATION.medium, ease: EASE.settle.gsap, clearProps: "transform" });
-      });
-    },
-    { dependencies: [pill.text], scope },
-  );
 
   return (
     <button
-      ref={scope}
       type="button"
       data-arrive
       onClick={onOpen}

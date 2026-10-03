@@ -4,10 +4,11 @@
  * says so rather than letting a reader trust a partial total.
  */
 
-import type { ReactNode } from "react";
+import { Children, isValidElement, type ReactNode, useRef } from "react";
 import { PlusIcon } from "@phosphor-icons/react";
 import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
+import { useFlipList } from "../motion/flip";
 import { Amount } from "../ui/Amount";
 import { Button, Card, Empty, TruncationNotice } from "../ui/primitives";
 
@@ -37,6 +38,9 @@ export function ShiftRowsFrame({
   children: ReactNode;
 }) {
   const editable = shift.status === "open";
+  // A saved row or a reversal pair slides the rest down rather than teleporting them (Phase 24).
+  const list = useRef<HTMLDivElement>(null);
+  useFlipList(list, Children.toArray(children).map((child) => (isValidElement(child) ? String(child.key) : "")).join("|"));
   return (
     <>
       <ScreenTitle title={title} subtitle={`Shift ${shift.sequence} · ${shift.status}`} />
@@ -56,7 +60,13 @@ export function ShiftRowsFrame({
           {extra}
           <p className="mt-3 max-w-[60ch] text-[0.875rem] text-ink-muted">{explanation}</p>
         </Card>
-        {count ? <div className="flex flex-col gap-3">{children}</div> : <Empty>{emptyText}</Empty>}
+        {count ? (
+          <div ref={list} className="flex flex-col gap-3">
+            {children}
+          </div>
+        ) : (
+          <Empty>{emptyText}</Empty>
+        )}
         {truncated ? <TruncationNotice count={count} /> : null}
       </div>
     </>

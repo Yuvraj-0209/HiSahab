@@ -41,6 +41,7 @@ import { useArrival } from "../ui/motion";
 import { Button, Card, Empty, ErrorCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
+import { commitTick } from "../motion/haptic";
 
 
 type Summary = Schemas["app__api__v1__daily_summaries__SummaryResponse"];
@@ -77,8 +78,9 @@ export function useDays() {
 
 /* --- the lifecycle strip --------------------------------------------------------------- */
 
-/** Five dots, filled up to `reached`. When a day moves on, the newly filled dots land with a
- * small pop and the connector draws in -- a state transition the reader just caused. */
+/** Five dots, filled up to `reached`. When a day moves on, each newly reached step's connector
+ * draws in from the dot before it and then the dot lands -- a state transition the reader just
+ * caused, told in the order it happened. */
 export function LifecycleStrip({ state }: { state: DayState }) {
   const scope = useRef<HTMLDivElement>(null);
   const previous = useRef(state.reached);
@@ -89,8 +91,16 @@ export function LifecycleStrip({ state }: { state: DayState }) {
       previous.current = state.reached;
       if (state.reached <= before) return;
       play(() => {
-        const fresh = Array.from(scope.current?.querySelectorAll("[data-step]") ?? []).slice(before, state.reached);
-        gsap.from(fresh, { scale: 0.3, opacity: 0, duration: DURATION.medium, ease: EASE.settle.gsap, stagger: 0.08 });
+        // Each newly reached step: its connector draws from the previous dot, then the dot lands.
+        const links = Array.from(scope.current?.querySelectorAll("[data-link]") ?? []);
+        const dots = Array.from(scope.current?.querySelectorAll("[data-step]") ?? []);
+        const timeline = gsap.timeline();
+        for (let index = before; index < state.reached; index += 1) {
+          const link = links[index - 1]; // the connector before step `index`; step 0 has none
+          const dot = dots[index];
+          if (link) timeline.from(link, { scaleX: 0, transformOrigin: "0% 50%", duration: DURATION.small, ease: EASE.move.gsap });
+          if (dot) timeline.from(dot, { scale: 0.3, opacity: 0, duration: DURATION.small, ease: EASE.settle.gsap }, "<0.12");
+        }
       });
     },
     { dependencies: [state.reached], scope },
@@ -101,7 +111,7 @@ export function LifecycleStrip({ state }: { state: DayState }) {
       <div className="flex items-center" aria-hidden="true">
         {LIFECYCLE.map((step, index) => (
           <span key={step} className="flex items-center">
-            {index > 0 ? <span className={`h-0.5 w-3 ${index < state.reached ? "bg-accent" : "bg-hairline-strong"}`} /> : null}
+            {index > 0 ? <span data-link className={`h-0.5 w-3 ${index < state.reached ? "bg-accent" : "bg-hairline-strong"}`} /> : null}
             <span className="relative grid size-3 place-items-center rounded-full border border-hairline-strong" title={step}>
               {index < state.reached ? <span data-step className="absolute inset-[-1px] rounded-full bg-accent" /> : null}
             </span>
@@ -127,6 +137,7 @@ export function useReconcile() {
     setBusy(date);
     try {
       await api.post("/daily-summaries", { business_date: date });
+      commitTick();
       notify.success("Day reconciled.");
       await refresh();
       navigate(`/days/${date}`);
@@ -161,6 +172,7 @@ function CreateSummaryForm({ businessDate: date, onDone }: { businessDate: strin
       if (form.values.notes) body.notes = form.values.notes;
       await api.post("/daily-summaries", body);
       onDone();
+      commitTick();
       notify.success("Day reconciled.");
       await refresh();
       navigate(`/days/${form.values.business_date}`);
@@ -367,6 +379,7 @@ export function DayScreen() {
     setFinalising(true);
     try {
       await api.patch(`/daily-summaries/${date}/finalise`, {});
+      commitTick();
       notify.success("Day finalised.");
       await refresh();
     } catch (failure) {

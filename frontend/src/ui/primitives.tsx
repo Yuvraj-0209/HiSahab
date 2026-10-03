@@ -5,7 +5,7 @@
  * that quotes the request id (§9) -- a blank region answers nobody's question.
  */
 
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { type ButtonHTMLAttributes, type ReactNode, useRef } from "react";
 import { explain, requestIdOf } from "../api/client";
 
 /* --- buttons ----------------------------------------------------------------------------- */
@@ -139,9 +139,24 @@ const PILL: Record<PillKind, string> = {
   surplus: "bg-surplus-tint text-surplus",
 };
 
+/**
+ * A status in a pill. When the status changes after the pill first appeared -- a shift going
+ * open, closed, locked; a day being reconciled -- the new pill lands with a small settle
+ * (Phase 24 D5): the state changed, and here is where. Never on first render, so a screen full
+ * of pills does not pop on arrival.
+ *
+ * CSS rather than GSAP (`.pill[data-changed]` in styles.css), because this file is in the first
+ * paint and GSAP is not. Re-keying the span on a change remounts it, which replays the keyframe.
+ */
 export function Pill({ kind = "neutral", children }: { kind?: PillKind; children: ReactNode }) {
+  const first = useRef(kind);
+  const changed = first.current !== kind;
   return (
-    <span className={`inline-flex h-6 items-center rounded-full px-2.5 text-[0.75rem] font-medium whitespace-nowrap ${PILL[kind]}`}>
+    <span
+      key={changed ? kind : "first"}
+      data-changed={changed ? "" : undefined}
+      className={`pill inline-flex h-6 items-center rounded-full px-2.5 text-[0.75rem] font-medium whitespace-nowrap ${PILL[kind]}`}
+    >
       {children}
     </span>
   );

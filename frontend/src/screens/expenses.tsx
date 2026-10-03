@@ -22,7 +22,7 @@
  * admin data now, so the warning sits where the choice is made.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useParams } from "react-router";
 import { PlusIcon } from "@phosphor-icons/react";
 import { api } from "../api/client";
@@ -31,6 +31,7 @@ import { useSubmission } from "../api/submission";
 import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
 import { useSession } from "../app/session";
+import { useFlipList } from "../motion/flip";
 import { compareMoney } from "../lib/money";
 import { satisfies } from "../lib/roles";
 import { Amount } from "../ui/Amount";
@@ -62,6 +63,9 @@ export function ExpensesScreen() {
   const shift = useApiQuery<Schemas["ShiftResponse"]>(`/shifts/${shiftId}`);
   const categories = useApiQuery<Category[]>("/expense-categories");
   const [action, setAction] = useState<Action | null>(null);
+  // A saved expense, a reversal pair, a review: the rows move to their new places (Phase 24).
+  const list = useRef<HTMLDivElement>(null);
+  useFlipList(list, (page.data?.items ?? []).map((e) => `${e.id}:${e.requires_review}:${e.reviewed_at ?? ""}`).join("|"));
 
   if (page.isPending || shift.isPending || categories.isPending) {
     return (
@@ -118,7 +122,7 @@ export function ExpensesScreen() {
         ) : null}
 
         {data.items.length ? (
-          <div className="flex flex-col gap-3">
+          <div ref={list} className="flex flex-col gap-3">
             {data.items.map((expense) => (
               <ExpenseCard
                 key={expense.id}

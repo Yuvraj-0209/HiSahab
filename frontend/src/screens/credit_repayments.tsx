@@ -31,6 +31,7 @@ import { isLive, ReversalBadge, ReversalForm } from "../ui/reversal";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
 import { MoneyRowCard, ShiftRowsFrame } from "./shiftRows";
+import { commitTick } from "../motion/haptic";
 
 type Repayment = Schemas["CreditRepaymentResponse"];
 type Customer = Schemas["CreditCustomerListItem"];
@@ -186,6 +187,7 @@ function RepaymentForm({
         await submission.run(body);
       }
       onDone();
+      if (!existing) commitTick();
       notify.success(existing ? "Updated." : "Repayment recorded.");
       await refresh();
     } catch (error) {
@@ -364,6 +366,7 @@ function BankRepaymentForm({ customers, onDone }: { customers: Customer[]; onDon
       };
       await submission.run(body);
       onDone();
+      commitTick();
       notify.success("Payment recorded.");
       await refresh();
     } catch (error) {

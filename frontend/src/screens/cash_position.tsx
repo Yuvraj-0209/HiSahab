@@ -82,9 +82,12 @@ export function CashPositionScreen() {
             <Figure label="Accountable" caption="What the meters imply he should hold" value={<Amount value={p.accountable_cash} />} />
             <Figure label="Declared" caption="What he counted into the locker" value={<Amount value={p.declared_cash} absent="not declared" />} />
           </div>
-          <div className="mt-4 flex items-baseline justify-between gap-3 border-t border-hairline pt-4">
+          {/* The figure this screen exists for, at the top of the type ramp (Phase 24 D5): the
+           * comparison above explains it, and nothing on the screen should outrank it. Its words
+           * ("short", "surplus", "not declared") come from gapLabel, never from a colour alone. */}
+          <div className="mt-4 flex flex-col gap-1 border-t border-hairline pt-4">
             <span className="text-[0.8125rem] font-medium text-ink-muted">Gap</span>
-            <span className={`tabular text-[1.5rem] font-semibold tracking-[-0.02em] ${gap.className}`}>{gap.text}</span>
+            <span className={`tabular text-title break-words ${gap.className}`}>{gap.text}</span>
           </div>
           <p className="mt-2 text-[0.8125rem] text-ink-muted">
             {p.declared_cash === null

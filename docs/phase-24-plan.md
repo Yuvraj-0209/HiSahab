@@ -390,6 +390,29 @@ None.
     exists.
   - Vitest 72, Playwright 130.
 
+- **Commit 5 — state transitions.**
+  - `ui/Tick.tsx`: every `CheckboxField` is a native checkbox with a drawn tick (DrawSVG). It
+    never draws on first render, so a box that opens ticked does not look as if it was just
+    ticked; Vitest asserts both that and a single draw per fresh tick.
+  - `useFlipList` (`motion/flip.ts`) on the four `ShiftRowsFrame` lists, expenses, collections
+    and the nozzle grid: when a list's contents change, rows move to their new places and new
+    rows rise in. It replaced the nozzle tile's scale pop (one engine per element).
+  - The lifecycle strip draws each new connector, then lands the dot, in order.
+  - `Pill` lands with a CSS settle when its status changes after mount (CSS, because
+    primitives.tsx is in the first paint).
+  - Hero figures: Today's metered sales (a two-column card at `text-display`) and the cash
+    position's gap (`text-title`, on its own line so a long figure wraps rather than overflows).
+  - `commitTick()` (`motion/haptic.ts`): 8 ms on close, lock, reconcile, finalise and a new
+    repayment; nothing under reduced motion or on iPhone.
+  - **Deviations.** The "row leaves a queue" moment became "a list changed": finalising and
+    reviewing happen on screens where the queue is not visible, so the row was never seen
+    leaving. And no lock-icon morph: the lock button disappears once a shift is locked, so the
+    pill landing carries that change.
+  - The unticked tick's SVG is hidden with `visibility`, not `opacity: 0`: the e2e settle check
+    read a permanent zero opacity as an entrance that never finished, which is also the more
+    honest markup.
+  - Vitest 75, Playwright 130.
+
 ## Still owed by the owner
 
 - Approval of the front-door copy, and the contact for "Talk to us" (WhatsApp number or email).

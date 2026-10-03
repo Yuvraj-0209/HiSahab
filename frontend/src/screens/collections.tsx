@@ -21,7 +21,7 @@
  * §6.9's reversals), so each mode is "declare" or "edit", never "add another".
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useParams } from "react-router";
 import { api } from "../api/client";
 import { useApiQuery, useRefreshApi } from "../api/queries";
@@ -29,6 +29,7 @@ import { useSubmission } from "../api/submission";
 import type { Schemas } from "../api/types";
 import { ScreenTitle } from "../app/chrome";
 import { useSession } from "../app/session";
+import { useFlipList } from "../motion/flip";
 import { isZero } from "../lib/money";
 import { satisfies } from "../lib/roles";
 import { Amount } from "../ui/Amount";
@@ -57,6 +58,9 @@ export function CollectionsScreen() {
   const page = useApiQuery<Schemas["CollectionPage"]>(`/shifts/${shiftId}/collections`);
   const shift = useApiQuery<Schemas["ShiftResponse"]>(`/shifts/${shiftId}`);
   const [action, setAction] = useState<Action | null>(null);
+  // A declaration changes its card's height; the other cards move rather than jump (Phase 24).
+  const grid = useRef<HTMLDivElement>(null);
+  useFlipList(grid, (page.data?.items ?? []).map((item) => item.id).join("|"));
 
   if (page.isPending || shift.isPending) {
     return (
@@ -101,7 +105,7 @@ export function CollectionsScreen() {
 
         <section>
           <SectionLabel>By mode</SectionLabel>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div ref={grid} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {MODES.map((mode) => {
               const existing = live.find((item) => item.mode === mode.value) ?? null;
               return (

@@ -17,6 +17,7 @@
 
 import { type ReactNode, useCallback, useId, useMemo, useRef, useState } from "react";
 import type { ValidationIssue } from "../api/client";
+import { Tick } from "./Tick";
 
 export type FormValues = Record<string, string | boolean>;
 
@@ -251,11 +252,10 @@ export function CheckboxField<T extends FormValues>({ form, name, label, hint, d
         htmlFor={id}
         className="flex cursor-pointer items-start gap-3 rounded-[var(--radius-control)] border border-hairline bg-surface px-3.5 py-3"
       >
-        <input
+        <Tick
           id={id}
           name={name}
-          type="checkbox"
-          className="mt-0.5 size-5 shrink-0 accent-[var(--accent)]"
+          className="mt-0.5"
           checked={form.values[name] as boolean}
           onChange={(event) => form.set(name, event.target.checked as T[typeof name])}
           disabled={disabled}

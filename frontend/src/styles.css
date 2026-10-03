@@ -602,6 +602,19 @@ html[data-nav="fade"]::view-transition-new(root) {
   }
 }
 
+/* A status pill that changed after it first appeared lands with a small settle (Phase 24 D5,
+ * primitives.tsx `Pill`). */
+.pill[data-changed] {
+  animation: pill-land var(--dur-medium) var(--ease-settle) backwards;
+}
+
+@keyframes pill-land {
+  from {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+}
+
 /* The sheet is solid, never blurred: it animates `transform` under a finger, and a filter on
  * a moving element re-rasterises every frame (§13.29). */
 .sheet {

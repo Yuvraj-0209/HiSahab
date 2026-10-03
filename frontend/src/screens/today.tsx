@@ -44,6 +44,7 @@ import { useArrival } from "../ui/motion";
 import { Button, Card, Empty, ErrorCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
+import { commitTick } from "../motion/haptic";
 
 type Shift = Schemas["ShiftResponse"];
 
@@ -135,6 +136,7 @@ function ShiftHeader({ shift }: { shift: Shift }) {
     try {
       const updated = await api.patch<Shift>(`/shifts/${shift.id}/${action}`, {});
       queryClient.setQueryData(apiKey(`/shifts/${shift.id}`), updated);
+      commitTick();
       notify.success(action === "close" ? "Shift closed." : "Shift locked.");
       await refresh();
       navigate(`/shifts/${shift.id}`, { replace: true });
@@ -300,6 +302,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
   return (
     <div ref={grid} className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
       <DomainCard
+        hero
         title="Metered sales"
         figure={
           sales.isError ? (
@@ -411,6 +414,7 @@ function DomainCard({
   lines,
   loading,
   onDetails,
+  hero = false,
 }: {
   title: string;
   caption?: string | undefined;
@@ -420,10 +424,12 @@ function DomainCard({
   lines: Line[];
   loading: boolean;
   onDetails: () => void;
+  /** The card the screen is read for: wider, with its figure at the top of the type ramp. */
+  hero?: boolean;
 }) {
   const shown = lines.filter((line) => !("note" in line)).slice(0, 3);
   return (
-    <div data-arrive>
+    <div data-arrive className={hero ? "md:col-span-2" : ""}>
       <Card className="flex h-full flex-col">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -433,8 +439,8 @@ function DomainCard({
           {badge}
         </div>
         <div className="mt-3 flex items-baseline gap-2">
-          <span className="text-[1.75rem] leading-none font-semibold tracking-[-0.025em] text-ink">
-            {loading ? <span className="skeleton inline-block h-7 w-32 rounded-lg align-middle" /> : figure}
+          <span className={`${hero ? "text-display" : "text-[1.75rem] leading-none font-semibold tracking-[-0.025em]"} text-ink`}>
+            {loading ? <span className={`skeleton inline-block rounded-lg align-middle ${hero ? "h-10 w-56" : "h-7 w-32"}`} /> : figure}
           </span>
           {figureLabel && !loading ? <span className="text-[0.8125rem] text-ink-muted">{figureLabel}</span> : null}
         </div>
