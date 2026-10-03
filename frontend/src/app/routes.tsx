@@ -84,6 +84,11 @@ const openingBalances = () => import("../screens/credit_opening_balances");
 const statement = () => import("../screens/credit_statement");
 const bank = () => import("../screens/bank");
 const summary = () => import("../screens/summary");
+const admin = () => import("../screens/admin");
+const pricing = () => import("../screens/admin_pricing");
+const adminCustomers = () => import("../screens/admin_customers");
+const adminUsers = () => import("../screens/admin_users");
+const audit = () => import("../screens/audit_logs");
 
 export const routes: RouteObject[] = [
   {
@@ -202,6 +207,18 @@ export const routes: RouteObject[] = [
             handle: tab("credit"),
             lazy: () => openingBalances().then((m) => ({ Component: m.OpeningBalancesScreen })),
           },
+
+          { path: "admin", handle: tab("admin"), lazy: () => admin().then((m) => ({ Component: m.AdminHubScreen })) },
+          { path: "admin/fuel-types", handle: tab("admin"), lazy: () => admin().then((m) => ({ Component: m.FuelTypesScreen })) },
+          { path: "admin/nozzles", handle: tab("admin"), lazy: () => admin().then((m) => ({ Component: m.NozzlesScreen })) },
+          { path: "admin/prices", handle: tab("admin"), lazy: () => pricing().then((m) => ({ Component: m.PricesScreen })) },
+          { path: "admin/margins", handle: tab("admin"), lazy: () => pricing().then((m) => ({ Component: m.MarginsScreen })) },
+          { path: "admin/categories", handle: tab("admin"), lazy: () => admin().then((m) => ({ Component: m.CategoriesScreen })) },
+          { path: "admin/customers", handle: tab("admin"), lazy: () => adminCustomers().then((m) => ({ Component: m.CustomersScreen })) },
+          { path: "admin/shift-templates", handle: tab("admin"), lazy: () => admin().then((m) => ({ Component: m.ShiftTemplatesScreen })) },
+          { path: "admin/bank-accounts", handle: tab("admin"), lazy: () => admin().then((m) => ({ Component: m.BankAccountsScreen })) },
+          { path: "admin/users", handle: tab("admin"), lazy: () => adminUsers().then((m) => ({ Component: m.UsersScreen })) },
+          { path: "admin/audit", handle: tab("admin"), lazy: () => audit().then((m) => ({ Component: m.AuditLogsScreen })) },
         ],
       },
 

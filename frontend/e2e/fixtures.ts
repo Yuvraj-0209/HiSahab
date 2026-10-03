@@ -622,3 +622,72 @@ export const summaryReport: Schemas["app__api__v1__reports__SummaryResponse"] = 
     trendDay(BUSINESS_DATE, "302827.45", "94.97%"),
   ],
 };
+
+/* --- the Admin tab ------------------------------------------------------------------------ */
+
+export const nozzles: Schemas["NozzleResponse"][] = [
+  {
+    id: NOZZLE_ID, outlet_id: OUTLET_ID, label: "DU-1/N-1", dispenser_label: "DU-1", fuel_type_id: "ft-1", fuel_type_code: "PETROL",
+    unit_of_measure: "litre", totalizer_max_value: "999999.99", meter_installed_at: "2025-04-01T04:30:00Z", is_active: true,
+  },
+  {
+    id: "b0b0b0b0-0000-4000-8000-000000000302", outlet_id: OUTLET_ID, label: "CBG-1", dispenser_label: "CBG", fuel_type_id: "ft-2", fuel_type_code: "CBG",
+    unit_of_measure: "kilogram", totalizer_max_value: "99999.99", meter_installed_at: "2025-06-10T04:30:00Z", is_active: false,
+  },
+];
+
+export const pricesCurrent: Schemas["CurrentRateResponse"][] = [
+  { fuel_type_id: "ft-1", fuel_type_code: "PETROL", rate_per_unit: "103.81", at: "2026-10-03T06:30:00Z" },
+  { fuel_type_id: "ft-2", fuel_type_code: "CBG", rate_per_unit: "91.13", at: "2026-10-03T06:30:00Z" },
+];
+
+export const pricesHistory: Schemas["FuelPricePage"] = {
+  next_cursor: null,
+  items: [
+    { id: "fp-2", outlet_id: OUTLET_ID, fuel_type_id: "ft-1", rate_per_unit: "103.81", effective_from: "2026-09-15T00:30:00Z", entered_by: ME_ID, is_backdated: true },
+    { id: "fp-1", outlet_id: OUTLET_ID, fuel_type_id: "ft-1", rate_per_unit: "103.54", effective_from: "2026-06-29T00:30:00Z", entered_by: ME_ID, is_backdated: false },
+  ],
+};
+
+/** Petrol only: CBG has a rate and no margin, so the screen must name it as missing. */
+export const marginsCurrent: Schemas["CurrentMarginResponse"][] = [
+  { fuel_type_id: "ft-1", fuel_type_code: "PETROL", margin_per_unit: "3.99", at: "2026-10-03T06:30:00Z" },
+];
+
+export const marginsHistory: Schemas["FuelMarginPage"] = {
+  next_cursor: null,
+  items: [{ id: "fm-1", outlet_id: OUTLET_ID, fuel_type_id: "ft-1", margin_per_unit: "3.99", effective_from: "2026-06-29T00:30:00Z", entered_by: ME_ID, is_backdated: false }],
+};
+
+export const shiftTemplates: Schemas["ShiftTemplateResponse"][] = [
+  { id: "tpl-1", outlet_id: OUTLET_ID, sequence: 1, label: "Day", starts_at_local: "06:00:00", ends_at_local: "22:00:00", crosses_midnight: false, is_active: true },
+];
+
+export const outstandingCustomers: Schemas["CreditCustomerResponse"][] = [
+  { ...customerDetail },
+  { id: CUSTOMER_2, name: "Sandhu Dairy", phone: "9814000000", vehicle_numbers: null, credit_limit: "50000.00", is_active: true, outstanding: "-1200.00" },
+];
+
+export const users: Schemas["UserListItem"][] = [
+  { id: ME_ID, full_name: "Harjit Kaur", role: "admin", is_active: true },
+  { id: SALESMAN_ID, full_name: "Gurpreet Singh", role: "attendant", is_active: true },
+];
+
+export const salesmanDetail: Schemas["UserResponse"] = {
+  id: SALESMAN_ID, full_name: "Gurpreet Singh", phone: "9876500000", role: "attendant", is_active: true, profile_is_active: true,
+  created_at: "2026-07-01T05:00:00Z",
+};
+
+export const auditPage: Schemas["AuditLogPage"] = {
+  next_cursor: null,
+  items: [
+    {
+      id: "al-2", table_name: "credit_customers", record_id: CUSTOMER_2, action: "update", changed_by: ME_ID, changed_at: "2026-10-02T12:05:00Z",
+      request_id: "req-2", old_values: { name: "Sandhu Dairy", credit_limit: null }, new_values: { name: "Sandhu Dairy", credit_limit: "50000.00" },
+    },
+    {
+      id: "al-1", table_name: "fuel_prices", record_id: "fp-2", action: "insert", changed_by: ME_ID, changed_at: "2026-10-01T09:00:00Z",
+      request_id: "req-1", old_values: null, new_values: { fuel_type_id: "ft-1", rate_per_unit: "103.81", effective_from: "2026-09-15T00:30:00+00:00" },
+    },
+  ],
+};

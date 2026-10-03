@@ -8,7 +8,7 @@
 import { expect, type Page, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { CUSTOMER_2, CUSTOMER_ID, PREVIOUS_DATE, RECONCILED_DATE, SALESMAN_ID, SHIFT_ID, worksheet } from "./fixtures";
-import { cashResponses, creditResponses, Failure, signedIn, summaryResponses, todayResponses } from "./mock";
+import { adminResponses, cashResponses, creditResponses, Failure, signedIn, summaryResponses, todayResponses } from "./mock";
 
 async function watch(page: Page) {
   const problems: string[] = [];
@@ -471,4 +471,115 @@ test("summary: 'Last month' asks for last month's own dates (the Phase 19 preset
   await sheet.getByRole("button", { name: "Last month" }).click();
   await sheet.getByRole("button", { name: "Show summary" }).click();
   await expect(page).toHaveURL(/#\/summary\?from=2026-09-01&to=2026-09-30$/);
+});
+
+/* --- the Admin tab ---------------------------------------------------------------------- */
+
+for (const [name, path] of [
+  ["admin hub", "/#/admin"],
+  ["fuel types", "/#/admin/fuel-types"],
+  ["nozzles", "/#/admin/nozzles"],
+  ["prices", "/#/admin/prices"],
+  ["margins", "/#/admin/margins"],
+  ["categories", "/#/admin/categories"],
+  ["customers", "/#/admin/customers"],
+  ["shift templates", "/#/admin/shift-templates"],
+  ["bank accounts", "/#/admin/bank-accounts"],
+  ["users", "/#/admin/users"],
+  ["audit log", "/#/admin/audit"],
+] as const) {
+  test(`renders: ${name}`, async ({ page }, info) => {
+    const problems = await watch(page);
+    await signedIn(page, { role: "admin", responses: adminResponses() });
+    await page.goto(path);
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await settle(page);
+    await page.screenshot({ path: info.outputPath(`${name.replace(/ /g, "-")}.png`), fullPage: true });
+    await expectAccessible(page);
+    expect(problems).toEqual([]);
+  });
+}
+
+test("admin: a cleared credit limit is sent as null, meaning no limit, never zero (§6.6)", async ({ page }) => {
+  const writes = await signedIn(page, {
+    role: "admin",
+    responses: { ...adminResponses(), [`PATCH /credit-customers/${CUSTOMER_2}`]: {} },
+  });
+  await page.goto("/#/admin/customers");
+  // Bhullar has no limit, and says so in words rather than as ₹0.00.
+  await expect(page.getByText("no limit")).toBeVisible();
+  await expect(page.getByText("· in credit")).toBeVisible();
+
+  const sandhu = page.locator("[data-arrive]").filter({ hasText: "Sandhu Dairy" });
+  await sandhu.getByRole("button", { name: "Edit" }).click();
+  const sheet = page.getByRole("dialog", { name: "Sandhu Dairy" });
+  await sheet.getByLabel("Credit limit (optional)").fill("");
+  await sheet.getByRole("button", { name: "Save" }).click();
+  await expect(sheet).toHaveCount(0);
+  // Only the edited field, and null rather than "" or "0".
+  expect(writes[0]?.body).toEqual({ credit_limit: null });
+});
+
+test("admin: an edit sends only what changed, and a code is never offered for editing (§5.1)", async ({ page }) => {
+  const writes = await signedIn(page, {
+    role: "admin",
+    responses: { ...adminResponses(), "PATCH /fuel-types/ft-1": {} },
+  });
+  await page.goto("/#/admin/fuel-types");
+  await page.locator("[data-arrive]").filter({ hasText: "PETROL" }).getByRole("button", { name: "Edit" }).click();
+  const sheet = page.getByRole("dialog", { name: "PETROL" });
+  await expect(sheet.getByLabel("Code")).toHaveCount(0);
+  await expect(sheet.getByLabel("Measured in")).toHaveCount(0);
+  await sheet.getByLabel("Display name").fill("Petrol (MS)");
+  await sheet.getByRole("button", { name: "Save" }).click();
+  await expect(sheet).toHaveCount(0);
+  expect(writes[0]?.body).toEqual({ display_name: "Petrol (MS)" });
+});
+
+test("margins: a fuel with no margin is named, and a backdated entry is warned about", async ({ page }) => {
+  const writes = await signedIn(page, { role: "admin", responses: { ...adminResponses(), "POST /fuel-margins": {} } });
+  await page.goto("/#/admin/margins");
+  await expect(page.getByText("No margin in force")).toBeVisible();
+  await expect(page.locator("section").filter({ hasText: "No margin in force" }).getByText("CBG")).toBeVisible();
+
+  await page.getByRole("button", { name: "Add" }).click();
+  const sheet = page.getByRole("dialog", { name: "New margin" });
+  await sheet.getByLabel("Fuel").selectOption({ label: "CBG" });
+  await sheet.getByLabel("Dealer margin per unit").fill("2.28");
+  await sheet.getByLabel("Effective from").fill("2026-06-29T06:00");
+  await expect(sheet.getByText(/This is in the past/)).toBeVisible();
+  await sheet.getByRole("button", { name: "Record margin" }).click();
+  await expect(sheet).toHaveCount(0);
+  const body = writes[0]?.body as { fuel_type_id: string; margin_per_unit: string; effective_from: string };
+  expect(body.fuel_type_id).toBe("ft-2");
+  expect(body.margin_per_unit).toBe("2.28");
+  // An instant with an offset, never a naive local time (§3 rule 4).
+  expect(body.effective_from).toMatch(/Z$|[+-]\d{2}:\d{2}$/);
+});
+
+test("users: editing loads the full record, so a phone is never cleared by accident", async ({ page }) => {
+  await signedIn(page, { role: "admin", responses: adminResponses() });
+  await page.goto("/#/admin/users");
+  await page.locator("[data-arrive]").filter({ hasText: "Gurpreet Singh" }).getByRole("button", { name: "Edit" }).click();
+  const sheet = page.getByRole("dialog", { name: "Gurpreet Singh" });
+  await expect(sheet.getByLabel("Phone (optional)")).toHaveValue("9876500000");
+  // No email field: there is nothing here to edit (§13.26).
+  await expect(sheet.getByLabel("Email")).toHaveCount(0);
+});
+
+test("audit: a null credit limit is the word null, and money stays a string (§5.3)", async ({ page }) => {
+  await signedIn(page, { role: "admin", responses: adminResponses() });
+  await page.goto("/#/admin/audit");
+  const change = page.locator("[data-arrive]").filter({ hasText: "credit_customers" });
+  // Only the key that changed; the unchanged name is not echoed.
+  await expect(change.getByText("credit_limit")).toBeVisible();
+  await expect(change.getByText("name", { exact: true })).toHaveCount(0);
+  await expect(change.getByText("null")).toBeVisible();
+  await expect(change.getByText("50000.00")).toBeVisible();
+});
+
+test("a manager is turned away from the Admin tab (§8)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: adminResponses() });
+  await page.goto("/#/admin/users");
+  await expect(page).toHaveURL(/#\/today$/);
 });

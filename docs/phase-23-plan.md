@@ -325,6 +325,20 @@ None.
   least 3:1 against its surface (WCAG 1.4.11).
 - The donut draws each arc as a circle with `pathLength="100"`, so the server's percentage *is*
   the dash length and nothing is divided anywhere, not even for geometry.
+- **Commit 8 (Admin) corrected the bundle measurement, not the bundle.** The entry chunk read
+  118 KB gzipped through commit 7 because GSAP sat in a separate `src-*.js` chunk that
+  `index.html` modulepreloads; adding the Admin chunks made Rollup inline it, and the entry now
+  reads 147 KB. Built side by side with sourcemaps, the initial download is the same both ways:
+  GSAP was always initial-load, because the Shell's tab indicator and screen entrance use it.
+  **Initial JS is about 147 KB gzipped against a 150 KB budget**: React DOM, React Router and
+  GSAP are three quarters of it. Splitting GSAP out of the first paint is possible (the
+  entrance is decoration on the first screen) and is the first lever if the budget bites.
+- The pricing screen's backdating warning stays a warning. An "I mean to backdate this" tick was
+  drafted and removed: the server accepts a backdated row, and a client-only gate is a rule the
+  server does not enforce (§14).
+- Every router in `app/api/v1/` is reached by a call in `frontend/src` (comments excluded), the
+  same check `test_every_router_is_reachable_from_a_screen` makes of the old `js/`; the test is
+  retargeted at cutover.
 
 ## Still owed by the owner
 

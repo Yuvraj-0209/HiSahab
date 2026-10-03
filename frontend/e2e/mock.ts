@@ -137,3 +137,22 @@ export function creditResponses(): Responses {
 export function summaryResponses(): Responses {
   return { "GET /reports/summary": fixture.summaryReport };
 }
+
+/** Everything the Admin tab reads. */
+export function adminResponses(): Responses {
+  return {
+    "GET /fuel-types": fixture.fuelTypes,
+    "GET /nozzles": fixture.nozzles,
+    "GET /fuel-prices/current": fixture.pricesCurrent,
+    "GET /fuel-prices": fixture.pricesHistory,
+    "GET /fuel-margins/current": fixture.marginsCurrent,
+    "GET /fuel-margins": fixture.marginsHistory,
+    "GET /expense-categories": fixture.categories,
+    "GET /shift-templates": fixture.shiftTemplates,
+    "GET /bank-accounts": fixture.bankAccounts,
+    "GET /credit-customers/outstanding": fixture.outstandingCustomers,
+    "GET /users": fixture.users,
+    [`GET /users/${fixture.SALESMAN_ID}`]: fixture.salesmanDetail,
+    "GET /audit-logs": fixture.auditPage,
+  };
+}
