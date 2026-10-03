@@ -7,21 +7,46 @@
     "node": ">=24"
   },
   "scripts": {
+    "api:types": "openapi-typescript src/api/openapi.json -o src/api/schema.d.ts",
+    "gen:api": "python ../scripts/dump_openapi.py && npm run api:types",
+    "predev": "npm run api:types",
     "dev": "vite",
+    "prebuild": "npm run api:types",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "pretest": "npm run api:types",
+    "test": "vitest run",
+    "typecheck": "npm run api:types && tsc --noEmit"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "5.3.0",
+    "@gsap/react": "2.1.2",
+    "@phosphor-icons/react": "2.1.10",
+    "@tanstack/react-query": "5.104.1",
+    "gsap": "3.15.0",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "react-router": "8.4.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.63.0",
     "@tailwindcss/vite": "4.3.3",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.7",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
+    "jsdom": "30.1.1",
+    "openapi-typescript": "7.13.0",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
-    "vite": "8.3.2"
+    "vite": "8.3.2",
+    "vitest": "5.0.3"
+  },
+  "allowScripts": {
+    "fsevents": false
   }
 }

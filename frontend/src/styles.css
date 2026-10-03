@@ -1,1 +1,448 @@
+/* HiSahab -- the visual system (CLAUDE.md §2, §12, §13.19, §13.28; Phase 23 D9).
+ *
+ * TWO PALETTES, CHOSEN BY THE PHONE. Salesmen type the day in at night; the owner reviews and
+ * prints bills by day. Light and dark follow `prefers-color-scheme` and nothing else -- §12
+ * keeps a *toggle* out of scope, so there is no switch, no persistence, no setting.
+ *
+ * COMPONENTS USE SEMANTIC TOKENS ONLY. Every colour below is defined once per palette as a CSS
+ * variable, and Tailwind's `@theme inline` exposes them as utilities (`bg-surface`, `text-ink`,
+ * `border-hairline`, `text-short` ...). A raw colour in a component is correct in one palette
+ * at most, which is why §14 forbids it.
+ *
+ * ONE ACCENT, COBALT. Red, green and amber already MEAN short, surplus and warning in a cash
+ * system; using any of them as decoration would teach the eye to ignore them.
+ *
+ * NO ASSET FROM AN EXTERNAL HOST (§13.19, §13.28). Geist is bundled from @fontsource into our
+ * own files; Instrument Serif is served from /fonts. The CSP's `font-src 'self'` refuses
+ * anything else.
+ *
+ * THE SHAPE RULE (one radius system, documented so it can be followed): cards 18px, sheets
+ * 26px at the top, inputs and buttons 12px, pills and tab indicators fully round.
+ */
+
 @import "tailwindcss";
+@import "@fontsource-variable/geist";
+
+/* ==========================================================================
+   1. Palettes
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* Paper, not cream: a cool off-white, so it reads as a ledger page rather than as the
+   * "warm beige" every generated premium site defaults to. */
+  --ground: #f3f4f6;
+  --surface: #fbfbfc;
+  --surface-raised: #fdfdfe;
+  --surface-sunken: #eceef1;
+
+  /* Ink. A cool near-black -- never pure #000, which flattens every shadow to nothing. */
+  --ink: #14161a;
+  --ink-muted: #545a64;
+  --ink-faint: #737a85;
+
+  --hairline: rgb(20 22 26 / 0.09);
+  --hairline-strong: rgb(20 22 26 / 0.16);
+
+  /* Cobalt. 6.9:1 on --surface, so it carries body-size text. */
+  --accent: #2149c9;
+  --accent-pressed: #1a3aa3;
+  --accent-tint: rgb(33 73 201 / 0.1);
+  --on-accent: #f7f8ff;
+
+  /* Meaning, never decoration. Each is AA for text on --surface. */
+  --short: #b42f25;
+  --short-tint: rgb(180 47 37 / 0.1);
+  --surplus: #18703f;
+  --surplus-tint: rgb(24 112 63 / 0.11);
+  --warning: #8f5100;
+  --warning-tint: rgb(196 120 8 / 0.13);
+
+  /* Shadows tinted towards the ink's own hue, not black. */
+  --shadow-1: 0 1px 2px rgb(20 26 44 / 0.06), 0 1px 1px rgb(20 26 44 / 0.04);
+  --shadow-2: 0 2px 6px rgb(20 26 44 / 0.06), 0 12px 28px -8px rgb(20 26 44 / 0.12);
+  --shadow-3: 0 18px 48px -12px rgb(20 26 44 / 0.28), 0 4px 12px rgb(20 26 44 / 0.08);
+
+  /* Translucent chrome. The chrome never moves, so blurring behind it is affordable
+   * (§13.29 forbids the filter only on things that animate). */
+  --chrome: rgb(243 244 246 / 0.78);
+  --scrim: rgb(14 17 24 / 0.32);
+
+  /* Text over the login photograph. The photograph is the same in both palettes, so this is
+   * the one token that does not change with the phone's setting. */
+  --on-photo: #f4f5f8;
+  --on-photo-muted: rgb(244 245 248 / 0.78);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    /* Graphite. Each step up is lighter, which is how a dark interface says "nearer". */
+    --ground: #0c0d0f;
+    --surface: #151619;
+    --surface-raised: #1c1e22;
+    --surface-sunken: #0f1012;
+
+    --ink: #eceef1;
+    --ink-muted: #a3a8b0;
+    --ink-faint: #7a808a;
+
+    --hairline: rgb(255 255 255 / 0.08);
+    --hairline-strong: rgb(255 255 255 / 0.15);
+
+    /* Cobalt lifted for a dark ground: 6.3:1 on --surface. */
+    --accent: #7c9cff;
+    --accent-pressed: #9bb3ff;
+    --accent-tint: rgb(124 156 255 / 0.14);
+    --on-accent: #0a1233;
+
+    --short: #ff7a6e;
+    --short-tint: rgb(255 122 110 / 0.13);
+    --surplus: #5fd393;
+    --surplus-tint: rgb(95 211 147 / 0.12);
+    --warning: #f2b544;
+    --warning-tint: rgb(242 181 68 / 0.13);
+
+    --shadow-1: inset 0 1px 0 rgb(255 255 255 / 0.03), 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-2: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 14px 32px -10px rgb(0 0 0 / 0.6);
+    --shadow-3: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 24px 60px -12px rgb(0 0 0 / 0.75);
+
+    --chrome: rgb(12 13 15 / 0.74);
+    --scrim: rgb(0 0 0 / 0.55);
+  }
+}
+
+/* ==========================================================================
+   2. Tailwind tokens
+   ========================================================================== */
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+  --color-hairline: var(--hairline);
+  --color-hairline-strong: var(--hairline-strong);
+  --color-accent: var(--accent);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-accent-tint: var(--accent-tint);
+  --color-on-accent: var(--on-accent);
+  --color-short: var(--short);
+  --color-short-tint: var(--short-tint);
+  --color-surplus: var(--surplus);
+  --color-surplus-tint: var(--surplus-tint);
+  --color-warning: var(--warning);
+  --color-warning-tint: var(--warning-tint);
+  --color-on-photo: var(--on-photo);
+  --color-on-photo-muted: var(--on-photo-muted);
+
+  --shadow-1: var(--shadow-1);
+  --shadow-2: var(--shadow-2);
+  --shadow-3: var(--shadow-3);
+
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Instrument Serif", ui-serif, Georgia, serif;
+
+  --radius-card: 18px;
+  --radius-control: 12px;
+  --radius-sheet: 26px;
+}
+
+/* ==========================================================================
+   3. Base
+   ========================================================================== */
+
+@font-face {
+  /* The wordmark and the two login headlines only (§13.28) -- the exception must not spread
+   * by habit. `swap`: a blocking face is a blank header on a slow connection. */
+  font-family: "Instrument Serif";
+  src: url("/fonts/InstrumentSerif-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    /* Geist's own optical defaults, slightly tightened for UI rather than prose. */
+    letter-spacing: -0.006em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Every control inherits the face; browsers otherwise fall back to the system font inside
+   * inputs, which is the one place a money figure is typed. */
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+/* ==========================================================================
+   4. Utilities the screens share
+   ========================================================================== */
+
+/* Money and meter readings: tabular figures, so ₹1,23,456.00 in one row lines up digit for
+ * digit with ₹4,560.00 in the next. Geist's `tnum` lives in its latin subset, ₹ in latin-ext;
+ * the browser fetches both through their unicode ranges. */
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* What a null means, in words -- "not declared", "no limit", "not counted". Visibly a word,
+ * never a plausible ₹0.00 (§14). The class name is the one money.ts returns. */
+@utility t-absent {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+@utility sr-only-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Press feedback belongs on pointer-DOWN (:active), not on release: waiting for `click` is a
+ * ~100ms lie that reads as lag. Transform only, so it never re-lays the page out. */
+@utility pressable {
+  transition: transform 140ms cubic-bezier(0.2, 0, 0, 1);
+  &:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+}
+
+/* ==========================================================================
+   5. Components that utilities cannot express cleanly
+   ========================================================================== */
+
+/* The chrome and the tab bar: a translucent floating layer with content scrolling beneath.
+ * The hairline fades in only once something has actually slid under it. */
+.chrome,
+.tabbar {
+  background: var(--chrome);
+  -webkit-backdrop-filter: saturate(170%) blur(18px);
+  backdrop-filter: saturate(170%) blur(18px);
+}
+
+.chrome {
+  box-shadow: 0 1px 0 transparent;
+  transition: box-shadow 200ms ease;
+}
+
+.chrome[data-scrolled="true"] {
+  box-shadow: 0 1px 0 var(--hairline);
+}
+
+.tabbar {
+  box-shadow: 0 -1px 0 var(--hairline);
+}
+
+/* The sheet is solid, never blurred: it animates `transform` under a finger, and a filter on
+ * a moving element re-rasterises every frame (§13.29). */
+.sheet {
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-3);
+  will-change: transform;
+}
+
+.scrim {
+  background: var(--scrim);
+}
+
+/* Native selects keep their native picker (the best control on a phone), restyled only at
+ * rest: the chevron is drawn with gradients so no image is fetched. */
+select.field-control {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink-muted) 50%),
+    linear-gradient(135deg, var(--ink-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) 55%,
+    calc(100% - 13px) 55%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 2.25rem;
+}
+
+/* The login backdrop (§13.28, §13.29). The band owns translate3d (written by GSAP for the
+ * parallax); its <img> owns the Ken Burns transform (CSS). Two elements, because one
+ * `transform` cannot be driven from two places. The grade is stacked gradients and
+ * deliberately NOT a CSS filter. */
+.login-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  background: #050506;
+}
+
+.login-band {
+  position: absolute;
+  inset: -4% 0;
+  will-change: transform;
+  background-size: cover;
+  background-position: center 38%;
+}
+
+.login-plate {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 38%;
+  transform: scale(1.06);
+  animation: ken-burns 84s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+@keyframes ken-burns {
+  from {
+    transform: scale(1.06) translate3d(0, 0, 0);
+  }
+  to {
+    transform: scale(1.14) translate3d(-1.5%, -1%, 0);
+  }
+}
+
+/* The photograph is the same in both palettes; only the grade over it changes, so that the
+ * sign-in card sits on the palette's own ground. */
+.login-grade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to bottom, rgb(10 16 32 / 0.5) 0%, rgb(8 10 20 / 0.32) 50%, rgb(5 5 8 / 0.6) 100%),
+    linear-gradient(to bottom, rgb(5 5 8 / 0.78) 0%, rgb(5 5 8 / 0) 32%),
+    radial-gradient(120% 80% at 50% 30%, rgb(5 5 8 / 0) 40%, rgb(5 5 8 / 0.5) 100%);
+}
+
+.login-wash {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in srgb, var(--ground) 8%, transparent) 36%,
+    color-mix(in srgb, var(--ground) 62%, transparent) 60%,
+    color-mix(in srgb, var(--ground) 92%, transparent) 80%,
+    var(--ground) 100%
+  );
+}
+
+.wordmark {
+  font-family: var(--font-display);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.display {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+  line-height: 1.04;
+}
+
+/* ==========================================================================
+   6. Accessibility signals (honoured, never optional -- §12)
+   ========================================================================== */
+
+/* Reduced motion means gentler, not dead. GSAP's matchMedia collapses every timeline to an
+ * instant change; this catches the CSS that is left -- the Ken Burns drift and press scale. */
+@media (prefers-reduced-motion: reduce) {
+  .login-plate {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* Reduced transparency: every material goes solid. */
+@media (prefers-reduced-transparency: reduce) {
+  .chrome,
+  .tabbar {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--ground);
+  }
+  .login-wash {
+    background: linear-gradient(to bottom, transparent 0%, var(--ground) 55%);
+  }
+}
+
+/* More contrast: muted text darkens, hairlines strengthen. */
+@media (prefers-contrast: more) {
+  :root {
+    --ink-muted: var(--ink);
+    --ink-faint: var(--ink-muted);
+    --hairline: var(--hairline-strong);
+  }
+  .chrome,
+  .tabbar {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--ground);
+  }
+}
+
+/* ==========================================================================
+   7. Print (Phase 21's statement): paper is the light palette, whatever the phone says
+   ========================================================================== */
+
+@media print {
+  :root {
+    color-scheme: light;
+    --ground: #fff;
+    --surface: #fff;
+    --surface-raised: #fff;
+    --ink: #000;
+    --ink-muted: #333;
+    --ink-faint: #555;
+    --hairline: #bbb;
+    --hairline-strong: #888;
+    --shadow-1: none;
+    --shadow-2: none;
+    --shadow-3: none;
+  }
+  .no-print,
+  .chrome,
+  .tabbar {
+    display: none !important;
+  }
+}

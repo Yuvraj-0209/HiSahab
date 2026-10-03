@@ -32,6 +32,14 @@ node_modules/
 # in app/static/ -- build output either way, never source.
 frontend/dist/
 
+# Generated from the committed frontend/src/api/openapi.json on every dev, build and test run
+# (`npm run api:types`), so it can never disagree with the snapshot it came from.
+frontend/src/api/schema.d.ts
+
+# Playwright's per-run output.
+frontend/test-results/
+frontend/playwright-report/
+
 # Real bank statements -- account numbers, counterparty names, and a month of real
 # transactions. The parser's test fixture is a synthetic file under tests/, never this.
 bank_statements/

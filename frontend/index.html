@@ -3,11 +3,21 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- The Content-Security-Policy is a response header set by FastAPI (Phase 23, §13.19),
+         not a <meta> tag: a meta tag cannot carry frame-ancestors. -->
     <meta name="referrer" content="same-origin" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f3f4f6" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0c0d0f" />
     <title>HiSahab</title>
+    <link rel="preload" href="/fonts/InstrumentSerif-Regular.woff2" as="font" type="font/woff2" crossorigin />
   </head>
   <body>
     <div id="root"></div>
+    <!-- Sheets and toasts mount here, outside #root, so #root can go inert behind a sheet. -->
+    <div id="layers"></div>
+    <!-- Errors are announced as well as drawn. -->
+    <div id="live" class="sr-only-text" aria-live="polite" aria-atomic="true"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
