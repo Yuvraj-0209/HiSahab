@@ -2612,6 +2612,35 @@ ahead — no empty modules for later phases.
     now compares that list with the server's OpenAPI document, so the copy cannot drift again.
 
     See `docs/phase-23-plan.md`.
+24. **The front door and the finish** — no migration, no new table, no new endpoint, no new
+    business rule, and **no new npm dependency**: GSAP 3.15 already ships SplitText,
+    ScrollSmoother, Flip and DrawSVG. The owner's brief was an interface he could sell for $10k,
+    with "anything and everything" in motion. It splits along the line §14 already draws.
+
+    **(a) The front door may tell a story; a data screen may not.** The sign-in page is the first
+    thing another pump owner sees, and it has no data on it. It becomes a scroll-driven product
+    story built from live components showing labelled sample figures, with the sign-in card
+    still inside the first viewport. Inside the app, motion stays motivated: route changes become
+    View Transitions with shared elements, large titles collapse into the chrome as you scroll,
+    and a few moments carry weight (a tick drawing itself, a finalised day leaving the
+    worklist). Nothing loops, floats or counts.
+
+    **(b) A third motion engine, with its own territory.** The browser's View Transitions own
+    route changes, GSAP owns in-screen choreography and the front door's story, and the spring
+    keeps gestures. §14's one-element-one-engine rule now names all three.
+
+    **(c) The audit found the frontend was never delivered the way it was measured.** The UI
+    mount sent every file uncompressed, so the gzipped budget was not what a phone downloaded;
+    Phase 23's promised cache headers were never sent; and initial JavaScript was 150.4 KiB
+    against a 150 KiB budget nobody checked. The mount is now gzipped and cached by file kind
+    (`app/core/static_delivery.py`), GSAP left the first paint, and `npm run budget` fails the
+    suite when the budget is exceeded.
+
+    **(d) Installable, not offline.** A web app manifest lets the app open full-screen from a
+    phone's home screen. There is no service worker: queuing money writes offline is a different
+    system, and §6.10's idempotency already makes a retry safe.
+
+    See `docs/phase-24-plan.md`.
 
 ---
 
@@ -2673,6 +2702,10 @@ and ask.
   The **schema** is already outlet-ready; see §5.0. Do not build the features, and
   do not remove the `outlet_id` columns.
 - Mobile app (the API must *permit* one; V1 does not *build* one)
+  **Phase 24 clarification:** a web app manifest is in scope (the same web app, opened
+  full-screen from a home-screen icon); a service worker, offline storage and background sync are
+  not. An offline queue of money writes is a second system to keep correct, and §6.10's
+  idempotency already makes a retried write safe
 - **Credential management of any kind: password reset, email change, invite emails, SMTP,
   login history, session listing.** Phase 14 clarification. Supabase owns the credential
   (§5.1) and V1 does not build a second place to manage it — an admin uses the Supabase
@@ -3024,6 +3057,14 @@ future reader must be able to tell the difference.
     itself: a deploy that packages before `npm run build` ships no frontend at all. The deploy
     configuration runs the build first, and a build failure fails the deploy.
 
+    **Phase 24 amendment.** Instrument Serif's scope widens from "the wordmark and the two login
+    headlines" to **the wordmark and the front door's headlines** — the sign-in page is now a
+    product story, and one voice across its sections is the brand. It still appears nowhere
+    inside the app. The front door's photographs are **AI-generated placeholders**, recorded with
+    their prompts in `frontend/public/img/CREDITS.txt` and flagged for replacement with the
+    owner's own photographs of the pump; the app icons are the owner's to approve, because a
+    brand mark never changes silently.
+
 29. **The login backdrop is a photograph, and nothing about it is recomputed.** Two earlier
     versions of this screen stuttered, both for the same reason, and the reason generalises
     past this screen.
@@ -3236,6 +3277,13 @@ future reader must be able to tell the difference.
     runs the same match rather than a copy of it, so the two screens agree — at the cost of
     one query per unlinked statement line in the window. Two identical payments on one day
     are marked `ambiguous` and ticked neither, §13.37's rule unchanged. §5.3a, §13.37
+
+43. **Route transitions need the browser's View Transitions API, and back/forward is instant.**
+    Phase 24. A tab change slides, a drill-down pushes and a day row's date flies into the day
+    screen's title — in browsers that implement same-document view transitions. Elsewhere a
+    screen arrives with a plain CSS fade, which is what Phase 23 did everywhere. The browser's
+    own back and forward buttons swap screens without a transition, because the router starts
+    one only for navigations it initiates. A difference in feel, never in what a screen shows.
 
 ---
 
@@ -3471,6 +3519,27 @@ to occur on this specific project.
   state changed, a list arrived, a gesture is being followed, a step completed. A salesman
   typing a whole day in at 10pm is slowed by decoration, and an infinite loop or parallax on a
   data screen says nothing. Everything collapses under `prefers-reduced-motion` (Phase 23)
+- **Scroll-tell on a data screen.** Pins, scrubbed timelines, parallax and smooth scrolling
+  live in `frontend/src/showroom/` — the front door, which has no data on it — and nowhere else.
+  A salesman flicking through twenty nozzle rows must not wait for any of them (Phase 24)
+- **Put a real or computed figure on the front door.** Every rupee, litre and name there is a
+  literal string in `showroom/samples.ts`, labelled "Sample figures" on screen, never fetched,
+  never computed, never a real customer. A demo that does arithmetic in JavaScript is §3 rule 1
+  one language further out, and a real customer's balance on a public page is a leak (Phase 24)
+- **Claim on the front door what the product does not do.** Every section names the shipped
+  feature it shows, with its CLAUDE.md section in a comment. No invented metrics, testimonials
+  or customer logos — a sales page that lies is worse than a plain one (Phase 24)
+- **Push the sign-in form below the fold, or behind a pin or a smooth-scroll wrapper.** The
+  front door is a story for a buyer and a door for a salesman at 10pm; the second must never
+  wait for the first. Playwright asserts the button is in the first viewport at 390×844
+  (Phase 24)
+- **Animate one element from two of the three engines.** View Transitions own route changes,
+  GSAP owns in-screen choreography and the front door's story, the spring owns gestures. Each
+  writes its own element's transform; two on one element is a judder nobody can attribute
+  (Phase 24, extending the Phase 23 rule above)
+- **Import `gsap` outside `frontend/src/motion/`.** That module applies
+  `prefers-reduced-motion` once, for everything, and keeps each plugin in the chunk that uses
+  it. A direct import skips both, and a structural test refuses it (Phase 24)
 - **Hardcode a colour in a component.** Use the semantic tokens (`surface`, `ink`, `accent`,
   `short`, `surplus`, `warning`, …). Phase 23 ships two palettes chosen by
   `prefers-color-scheme`, and a raw colour is correct in one of them at most. Red, green and
@@ -3744,6 +3813,7 @@ npm run build                 # production build (into app/static/ after cutover
 npm test                      # Vitest behavioural suite
 npm run e2e                   # Playwright smoke: every tab, both palettes, CSP, axe
 npm run gen:api               # regenerate the API types from FastAPI's /openapi.json
+npm run budget                # build to a temp dir; fail if initial JS > 150 KiB gzipped (Phase 24)
 ```
 
 ---
