@@ -54,6 +54,10 @@ const NEEDS_IDEMPOTENCY = [
   /^\/shifts\/[^/]+\/bank-deposits$/,
   /^\/shifts\/[^/]+\/shortfalls$/,
   /^\/shifts\/[^/]+\/shortfall-settlements$/,
+  // Phase 20's bank review creates credit_repayments from statement lines. It was missing
+  // here, so its key was dropped and every "Record" was refused with 400 -- the list is now
+  // checked against the server's OpenAPI document by tests/test_idempotency_client_coverage.py.
+  /^\/bank-transactions\/confirm-repayments$/,
   /\/reversals$/,
 ];
 
