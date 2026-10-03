@@ -8,12 +8,18 @@
  * The tab bar is filtered by role, and that is UX, not a control (§8): the server enforces
  * every permission and every screen still handles a real 403. Which tab is lit comes from the
  * matched route's `handle`, so a screen never has to say where it lives.
+ *
+ * ## No GSAP in the shell (Phase 24 D1)
+ *
+ * The shell is in the first paint, and GSAP's core is 28 KB gzipped. Its two animations here are
+ * a screen entrance and a sliding tab indicator, and both are a single transform -- which CSS
+ * does on the compositor with no library at all. So they are CSS (`.screen-enter`,
+ * `.tab-indicator` in styles.css), and GSAP arrives with the lazily loaded screens that
+ * choreograph something.
  */
 
-import { type ComponentType, useCallback, useEffect, useRef, useState } from "react";
+import { type ComponentType, type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { Outlet, useLocation, useMatches, useNavigate } from "react-router";
-import { useGSAP } from "@gsap/react";
-import gsap from "gsap";
 import {
   ChartPieSliceIcon,
   CurrencyInrIcon,
@@ -25,11 +31,8 @@ import {
   SunHorizonIcon,
 } from "@phosphor-icons/react";
 import { satisfies, type Role } from "../lib/roles";
-import { useScreenEntrance } from "../ui/motion";
 import { ChromeContext, type ChromeSlots } from "./chrome";
 import { useSession } from "./session";
-
-gsap.registerPlugin(useGSAP);
 
 export type TabId = "today" | "entry" | "cash" | "credit" | "summary" | "admin";
 
@@ -88,9 +91,6 @@ export function Shell() {
     window.scrollTo(0, 0);
   }, [location.pathname]);
 
-  const screen = useRef<HTMLDivElement>(null);
-  useScreenEntrance(screen, location.pathname);
-
   return (
     <ChromeContext.Provider value={slots}>
       <div ref={sentinel} className="absolute top-0 h-px w-px" aria-hidden="true" />
@@ -111,7 +111,8 @@ export function Shell() {
       </header>
 
       <main className="mx-auto max-w-[76rem] px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+6.5rem)]">
-        <div ref={screen} key={location.pathname}>
+        {/* Keyed by path, so the CSS entrance replays on every route change. */}
+        <div key={location.pathname} className="screen-enter">
           <Outlet />
         </div>
       </main>
@@ -130,45 +131,33 @@ function TabBar({
   activeIndex: number;
   onSelect: (route: string) => void;
 }) {
-  const scope = useRef<HTMLDivElement>(null);
-  const indicator = useRef<HTMLSpanElement>(null);
-  const placed = useRef(false);
+  /* The indicator slides between tabs: the tabs are equal columns and the indicator is one
+   * column wide, so moving it is `translateX(100% * index)` -- a pure transform, nothing is laid
+   * out again. The first placement is immediate; only a change of tab is animated, because only
+   * a change says anything. `placed` turns the transition on after the first frame. */
+  const [placed, setPlaced] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setPlaced(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
-  /* The indicator slides between tabs: the tabs are equal columns, so moving it is a pure
-   * `xPercent` transform -- nothing is laid out again. The first placement is immediate; only a
-   * change of tab is animated, because only a change says anything. */
-  useGSAP(
-    () => {
-      const node = indicator.current;
-      if (!node) return;
-      if (activeIndex < 0) {
-        gsap.set(node, { opacity: 0 });
-        return;
-      }
-      const target = { xPercent: activeIndex * 100, opacity: 1 };
-      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      if (!placed.current || reduced) {
-        gsap.set(node, target);
-        placed.current = true;
-      } else {
-        gsap.to(node, { ...target, duration: 0.38, ease: "power3.out", overwrite: true });
-      }
-    },
-    { dependencies: [activeIndex], scope },
-  );
+  const indicator: CSSProperties = {
+    width: `calc((100% - 0.75rem) / ${tabs.length})`,
+    transform: `translateX(${Math.max(activeIndex, 0) * 100}%)`,
+    opacity: activeIndex < 0 ? 0 : 1,
+  };
 
   return (
     <nav aria-label="Sections" className="tabbar fixed inset-x-0 bottom-0 z-30 pb-[env(safe-area-inset-bottom)]">
       <div
-        ref={scope}
         className="relative mx-auto grid max-w-xl px-1.5 py-1.5"
         style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}
       >
         <span
-          ref={indicator}
           aria-hidden="true"
-          className="pointer-events-none absolute top-1.5 bottom-1.5 left-1.5 rounded-full bg-accent-tint opacity-0"
-          style={{ width: `calc((100% - 0.75rem) / ${tabs.length})` }}
+          data-placed={placed ? "true" : "false"}
+          className="tab-indicator pointer-events-none absolute top-1.5 bottom-1.5 left-1.5 rounded-full bg-accent-tint"
+          style={indicator}
         />
         {tabs.map((tab, index) => {
           const active = index === activeIndex;

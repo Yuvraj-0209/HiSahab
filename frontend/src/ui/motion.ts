@@ -8,10 +8,12 @@
  *
  * And each answers "what does this communicate?" (§14):
  *
- *   useScreenEntrance  the screen changed            -- a state transition
  *   useArrival         this list just arrived        -- hierarchy, read top to bottom
  *
- * Neither runs on a refetch: a list that re-animates every time the window regains focus is
+ * (The screen entrance moved to CSS in Phase 24 -- `.screen-enter` -- so GSAP stays out of the
+ * shell's first paint.)
+ *
+ * It never runs on a refetch: a list that re-animates every time the window regains focus is
  * decoration, and decoration is what the salesman at 10pm does not need.
  */
 
@@ -22,27 +24,6 @@ import gsap from "gsap";
 gsap.registerPlugin(useGSAP);
 
 const NO_PREFERENCE = "(prefers-reduced-motion: no-preference)";
-
-/** Cross-fade plus an 8px rise when the route changes. Killed if the user navigates again
- * before it finishes, because `useGSAP` reverts it when `key` changes. */
-export function useScreenEntrance(scope: RefObject<HTMLElement | null>, key: string) {
-  useGSAP(
-    () => {
-      const element = scope.current;
-      if (!element) return;
-      const mm = gsap.matchMedia();
-      mm.add(NO_PREFERENCE, () => {
-        gsap.fromTo(
-          element,
-          { opacity: 0, y: 8 },
-          { opacity: 1, y: 0, duration: 0.24, ease: "power2.out", clearProps: "transform,opacity" },
-        );
-      });
-      return () => mm.revert();
-    },
-    { dependencies: [key], scope },
-  );
-}
 
 /**
  * Stagger the first eight `[data-arrive]` children of `scope` in, the first time `ready`

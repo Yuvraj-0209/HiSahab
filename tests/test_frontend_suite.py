@@ -50,3 +50,18 @@ def test_the_vitest_suite_passes() -> None:
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-2000:]
     # Not vacuous: the suite must actually have found and run tests.
     assert " passed" in result.stdout, result.stdout[-2000:]
+
+
+def test_the_bundle_fits_its_budget() -> None:
+    """Phase 24 D1. Phase 23 set "initial JS <= 150 KB gzipped" and never measured it; the build
+    it shipped was 150.4 KiB. `scripts/budget.mjs` builds into a temporary directory (never
+    app/static) and fails on the initial download or a front-door chunk over its cap."""
+    result = subprocess.run(
+        ["npm", "run", "budget", "--silent"],
+        cwd=_FRONTEND,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-2000:]
+    assert "Within budget." in result.stdout, result.stdout[-2000:]

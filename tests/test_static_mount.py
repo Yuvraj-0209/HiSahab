@@ -56,6 +56,10 @@ def built(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     )
     (root / "assets" / "index-abc123.js").write_text('import "./chunk-def456.js";\n')
     (root / "assets" / "index-abc123.css").write_text(":root{--accent:#2149c9}\n")
+    # Large enough to be worth compressing, as every real chunk is.
+    (root / "assets" / "screen-ghi789.js").write_text("export const rows = [];\n" * 400)
+    (root / "img").mkdir()
+    (root / "img" / "photo.webp").write_bytes(b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 2048)
     return root
 
 
@@ -195,6 +199,58 @@ def test_the_policy_the_smoke_suite_runs_under_is_the_one_production_sends() -> 
     directives = re.findall(r'"([^"]+)"', block)
 
     assert "; ".join(directives) == CONTENT_SECURITY_POLICY
+
+
+# --- delivery: compression and caching (Phase 24 audit) -----------------------
+#
+# Phase 23 measured its bundle budget in gzipped bytes, and nothing served gzipped bytes:
+# StaticFiles sends files as they are on disk, so a phone on rural 4G downloaded the whole
+# uncompressed bundle (about 460 KB of JavaScript) to reach the sign-in card. Phase 23's M7 also
+# promised "index.html served uncached, assets cached immutably" and no Cache-Control header was
+# ever sent, so every open of the app revalidated every chunk, one round trip each.
+
+
+async def test_a_large_asset_is_compressed_for_a_client_that_accepts_gzip(built: pathlib.Path) -> None:
+    status, body, headers = await _get("/assets/screen-ghi789.js", built)
+
+    assert status == 200
+    assert headers.get("content-encoding") == "gzip"
+    assert "accept-encoding" in headers.get("vary", "").lower()
+    # Compression must not strip the policy: the wrapper order is part of the contract.
+    assert headers["content-security-policy"] == CONTENT_SECURITY_POLICY
+    assert body.startswith("export const rows")  # httpx decoded it; the bytes were gzip
+
+
+async def test_an_already_compressed_image_is_not_recompressed(built: pathlib.Path) -> None:
+    _, _, headers = await _get("/img/photo.webp", built)
+
+    assert "content-encoding" not in headers
+
+
+async def test_hashed_assets_are_cached_immutably(built: pathlib.Path) -> None:
+    """Vite puts a content hash in every file under /assets/, so a changed file is a new URL and
+    the old one can be cached for a year without ever being stale."""
+    _, _, headers = await _get("/assets/index-abc123.js", built)
+
+    cache = headers["cache-control"]
+    assert "immutable" in cache
+    assert "max-age=31536000" in cache
+
+
+async def test_the_shell_is_revalidated_on_every_open(built: pathlib.Path) -> None:
+    """index.html names the hashed assets. Cached, it would keep a phone on an old build after a
+    deploy, pointing at chunks that no longer exist."""
+    _, _, headers = await _get("/", built)
+
+    assert headers["cache-control"] == "no-cache"
+
+
+async def test_unhashed_public_files_are_cached_briefly(built: pathlib.Path) -> None:
+    """Fonts and photographs keep their names across deploys, so they cannot be immutable; a day
+    is long enough to spare the round trip and short enough that a replaced photo shows up."""
+    _, _, headers = await _get("/img/photo.webp", built)
+
+    assert headers["cache-control"] == "public, max-age=86400"
 
 
 # --- the ordering constraint the mount introduces -----------------------------

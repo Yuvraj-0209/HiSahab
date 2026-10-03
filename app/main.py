@@ -17,7 +17,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import install_error_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestIdMiddleware
-from app.core.security_headers import SecurityHeaders
+from app.core.static_delivery import deliver
 
 logger = logging.getLogger(__name__)
 
@@ -107,13 +107,17 @@ def create_app(
     # a <meta> tag, which could not enforce frame-ancestors (app/core/security_headers.py).
     # The API and /docs are outside the wrapper, deliberately.
     #
+    # Phase 24: `deliver` adds the cache rules and gzip around that policy wrapper
+    # (app/core/static_delivery.py) -- the budget was measured in gzipped bytes and nothing
+    # served them.
+    #
     # Resolved from __file__ rather than the working directory, so `uvicorn app.main:app`
     # serves the same files whatever directory it was started from.
     static_dir = static_dir or Path(__file__).parent / "static"
     if not serve_ui:
         logger.debug("UI mount skipped at the caller's request")
     elif (static_dir / "index.html").is_file():
-        app.mount("/", SecurityHeaders(StaticFiles(directory=static_dir, html=True)), name="ui")
+        app.mount("/", deliver(StaticFiles(directory=static_dir, html=True)), name="ui")
     else:
         # Not fatal. The API is useful without the UI, and a wheel installed without package
         # data should still serve data rather than refuse to boot -- but it says so loudly,

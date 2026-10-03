@@ -297,6 +297,33 @@
   box-shadow: 0 -1px 0 var(--hairline);
 }
 
+/* The screen entrance and the tab indicator (Phase 24 D1). Both are one transform each, so they
+ * are CSS rather than GSAP: the shell is in the first paint, and GSAP's core is not.
+ *
+ * `backwards`, not `both`: once the entrance ends the screen carries no transform at all. A
+ * lingering `transform` would make the screen a containing block for every `position: fixed`
+ * element inside it, which is how a sheet ends up pinned to the wrong box. */
+.screen-enter {
+  animation: screen-in 240ms cubic-bezier(0.2, 0, 0, 1) backwards;
+}
+
+@keyframes screen-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+}
+
+.tab-indicator {
+  will-change: transform;
+}
+
+.tab-indicator[data-placed="true"] {
+  transition:
+    transform 380ms cubic-bezier(0.215, 0.61, 0.355, 1),
+    opacity 200ms ease;
+}
+
 /* The sheet is solid, never blurred: it animates `transform` under a finger, and a filter on
  * a moving element re-rasterises every frame (§13.29). */
 .sheet {
