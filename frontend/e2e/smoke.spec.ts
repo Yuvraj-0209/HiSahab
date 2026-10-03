@@ -8,7 +8,7 @@
 import { expect, type Page, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { CUSTOMER_2, CUSTOMER_ID, PREVIOUS_DATE, RECONCILED_DATE, SALESMAN_ID, SHIFT_ID, worksheet } from "./fixtures";
-import { cashResponses, creditResponses, Failure, signedIn, todayResponses } from "./mock";
+import { cashResponses, creditResponses, Failure, signedIn, summaryResponses, todayResponses } from "./mock";
 
 async function watch(page: Page) {
   const problems: string[] = [];
@@ -426,4 +426,49 @@ test("old admin ledger links land on the Credit tab (Phase 16)", async ({ page }
   await signedIn(page, { role: "manager", responses: creditResponses() });
   await page.goto(`/#/admin/customers/${CUSTOMER_ID}/ledger`);
   await expect(page).toHaveURL(new RegExp(`#/credit/customers/${CUSTOMER_ID}$`));
+});
+
+/* --- the Summary tab -------------------------------------------------------------------- */
+
+test("renders: summary", async ({ page }, info) => {
+  const problems = await watch(page);
+  await signedIn(page, { role: "manager", responses: summaryResponses() });
+  await page.goto("/#/summary");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await settle(page);
+  await page.screenshot({ path: info.outputPath("summary.png"), fullPage: true });
+  await expectAccessible(page);
+  expect(problems).toEqual([]);
+});
+
+test("summary: a fuel with no commission withholds the combined margin, in words (§13.21)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: summaryResponses() });
+  await page.goto("/#/summary");
+  await expect(page.getByText("not knowable").first()).toBeVisible();
+  await expect(page.getByText(/no dealer commission has been entered for CBG/)).toBeVisible();
+  await expect(page.getByText("margin not entered")).toBeVisible();
+  // Litres and kilograms side by side, never summed (§4.5).
+  await expect(page.getByText("28135.200 L")).toBeVisible();
+  await expect(page.getByText("1550.250 kg").first()).toBeVisible();
+});
+
+test("summary: every share is the server's string, assigned and never computed (§14)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: summaryResponses() });
+  await page.goto("/#/summary");
+  const card = page.locator("[data-share]").first();
+  await expect(card).toHaveAttribute("style", /width: 48\.18%/);
+  await expect(page.locator("[data-slice]")).toHaveCount(3);
+});
+
+test("summary: 'Last month' asks for last month's own dates (the Phase 19 preset bug)", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-10-03T12:00:00+05:30"));
+  await signedIn(page, { role: "manager", responses: summaryResponses() });
+  await page.goto("/#/summary");
+  await page.getByRole("button", { name: "Change range" }).click();
+  const sheet = page.getByRole("dialog", { name: "Date range" });
+  // The sheet opens on the window being shown, not on a guess.
+  await expect(sheet.getByLabel("From")).toHaveValue("2026-09-22");
+  await sheet.getByRole("button", { name: "Last month" }).click();
+  await sheet.getByRole("button", { name: "Show summary" }).click();
+  await expect(page).toHaveURL(/#\/summary\?from=2026-09-01&to=2026-09-30$/);
 });

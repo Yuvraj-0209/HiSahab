@@ -547,3 +547,78 @@ export const reconciliation: Schemas["ReconciliationResponse"] = {
     { transaction_id: "tx-ambiguous", txn_date: "2026-09-24", narration: "IMPS 99812 TRANSFER", amount: "2000.00", verified_repayment_id: null, ambiguous: true, proposals: [] },
   ],
 };
+
+/* --- the Summary tab ---------------------------------------------------------------------- */
+
+function trendDay(date: string, total: string | null, height: string, source: Schemas["SummaryTrendDayResponse"]["source"] = "computed"): Schemas["SummaryTrendDayResponse"] {
+  return { business_date: date, total_sales: total, bar_height_pct: height, source, alert: false };
+}
+
+/** Eleven days, so the bars page; CBG has no commission, so the combined margin is withheld. */
+export const summaryReport: Schemas["app__api__v1__reports__SummaryResponse"] = {
+  from: "2026-09-22",
+  to: BUSINESS_DATE,
+  window_basis: "Days with a finalised summary are read from it; every other trading day is calculated live.",
+  fuel_basis: "Each shift valued at the rate effective at its start.",
+  profit_basis: "Quantity sold × dealer commission. Not business profit.",
+  cash_basis: "Cash is derived, not declared.",
+  trading_days: 10,
+  partial: false,
+  days_by_source: { snapshot: 8, computed: 2, no_trading: 1, unavailable: 0 },
+  total_sales: "2914306.40",
+  metered_fuel_sales: "2903806.40",
+  non_fuel_sales_total: "10500.00",
+  fuel_sales_total: "2903806.40",
+  gross_fuel_margin_total: null,
+  fuels_missing_margin: ["CBG"],
+  fuel: [
+    {
+      fuel_type_id: "ft-petrol", code: "PETROL", display_name: "Petrol", unit_of_measure: "litre", quantity: "17120.400",
+      sale_value: "1777195.92", share_pct: "61.20%", rate_per_unit: null, margin_per_unit: "3.99", gross_fuel_margin: "68310.40", margin_unavailable_reason: null,
+    },
+    {
+      fuel_type_id: "ft-diesel", code: "DIESEL", display_name: "Diesel", unit_of_measure: "litre", quantity: "11014.800",
+      sale_value: "985335.28", share_pct: "33.93%", rate_per_unit: null, margin_per_unit: "2.57", gross_fuel_margin: "28308.04", margin_unavailable_reason: null,
+    },
+    {
+      fuel_type_id: "ft-cbg", code: "CBG", display_name: "CBG", unit_of_measure: "kilogram", quantity: "1550.250",
+      sale_value: "141275.20", share_pct: "4.87%", rate_per_unit: null, margin_per_unit: null, gross_fuel_margin: null, margin_unavailable_reason: "NO_MARGIN_FOR_DATE",
+    },
+  ],
+  quantity_by_unit: { litre: "28135.200", kilogram: "1550.250" },
+  payment_mix: [
+    { code: "card", amount: "1404220.00", share_pct: "48.18%" },
+    { code: "upi", amount: "1003610.15", share_pct: "34.44%" },
+    { code: "cash", amount: "306086.25", share_pct: "10.50%" },
+    { code: "credit", amount: "200390.00", share_pct: "6.88%" },
+    { code: "wallet", amount: "0.00", share_pct: "0.00%" },
+  ],
+  card_total: "1404220.00",
+  upi_total: "1003610.15",
+  wallet_total: "0.00",
+  cash_sales: "306086.25",
+  credit_sales_total: "200390.00",
+  cash_credit_repayments: "42000.00",
+  card_upi_credit_repayments: "15000.00",
+  expenses_total: "88420.00",
+  expenses_by_category: [
+    { code: "SALARY", amount: "60000.00", share_pct: "67.86%" },
+    { code: "ELECTRICITY", amount: "21870.00", share_pct: "24.73%" },
+    { code: "MAINTENANCE", amount: "6550.00", share_pct: "7.41%" },
+  ],
+  bank_deposits_total: "250000.00",
+  shortfalls_booked: "500.00",
+  trend: [
+    trendDay("2026-09-22", "281220.10", "88.20%", "snapshot"),
+    trendDay("2026-09-23", "297410.00", "93.27%", "snapshot"),
+    trendDay("2026-09-24", "264118.55", "82.83%", "snapshot"),
+    trendDay("2026-09-25", null, "0.00%", "no_trading"),
+    trendDay("2026-09-26", "301877.20", "94.67%", "snapshot"),
+    trendDay("2026-09-27", "318866.00", "100.00%", "snapshot"),
+    trendDay("2026-09-28", "289004.75", "90.63%", "snapshot"),
+    trendDay("2026-09-29", "276540.00", "86.73%", "snapshot"),
+    trendDay("2026-09-30", "292611.35", "91.77%", "snapshot"),
+    trendDay(PREVIOUS_DATE, "289831.00", "90.89%"),
+    trendDay(BUSINESS_DATE, "302827.45", "94.97%"),
+  ],
+};

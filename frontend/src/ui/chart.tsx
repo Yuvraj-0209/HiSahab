@@ -27,7 +27,7 @@
  * reader gets the real figures.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import { CaretLeftIcon, CaretRightIcon } from "@phosphor-icons/react";
@@ -39,6 +39,10 @@ import { PRESETS, Spring } from "../motion/spring";
 gsap.registerPlugin(useGSAP);
 
 type RangeDay = Schemas["RangeDayResponse"];
+
+/** What a sales bar needs. The range report's days carry a variance; the summary's trend days
+ * do not, and the detail panel simply omits it rather than printing an absent one. */
+export type BarDay = Pick<RangeDay, "business_date" | "source" | "total_sales" | "alert" | "bar_height_pct"> & { variance?: string | null };
 
 /** The words a `source` means (§13.20), used in labels and legends alike so they cannot drift. */
 export function describeSource(source: string): string {
@@ -56,13 +60,13 @@ export function describeSource(source: string): string {
   }
 }
 
-export function SalesBars({ days, onSelect, perPage = 10 }: { days: RangeDay[]; onSelect?: (day: RangeDay) => void; perPage?: number }) {
-  const pages: RangeDay[][] = [];
+export function SalesBars<Day extends BarDay>({ days, onSelect, perPage = 10 }: { days: Day[]; onSelect?: (day: Day) => void; perPage?: number }) {
+  const pages: Day[][] = [];
   for (let index = 0; index < days.length; index += perPage) pages.push(days.slice(index, index + perPage));
 
   const [page, setPage] = useState(0);
-  const [selected, setSelected] = useState<RangeDay | null>(null);
-  const [hovered, setHovered] = useState<RangeDay | null>(null);
+  const [selected, setSelected] = useState<Day | null>(null);
+  const [hovered, setHovered] = useState<Day | null>(null);
   const rail = useRef<HTMLDivElement>(null);
   const scope = useRef<HTMLDivElement>(null);
   const spring = useRef<Spring | null>(null);
@@ -173,9 +177,9 @@ export function SalesBars({ days, onSelect, perPage = 10 }: { days: RangeDay[]; 
 }
 
 /** The panel under the bars. It teaches the interaction while empty: a phone has no hover. */
-function DayDetail({ day, onSelect }: { day: RangeDay | null; onSelect?: ((day: RangeDay) => void) | undefined }) {
+function DayDetail<Day extends BarDay>({ day, onSelect }: { day: Day | null; onSelect?: ((day: Day) => void) | undefined }) {
   if (!day) return <p className="text-[0.8125rem] text-ink-muted">Tap a bar for that day's figures.</p>;
-  const variance = varianceLabel(day.variance);
+  const variance = day.variance === undefined ? null : varianceLabel(day.variance);
   return (
     <div className="flex items-start justify-between gap-3 rounded-[var(--radius-control)] bg-surface-sunken px-3.5 py-3">
       <div className="min-w-0">
@@ -191,7 +195,7 @@ function DayDetail({ day, onSelect }: { day: RangeDay | null; onSelect?: ((day: 
       </div>
       <div className="flex shrink-0 flex-col items-end">
         <span className="tabular text-[0.9375rem] text-ink">{format(day.total_sales, { absent: "not known" })}</span>
-        <span className={`tabular text-[0.8125rem] ${variance.className}`}>{variance.text}</span>
+        {variance ? <span className={`tabular text-[0.8125rem] ${variance.className}`}>{variance.text}</span> : null}
       </div>
     </div>
   );
@@ -229,5 +233,160 @@ export function VarianceStrip({ days }: { days: RangeDay[] }) {
         );
       })}
     </svg>
+  );
+}
+
+/* --- shares: the donut and the share bars (Phase 19) ------------------------------------- */
+
+/* Colour by position in a stable list, never by hashing a code and never by size. Petrol must
+ * be the same colour in the donut and its legend, and still that colour tomorrow: a palette
+ * keyed on rank would repaint the chart whenever diesel overtook petrol, and the eye trusts
+ * colour more than it trusts a label. Literal class names, so Tailwind can see them. */
+const CAT_BG = ["bg-cat-1", "bg-cat-2", "bg-cat-3", "bg-cat-4", "bg-cat-5", "bg-cat-6"] as const;
+const CAT_STROKE = ["stroke-cat-1", "stroke-cat-2", "stroke-cat-3", "stroke-cat-4", "stroke-cat-5", "stroke-cat-6"] as const;
+
+/** The category colour for the n-th series (0-based); a seventh wraps. */
+export const categoryColour = (index: number) => index % CAT_BG.length;
+
+/** A swatch for a legend row, in the series' own colour. */
+export function Swatch({ colour }: { colour: number }) {
+  return <span aria-hidden="true" className={`inline-block size-2.5 shrink-0 rounded-[3px] ${CAT_BG[colour % CAT_BG.length]}`} />;
+}
+
+/** A server percentage string as a number, for GEOMETRY only.
+ *
+ * Not `parseFloat`, which the structural tests ban outright. The input is never money: it is a
+ * share the server produced by dividing in Decimal, and the output only places an arc on a
+ * circle. `null` (unknowable) stays null, so an unknown slice is not drawn as a zero one. */
+function percentForGeometry(value: string | null): number | null {
+  if (typeof value !== "string") return null;
+  const digits = value.trim().replace("%", "");
+  if (!/^-?\d+(\.\d+)?$/.test(digits)) return null;
+  return Number(digits);
+}
+
+export interface Slice {
+  key: string;
+  share_pct: string | null;
+  colour: number;
+}
+
+/**
+ * A donut: one arc per slice, sized by the server's `share_pct`. A donut rather than a pie
+ * because the hole holds the total, so the figure and its decomposition are read in one place.
+ *
+ * Each arc is a circle with `pathLength="100"`, so the percentage IS the dash length: nothing
+ * is divided, by the server's string or anything else (§14). The arcs draw in once with GSAP,
+ * tweening the dash from zero; reduced motion shows them whole. The SVG is aria-hidden because
+ * every slice is also a labelled row in the legend beside it.
+ */
+export function Donut({ slices, children }: { slices: Slice[]; children?: ReactNode }) {
+  const scope = useRef<HTMLDivElement>(null);
+  const drawable = slices
+    .map((slice) => ({ ...slice, pct: percentForGeometry(slice.share_pct) }))
+    .filter((slice): slice is Slice & { pct: number } => slice.pct !== null && slice.pct > 0);
+
+  useGSAP(
+    () => {
+      if (!scope.current) return;
+      const mm = gsap.matchMedia();
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        gsap.from("[data-slice]", { attr: { "stroke-dasharray": "0 100" }, duration: 0.8, ease: "power3.out", stagger: 0.07 });
+      });
+      return () => mm.revert();
+    },
+    { scope },
+  );
+
+  if (!drawable.length) return null;
+
+  // A hairline of ground between neighbours, taken from each arc's own length. Geometry on
+  // percentages, never on rupees.
+  const gap = drawable.length > 1 ? 0.6 : 0;
+  let cursor = 0;
+  return (
+    <div ref={scope} className="relative grid place-items-center py-2">
+      <svg viewBox="0 0 168 168" className="size-52 -rotate-90" aria-hidden="true" focusable="false">
+        <circle cx={84} cy={84} r={64} fill="none" strokeWidth={24} className="stroke-surface-sunken" />
+        {drawable.map((slice) => {
+          const start = cursor;
+          cursor += slice.pct;
+          return (
+            <circle
+              key={slice.key}
+              data-slice
+              cx={84}
+              cy={84}
+              r={64}
+              fill="none"
+              pathLength={100}
+              strokeWidth={24}
+              strokeDasharray={`${Math.max(slice.pct - gap, 0.2)} 100`}
+              strokeDashoffset={-start}
+              className={CAT_STROKE[slice.colour % CAT_STROKE.length]}
+            />
+          );
+        })}
+      </svg>
+      <div className="pointer-events-none absolute grid max-w-32 place-items-center text-center">{children}</div>
+    </div>
+  );
+}
+
+export interface ShareRow {
+  key: string;
+  label: string;
+  /** Pre-formatted by the caller, from the server's string. */
+  value: string;
+  share_pct: string | null;
+  colour: number;
+}
+
+/**
+ * Horizontal share bars, for what a donut cannot carry: many categories, or values lopsided
+ * enough that small slices become slivers. The WIDTH is the server's `share_pct`, assigned;
+ * the growth on first view is a GSAP `scaleX` on top of it, never a change to it.
+ */
+export function ShareBars({ rows }: { rows: ShareRow[] }) {
+  const scope = useRef<HTMLDivElement>(null);
+  useGSAP(
+    () => {
+      if (!scope.current) return;
+      const mm = gsap.matchMedia();
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        gsap.from("[data-share]", { scaleX: 0, transformOrigin: "0% 50%", duration: 0.6, ease: "power3.out", stagger: 0.04 });
+      });
+      return () => mm.revert();
+    },
+    { scope },
+  );
+
+  if (!rows.length) return null;
+  return (
+    <div ref={scope} className="flex flex-col gap-3.5">
+      {rows.map((row) => (
+        <div key={row.key}>
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="flex min-w-0 items-center gap-2">
+              <Swatch colour={row.colour} />
+              <span className="truncate text-[0.875rem] text-ink">{row.label}</span>
+            </span>
+            <span className="tabular shrink-0 text-[0.875rem] text-ink">{row.value}</span>
+          </div>
+          <div className="mt-1.5 flex items-center gap-2.5">
+            <div className="h-2 grow overflow-hidden rounded-full bg-surface-sunken">
+              {row.share_pct !== null ? (
+                <div data-share className={`h-full rounded-full ${CAT_BG[row.colour % CAT_BG.length]}`} style={{ width: row.share_pct }} />
+              ) : null}
+            </div>
+            {/* An unknowable share says so, rather than rendering an empty bar that reads as
+             * zero (§6.8). */}
+            <span className={`tabular w-14 shrink-0 text-right text-[0.75rem] ${row.share_pct === null ? "t-absent" : "text-ink-muted"}`}>
+              {row.share_pct ?? "unknown"}
+            </span>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }

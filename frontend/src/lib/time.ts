@@ -45,6 +45,18 @@ export function businessDate(value: string | null | undefined, { absent = UNEXPL
   return `${Number(day)} ${MONTHS[Number(month) - 1] ?? month} ${year}`;
 }
 
+/** A window of business dates, saying each part once: "22 to 30 Sep 2026", "22 Sep to 2 Oct
+ * 2026", "16 Dec 2026 to 15 Jan 2027". Short enough for a screen subtitle beside a button. */
+export function businessDateRange(from: string, to: string): string {
+  const [fy, fm, fd] = from.slice(0, 10).split("-");
+  const [ty, tm] = to.slice(0, 10).split("-");
+  if (!fy || !fm || !fd || !ty || !tm) return `${businessDate(from)} to ${businessDate(to)}`;
+  if (from.slice(0, 10) === to.slice(0, 10)) return businessDate(to);
+  if (fy !== ty) return `${businessDate(from)} to ${businessDate(to)}`;
+  if (fm !== tm) return `${Number(fd)} ${MONTHS[Number(fm) - 1] ?? fm} to ${businessDate(to)}`;
+  return `${Number(fd)} to ${businessDate(to)}`;
+}
+
 /** A business date without its year, for a chart axis where space is scarce. Parts, never a
  * Date -- the reason does not weaken because the year is being dropped. */
 export function businessDateShort(value: string | null | undefined): { day: string; month: string } {

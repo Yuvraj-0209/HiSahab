@@ -315,6 +315,16 @@ None.
   submits repeatedly. The key follows the body: same body is a retry, a changed body or a
   post-success call is a new submission. The old review reused one key across changed ticks,
   which the server refuses as `IDEMPOTENCY_KEY_REUSED`.
+- **Commit 7 (Summary) found the old "Last month" preset asking for a future date.** `summary.js`
+  took the end date's month from *today* and its day from last month, so on 3 October it asked
+  for 1 September to **30 October**. The presets now live in `lib/calendar.ts`, tested across a
+  year end and a leap February. The range sheet also opens on the window being shown rather than
+  on "this month", which the server's trading-anchored default (§13.30) often is not.
+- Chart category colours were re-chosen for two palettes, and none is red, green or amber: those
+  mean short, surplus and warning here, and a fuel painted red reads as a shortage. Each is at
+  least 3:1 against its surface (WCAG 1.4.11).
+- The donut draws each arc as a circle with `pathLength="100"`, so the server's percentage *is*
+  the dash length and nothing is divided anywhere, not even for geometry.
 
 ## Still owed by the owner
 

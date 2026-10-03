@@ -61,6 +61,18 @@
   --warning: #8f5100;
   --warning-tint: rgb(196 120 8 / 0.13);
 
+  /* Chart categories (Phase 19's six, re-chosen for two palettes). Cobalt first, because the
+   * largest series usually lands there and it is the app's own colour. Then hues that are
+   * NOT red, green or amber: those mean short, surplus and warning in this app, and a fuel
+   * painted red would read as a shortage. Each is at least 3:1 against --surface, the WCAG
+   * floor for a graphical object, and every chart also carries a labelled legend. */
+  --cat-1: #2149c9;
+  --cat-2: #0e7c86;
+  --cat-3: #7a4bd0;
+  --cat-4: #c2367f;
+  --cat-5: #5c677a;
+  --cat-6: #1f8fcc;
+
   /* Shadows tinted towards the ink's own hue, not black. */
   --shadow-1: 0 1px 2px rgb(20 26 44 / 0.06), 0 1px 1px rgb(20 26 44 / 0.04);
   --shadow-2: 0 2px 6px rgb(20 26 44 / 0.06), 0 12px 28px -8px rgb(20 26 44 / 0.12);
@@ -107,6 +119,13 @@
     --warning: #f2b544;
     --warning-tint: rgb(242 181 68 / 0.13);
 
+    --cat-1: #7c9cff;
+    --cat-2: #3cc4c4;
+    --cat-3: #b08cff;
+    --cat-4: #f27ab6;
+    --cat-5: #9aa5b8;
+    --cat-6: #5ec2f5;
+
     --shadow-1: inset 0 1px 0 rgb(255 255 255 / 0.03), 0 1px 2px rgb(0 0 0 / 0.4);
     --shadow-2: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 14px 32px -10px rgb(0 0 0 / 0.6);
     --shadow-3: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 24px 60px -12px rgb(0 0 0 / 0.75);
@@ -140,6 +159,12 @@
   --color-surplus-tint: var(--surplus-tint);
   --color-warning: var(--warning);
   --color-warning-tint: var(--warning-tint);
+  --color-cat-1: var(--cat-1);
+  --color-cat-2: var(--cat-2);
+  --color-cat-3: var(--cat-3);
+  --color-cat-4: var(--cat-4);
+  --color-cat-5: var(--cat-5);
+  --color-cat-6: var(--cat-6);
   --color-on-photo: var(--on-photo);
   --color-on-photo-muted: var(--on-photo-muted);
 

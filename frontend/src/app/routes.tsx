@@ -83,6 +83,7 @@ const credit = () => import("../screens/credit");
 const openingBalances = () => import("../screens/credit_opening_balances");
 const statement = () => import("../screens/credit_statement");
 const bank = () => import("../screens/bank");
+const summary = () => import("../screens/summary");
 
 export const routes: RouteObject[] = [
   {
@@ -186,6 +187,8 @@ export const routes: RouteObject[] = [
             lazy: () => credit().then((m) => ({ Component: m.CustomerLedgerScreen })),
           },
           { path: "admin/customers/:customerId/ledger", Component: RedirectToLedger },
+
+          { path: "summary", handle: tab("summary"), lazy: () => summary().then((m) => ({ Component: m.SummaryScreen })) },
         ],
       },
 

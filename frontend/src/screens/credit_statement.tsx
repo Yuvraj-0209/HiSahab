@@ -23,7 +23,7 @@ import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
 import { lastCompletedHalf } from "../lib/billing";
 import { format, isZero } from "../lib/money";
-import { businessDate, todayAtOutlet } from "../lib/time";
+import { businessDate, businessDateRange, todayAtOutlet } from "../lib/time";
 import { Amount } from "../ui/Amount";
 import { TextField, useForm } from "../ui/form";
 import { useArrival } from "../ui/motion";
@@ -96,7 +96,7 @@ export function CreditStatementScreen() {
   }
 
   const s = statement.data;
-  const period = `${businessDate(s.from)} to ${businessDate(s.to)}`;
+  const period = businessDateRange(s.from, s.to);
   const unanchored = s.rows.filter((entry) => !entry.opening_balance_entered).length;
 
   return (

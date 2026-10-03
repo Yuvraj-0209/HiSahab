@@ -42,7 +42,7 @@ import { useRepeatableSubmission } from "../api/submission";
 import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
 import { format } from "../lib/money";
-import { businessDate } from "../lib/time";
+import { businessDate, businessDateRange } from "../lib/time";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { CheckboxField, SelectField, useForm } from "../ui/form";
@@ -163,7 +163,7 @@ export function BankHubScreen() {
                 <div key={item.id} data-arrive>
                   <Card>
                     <ListRow
-                      label={`${businessDate(item.period_from)} to ${businessDate(item.period_to)}`}
+                      label={businessDateRange(item.period_from, item.period_to)}
                       detail={
                         `${item.imported_count} imported` +
                         (item.skipped_count ? `, ${item.skipped_count} already seen` : "") +
@@ -765,7 +765,7 @@ export function BankReconciliationScreen() {
 
   return (
     <>
-      <ScreenTitle title="Reconciliation" subtitle={latest ? `${businessDate(latest.period_from)} to ${businessDate(latest.period_to)}` : undefined} />
+      <ScreenTitle title="Reconciliation" subtitle={latest ? businessDateRange(latest.period_from, latest.period_to) : undefined} />
       <BackToBank />
       {body}
     </>

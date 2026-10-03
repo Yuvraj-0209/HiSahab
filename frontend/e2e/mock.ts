@@ -132,3 +132,8 @@ export function creditResponses(): Responses {
     "GET /bank-statements/reconciliation": fixture.reconciliation,
   };
 }
+
+/** The Summary tab reads one endpoint, by design (§14). */
+export function summaryResponses(): Responses {
+  return { "GET /reports/summary": fixture.summaryReport };
+}
