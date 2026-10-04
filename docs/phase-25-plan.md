@@ -160,6 +160,24 @@ motion: compact title only, unchanged. Covers Entry, Admin and any future short 
 
 *Recorded as each commit lands.*
 
+- `c0561ba` CLAUDE.md §11 (25) and this plan.
+- `844fb12` **Sheets.** Desktop dialog on a critically damped spring; `scrollbar-gutter:
+  stable`; focus to the dialog, first field only once a desktop dialog settles. With a stable
+  gutter Chrome centres fixed elements on the same column as the page, about 7.5 px left of
+  the window's centre; the test allows for it.
+- `6d3ca53` **The duplicated title.** Failing test first: Entry's compact title was at opacity 1.
+  A second test keeps the scrolling case working on the Cash hub.
+- `8139d10` **Wide screens and the tab bar.** `handle.wide` on Today, a shift by id, Readings and
+  Summary.
+- `bab4167` **Today.** Shift band; six equal cards, three by two; icon chips. The test measures
+  the cards, not their headings, because a heading without a caption sits lower.
+- `b9b708a` **Nozzle readings.** Big cards with step strip, figures and next action; "Carried
+  forward" until confirmed.
+- `9f5bc54` **Walking into the station.** Two layers. The painted patch behind the canopy was
+  dropped after offline previews, and a full-resolution copy loads when idle. LCP on a DPR-3
+  phone on Slow 4G: 2.29 s, CLS 0.
+- **Final:** pytest 1,708, Vitest 78, Playwright 154, budget 124.1 / 64.8 KB.
+
 ## Still owed by the owner
 
 - The Phase 24 items: copy approval, `VITE_SALES_CONTACT`, icon approval, `PUBLIC_ORIGIN`, his
