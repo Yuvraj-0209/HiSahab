@@ -264,6 +264,24 @@ test.describe("large titles on a page too short to scroll (Phase 25 D4)", () => 
     expect(span / 1440).toBeGreaterThan(0.9);
   });
 
+  test("Today's six cards sit three across and two down on a monitor (Phase 25 D3)", async ({ page }) => {
+    const problems = await watch(page);
+    await signedIn(page, { role: "admin", responses: todayResponses("open") });
+    await page.goto("/#/today");
+    await expect(page.getByText("₹3,02,827.45").first()).toBeVisible();
+    await settle(page);
+    const boxes = await Promise.all(
+      ["Metered sales", "Collections", "Expenses", "Credit", "Bank deposits", "Day cash"].map((title) =>
+        page.getByRole("heading", { level: 2, name: title, exact: true }).locator("xpath=ancestor::*[@data-arrive][1]").boundingBox(),
+      ),
+    );
+    const columns = new Set(boxes.map((box) => Math.round(box!.x)));
+    const rows = new Set(boxes.map((box) => Math.round(box!.y)));
+    expect([columns.size, rows.size]).toEqual([3, 2]);
+    await expectAccessible(page);
+    expect(problems).toEqual([]);
+  });
+
   test("Entry's name is shown once, not twice", async ({ page }) => {
     await signedIn(page, { role: "admin", responses: todayResponses("open") });
     await page.goto("/#/entry");

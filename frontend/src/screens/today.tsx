@@ -24,10 +24,21 @@
  * `#/shifts/{id}`, which reads the shift by id in any status.
  */
 
-import { type ReactNode, useRef, useState } from "react";
+import { type ComponentType, type ReactNode, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { CaretRightIcon, LockIcon, NotePencilIcon } from "@phosphor-icons/react";
+import {
+  BankIcon,
+  CaretRightIcon,
+  GasPumpIcon,
+  type IconProps,
+  LockIcon,
+  NotebookIcon,
+  NotePencilIcon,
+  ReceiptIcon,
+  VaultIcon,
+  WalletIcon,
+} from "@phosphor-icons/react";
 import { api } from "../api/client";
 import { apiKey, useApiQuery, useRefreshApi } from "../api/queries";
 import type { Schemas } from "../api/types";
@@ -64,7 +75,7 @@ export function TodayScreen() {
     return (
       <>
         <ScreenTitle large title="Today" />
-        <Skeleton shape="cards" rows={4} />
+        <Skeleton shape="cards" rows={6} />
       </>
     );
   }
@@ -90,7 +101,7 @@ export function ShiftByIdScreen() {
     return (
       <>
         <ScreenTitle large title="Today" subtitle="Loading…" />
-        <Skeleton shape="cards" rows={4} />
+        <Skeleton shape="cards" rows={6} />
       </>
     );
   }
@@ -161,49 +172,56 @@ function ShiftHeader({ shift }: { shift: Shift }) {
           ? "Only a manager or admin can close a shift."
           : null;
 
+  // One band across the screen (Phase 25 D3): who and when on the left, the one act that moves
+  // the shift on at the right. On a phone the act drops beneath, full width, under the thumb.
+  const act = "w-full md:w-auto md:min-w-[11rem]";
   return (
     <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <Pill kind={STATUS_PILL[shift.status] ?? "neutral"}>{shift.status}</Pill>
-            <span className="text-[0.8125rem] text-ink-muted">Shift {shift.sequence}</span>
+      <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+        <div className="flex min-w-0 items-center gap-4">
+          <span className="hidden size-12 shrink-0 place-items-center rounded-[14px] bg-accent-tint text-accent sm:grid" aria-hidden="true">
+            {shift.status === "locked" ? <LockIcon size={24} /> : <GasPumpIcon size={24} />}
+          </span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Pill kind={STATUS_PILL[shift.status] ?? "neutral"}>{shift.status}</Pill>
+              <span className="text-[0.8125rem] text-ink-muted">Shift {shift.sequence}</span>
+            </div>
+            <p className="mt-1.5 text-headline text-ink">
+              {businessDateWeekday(shift.business_date)} {businessDate(shift.business_date)}
+            </p>
+            <p className="mt-0.5 text-[0.875rem] text-ink-muted">
+              {timeOnly(shift.started_at)}
+              {shift.ended_at ? ` to ${timeOnly(shift.ended_at)}` : " onwards"}
+            </p>
           </div>
-          <p className="mt-2 text-[1.375rem] leading-tight font-semibold tracking-[-0.02em] text-ink">
-            {businessDateWeekday(shift.business_date)} {businessDate(shift.business_date)}
-          </p>
-          <p className="mt-1 text-[0.875rem] text-ink-muted">
-            {timeOnly(shift.started_at)}
-            {shift.ended_at ? ` to ${timeOnly(shift.ended_at)}` : " onwards"}
-          </p>
         </div>
-        {shift.status === "locked" ? <LockIcon size={22} className="text-ink-faint" aria-hidden /> : null}
-      </div>
 
-      {canClose || canLockOrReopen || isOwnAttendantShift ? (
-        <div className="mt-5 flex flex-col gap-2 sm:flex-row">
-          {isOwnAttendantShift ? (
-            <Button variant="primary" block icon={<NotePencilIcon size={18} aria-hidden />} onClick={() => navigate("/entry")}>
-              Enter this shift
-            </Button>
-          ) : null}
-          {canClose ? (
-            <Button variant="primary" block disabled={busy !== null} onClick={() => void transition("close")}>
-              {busy === "close" ? "Closing…" : "Close shift"}
-            </Button>
-          ) : null}
-          {canLockOrReopen ? (
-            <>
-              <Button variant="primary" block disabled={busy !== null} onClick={() => void transition("lock")}>
-                {busy === "lock" ? "Locking…" : "Lock shift"}
+        {canClose || canLockOrReopen || isOwnAttendantShift ? (
+          <div className="flex flex-col gap-2 sm:flex-row md:shrink-0">
+            {isOwnAttendantShift ? (
+              <Button variant="primary" className={act} icon={<NotePencilIcon size={18} aria-hidden />} onClick={() => navigate("/entry")}>
+                Enter this shift
               </Button>
-              <Button block disabled={busy !== null} onClick={() => setReopening(true)}>
-                Reopen shift
+            ) : null}
+            {canClose ? (
+              <Button variant="primary" className={act} disabled={busy !== null} onClick={() => void transition("close")}>
+                {busy === "close" ? "Closing…" : "Close shift"}
               </Button>
-            </>
-          ) : null}
-        </div>
-      ) : null}
+            ) : null}
+            {canLockOrReopen ? (
+              <>
+                <Button className={act} disabled={busy !== null} onClick={() => setReopening(true)}>
+                  Reopen shift
+                </Button>
+                <Button variant="primary" className={act} disabled={busy !== null} onClick={() => void transition("lock")}>
+                  {busy === "lock" ? "Locking…" : "Lock shift"}
+                </Button>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
       {reason ? <p className="mt-4 text-[0.8125rem] text-ink-muted">{reason}</p> : null}
 
       <Sheet open={reopening} onClose={() => setReopening(false)} title="Reopen shift" subtitle={shiftSubtitle(shift)}>
@@ -300,10 +318,13 @@ function ShiftFigures({ shift }: { shift: Shift }) {
   const dayCash = day.data?.cash ?? null;
 
   return (
-    <div ref={grid} className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+    // Six equal cards, three across and two down on a monitor (Phase 25 D3). Phase 24 made the
+    // first card span two columns, which broke the six into rows of 2, 1 and 3.
+    <div ref={grid} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:gap-5 xl:grid-cols-3">
       <DomainCard
-        hero
+        Icon={GasPumpIcon}
         title="Metered sales"
+        caption="Valued from the nozzle readings"
         figure={
           sales.isError ? (
             <span className="t-absent">not valued</span>
@@ -316,6 +337,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
         onDetails={() => setOpen("sales")}
       />
       <DomainCard
+        Icon={WalletIcon}
         title="Collections"
         caption="Declared cash and what came in by machine"
         figure={<Amount value={collections.data?.declared_cash ?? null} absent={collections.isPending ? "…" : "not declared"} />}
@@ -324,6 +346,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
         onDetails={() => setOpen("collections")}
       />
       <DomainCard
+        Icon={ReceiptIcon}
         title="Expenses"
         caption={countLabel(expenses.data?.items.length, "item")}
         badge={unreviewed ? <Pill kind="review">{unreviewed} to review</Pill> : null}
@@ -333,6 +356,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
         onDetails={() => setOpen("expenses")}
       />
       <DomainCard
+        Icon={NotebookIcon}
         title="Credit"
         caption={`${countLabel(creditSales.data?.items.length, "sale")}, ${countLabel(repayments.data?.items.length, "repayment")}`}
         figure={<Amount value={creditSales.data?.total ?? null} absent="…" />}
@@ -345,6 +369,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
         onDetails={() => setOpen("credit")}
       />
       <DomainCard
+        Icon={BankIcon}
         title="Bank deposits"
         caption={countLabel(deposits.data?.items.length, "deposit")}
         figure={<Amount value={deposits.data?.total ?? null} absent="…" />}
@@ -353,6 +378,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
         onDetails={() => setOpen("deposits")}
       />
       <DomainCard
+        Icon={VaultIcon}
         title="Day cash"
         caption={businessDate(shift.business_date)}
         badge={
@@ -404,8 +430,17 @@ function ShiftFigures({ shift }: { shift: Shift }) {
   );
 }
 
-/** One domain: a headline figure the card is read for, a few supporting lines, and Details. */
+/**
+ * One domain of the shift: what it is, the figure it is read for, a few supporting lines, and
+ * Details. Six of them sit three across and two down, all the same size (Phase 25 D3): equal
+ * weight, because a manager reads the six together, and a card made bigger than its neighbours
+ * broke the rows rather than adding emphasis.
+ *
+ * The icon chip says which domain at a glance; the figure is the server's string at one size,
+ * rolled by `Amount` when it changes; a null is still a word.
+ */
 function DomainCard({
+  Icon,
   title,
   caption,
   badge,
@@ -414,8 +449,8 @@ function DomainCard({
   lines,
   loading,
   onDetails,
-  hero = false,
 }: {
+  Icon: ComponentType<IconProps>;
   title: string;
   caption?: string | undefined;
   badge?: ReactNode;
@@ -424,24 +459,25 @@ function DomainCard({
   lines: Line[];
   loading: boolean;
   onDetails: () => void;
-  /** The card the screen is read for: wider, with its figure at the top of the type ramp. */
-  hero?: boolean;
 }) {
   const shown = lines.filter((line) => !("note" in line)).slice(0, 3);
   return (
-    <div data-arrive className={hero ? "md:col-span-2" : ""}>
+    <div data-arrive>
       <Card className="flex h-full flex-col">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-[0.9375rem] font-semibold text-ink">{title}</h2>
-            {caption ? <p className="text-[0.8125rem] text-ink-muted">{caption}</p> : null}
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-[12px] bg-accent-tint text-accent" aria-hidden="true">
+              <Icon size={20} />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-[0.9375rem] font-semibold text-ink">{title}</h2>
+              {caption ? <p className="truncate text-[0.8125rem] text-ink-muted">{caption}</p> : null}
+            </div>
           </div>
           {badge}
         </div>
-        <div className="mt-3 flex items-baseline gap-2">
-          <span className={`${hero ? "text-display" : "text-[1.75rem] leading-none font-semibold tracking-[-0.025em]"} text-ink`}>
-            {loading ? <span className={`skeleton inline-block rounded-lg align-middle ${hero ? "h-10 w-56" : "h-7 w-32"}`} /> : figure}
-          </span>
+        <div className="mt-5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span className="text-title text-ink">{loading ? <span className="skeleton inline-block h-8 w-40 rounded-lg align-middle" /> : figure}</span>
           {figureLabel && !loading ? <span className="text-[0.8125rem] text-ink-muted">{figureLabel}</span> : null}
         </div>
         {shown.length ? (
@@ -453,11 +489,11 @@ function DomainCard({
             )}
           </div>
         ) : null}
-        <div className="mt-auto pt-4">
+        <div className="mt-auto pt-5">
           <button
             type="button"
             onClick={onDetails}
-            className="pressable flex w-full items-center justify-between rounded-[var(--radius-control)] bg-surface-sunken px-3.5 py-2.5 text-[0.875rem] font-medium text-ink"
+            className="pressable flex w-full items-center justify-between rounded-[var(--radius-control)] bg-surface-sunken px-3.5 py-2.5 text-[0.875rem] font-medium text-ink transition-colors hover:bg-accent-tint hover:text-accent"
           >
             Details
             <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
