@@ -18,7 +18,8 @@
     "test": "vitest run",
     "typecheck": "npm run api:types && tsc --noEmit",
     "e2e": "playwright test",
-    "budget": "node scripts/budget.mjs"
+    "budget": "node scripts/budget.mjs",
+    "shots": "playwright test -c playwright.shots.config.ts"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.3.0",

@@ -413,11 +413,43 @@ None.
     honest markup.
   - Vitest 75, Playwright 130.
 
+- **Commit 6 — the front door.**
+  - `src/showroom/`: seven sections after the hero (meter, gap, udhaar, bank, month, night shift,
+    close), each a different layout, each claim commented with the CLAUDE.md section it shows.
+    `samples.ts` holds every figure as a literal string; a pytest check proves in `Decimal` that
+    they agree (the gap with its terms, the ledger with its balance, Paytm with card + UPI, every
+    share with its rupees). It was mutation-checked: changing one share or the gap fails it.
+  - `motion/story.ts`: `useStory` splits desktop (pins, scrubs, ScrollSmoother) from phone (the
+    same beats, one-shot) and reduced motion (nothing moves; every section is there).
+  - The hero gained a headline that rises word by word and a one-line value proposition; the
+    sign-in card stays in the first viewport (asserted at 390x844 in both palettes).
+  - **6a, the CSP proof.** ScrollTrigger pins and ScrollSmoother write styles through `cssText`,
+    which `style-src 'self'` permits; the desktop scroll-through runs under the production CSP
+    with zero violations. **SplitText was not used**, for a React reason rather than a CSP one:
+    it replaces a heading's text nodes with its own spans and reverts by assigning `innerHTML`
+    inside DOM React owns. `showroom/Words.tsx` renders the word spans in JSX instead.
+  - **Deviation: licensed stock, not generated photographs.** Higgsfield had 0 credits; the owner
+    chose Adobe Stock on the free tier: 969116629 (a forecourt at night, the new hero, 58 KB at
+    1280 against the skyline's 147 KB) and 288456618 (hands holding paper bills). The skyline
+    files were deleted. Only two photographs were needed, not three.
+  - **The night-shift phone shows the Entry screen, not Today.** Today's e2e fixture carries a
+    real trading day's takings (CLAUDE.md §6.4's 30 July), and the front door shows sample
+    figures only. `npm run shots` re-takes both palettes from the real app.
+  - Bugs found on the way: ScrollSmoother was handed selector strings, which `useGSAP` resolves
+    inside the component, so it silently never attached; the phone's sideways bank row was a
+    scrollable region with no keyboard access (axe); headlines stranded a last word ("shift.");
+    the budget's front-door pattern missed the `Showroom` chunk and every shared chunk, so it now
+    walks Vite's manifest: **64.1 KB beyond the first paint, against 70**.
+  - "Talk to us" reads `VITE_SALES_CONTACT` at build time and is absent without it.
+  - Playwright 136.
+
 ## Still owed by the owner
 
-- Approval of the front-door copy, and the contact for "Talk to us" (WhatsApp number or email).
+- Approval of the front-door copy, and the contact for "Talk to us" (WhatsApp number or email),
+  set as `VITE_SALES_CONTACT` in the build environment.
 - Approval of the app icon.
-- Real photographs of the pump, to replace the generated ones.
+- Real photographs of the pump, to replace the two licensed stock placeholders (same file names
+  and sizes; nothing else changes).
 - The production domain, for `og:image`.
 - The Phase 23 items still open: a Railway deploy, real-day parity, a phone hand-check, and the
   `confirm-repayments` business-rule question.

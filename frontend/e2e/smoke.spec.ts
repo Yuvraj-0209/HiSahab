@@ -75,6 +75,60 @@ test("login renders with no console errors", async ({ page }) => {
   expect(problems).toEqual([]);
 });
 
+/* --- the front door (Phase 24 D7) ---------------------------------------------------------- */
+
+async function frontDoor(page: Page) {
+  await page.route("**/api/v1/auth-config", (route) =>
+    route.fulfill({ json: { supabase_url: "https://e2e-test.supabase.co", supabase_anon_key: "e2e-anon" } }),
+  );
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+}
+
+test("front door: the sign-in button is inside the first screen of a phone (§14)", async ({ page }) => {
+  await frontDoor(page);
+  const box = await page.getByRole("button", { name: "Sign in" }).boundingBox();
+  const viewport = page.viewportSize();
+  expect(box && viewport && box.y + box.height <= viewport.height).toBe(true);
+});
+
+test("front door: under reduced motion every section is simply there, without scrolling", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const problems = await watch(page);
+  await frontDoor(page);
+  await expect(page.locator("[data-section]")).toHaveCount(7);
+  const hidden = await page.evaluate(() =>
+    Array.from(document.querySelectorAll<HTMLElement>("[data-section] *")).filter((node) => getComputedStyle(node).opacity !== "1").length,
+  );
+  expect(hidden).toBe(0);
+  for (const label of ["Confirm the meter.", "The gap has a name.", "Every udhaar has a receipt.", "Bring HiSahab to your pump."]) {
+    await expect(page.getByRole("heading", { name: label })).toBeAttached();
+  }
+  // Every figure on the page is labelled for what it is.
+  expect(await page.getByText("Sample figures").count()).toBeGreaterThanOrEqual(5);
+  expect(problems).toEqual([]);
+});
+
+test.describe("front door on a desktop", () => {
+  test.use({ viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false, deviceScaleFactor: 1 });
+
+  test("the whole story scrolls through under the production CSP, with nothing in the console", async ({ page }) => {
+    const problems = await watch(page);
+    await frontDoor(page);
+    await expect(page.locator("[data-section]")).toHaveCount(7);
+    // Smooth scrolling is on: the wrapper is fixed and the content is moved by transform.
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector("#smooth-wrapper")!).position)).toBe("fixed");
+    for (let step = 0; step < 60; step += 1) {
+      await page.mouse.wheel(0, 400);
+      await page.waitForTimeout(40);
+    }
+    await page.waitForTimeout(1500);
+    await expect(page.getByRole("heading", { name: "Bring HiSahab to your pump." })).toBeInViewport();
+    expect(problems).toEqual([]);
+    await expectAccessible(page);
+  });
+});
+
 test("today: an open shift, as a manager", async ({ page }, info) => {
   const problems = await watch(page);
   await signedIn(page, { role: "admin", responses: todayResponses("open") });

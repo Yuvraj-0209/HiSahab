@@ -3060,10 +3060,12 @@ future reader must be able to tell the difference.
     **Phase 24 amendment.** Instrument Serif's scope widens from "the wordmark and the two login
     headlines" to **the wordmark and the front door's headlines** — the sign-in page is now a
     product story, and one voice across its sections is the brand. It still appears nowhere
-    inside the app. The front door's photographs are **AI-generated placeholders**, recorded with
-    their prompts in `frontend/public/img/CREDITS.txt` and flagged for replacement with the
-    owner's own photographs of the pump; the app icons are the owner's to approve, because a
-    brand mark never changes silently.
+    inside the app. The front door's photographs are **licensed Adobe Stock placeholders** (the
+    plan was to generate them; the generator had no credits and the owner chose stock), recorded
+    in `frontend/public/img/CREDITS.txt` and flagged for replacement with the owner's own
+    photographs of the pump. The two phone screenshots are the app's own Entry screen, regenerated
+    by `npm run shots` so they cannot go stale. The app icons are the owner's to approve, because
+    a brand mark never changes silently.
 
 29. **The login backdrop is a photograph, and nothing about it is recomputed.** Two earlier
     versions of this screen stuttered, both for the same reason, and the reason generalises
@@ -3815,6 +3817,7 @@ npm test                      # Vitest behavioural suite
 npm run e2e                   # Playwright smoke: every tab, both palettes, CSP, axe
 npm run gen:api               # regenerate the API types from FastAPI's /openapi.json
 npm run budget                # build to a temp dir; fail if initial JS > 150 KiB gzipped (Phase 24)
+npm run shots                 # re-take the front door's light/dark screenshots from the real app
 ```
 
 ---
@@ -3871,6 +3874,11 @@ MAX_FLOW_RATE_LPM=60           # seeds fuel_types.max_flow_rate_per_minute for l
 SIGNED_URL_TTL_SECONDS=300
 CORS_ALLOWED_ORIGINS            # comma-separated, never "*"
 TZ_DISPLAY=Asia/Kolkata
+
+# Frontend, read by Vite at BUILD time (never by the server):
+VITE_SALES_CONTACT              # Phase 24, optional. Where the front door's "Talk to us" goes
+                              # (a wa.me link, tel:, or mailto:). Unset, the closing section has
+                              # no button at all rather than a placeholder one.
 ```
 
 No secrets in the repository. `.env` is gitignored; `.env.example` is committed with

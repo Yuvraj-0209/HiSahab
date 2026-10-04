@@ -336,3 +336,57 @@ def test_every_navigation_goes_through_use_go() -> None:
         if "useNavigate" in line
     ]
     assert offenders == [], f"navigation that bypasses useGo: {offenders}"
+
+
+# --- the front door (Phase 24 D7) -------------------------------------------------------
+
+
+def _rupees(text: str) -> "Decimal":
+    from decimal import Decimal
+
+    return Decimal(text.replace("₹", "").replace(",", "").replace("−", "-"))
+
+
+def test_the_front_doors_sample_figures_agree_with_each_other() -> None:
+    """§14 (Phase 24): the front door shows sample figures, as literal strings, never computed in
+    JavaScript. That makes them easy to get wrong silently -- a buyer who checks the gap
+    against its terms, or a percentage against its rupees, should find the arithmetic right.
+    Checked here, in Decimal, so the client never does money arithmetic even to verify itself."""
+    from decimal import Decimal
+
+    source = (_SRC / "showroom" / "samples.ts").read_text()
+
+    def money(name: str) -> Decimal:
+        match = re.search(rf'{name}: "(−?₹[\d,]+\.\d\d)"', source)
+        assert match, name
+        return _rupees(match.group(1))
+
+    # The gap: accountable = metered − card − UPI − udhaar; declared short by the gap.
+    terms = [_rupees(v) for v in re.findall(r'value: "(₹[\d,]+\.\d\d)", sign', source)]
+    assert len(terms) == 4
+    accountable = terms[0] - sum(terms[1:])
+    assert accountable == money("accountable")
+    assert accountable - money("declared") == money("gap")
+
+    # The ledger and the bill.
+    balances = [_rupees(v) for v in re.findall(r'balance: "(₹[\d,]+\.\d\d)"', source)]
+    amounts = [_rupees(v) for v in re.findall(r'amount: "(−?₹[\d,]+\.\d\d)", balance', source)]
+    running = Decimal("0")
+    for amount, balance in zip(amounts, balances, strict=True):
+        running += amount
+        assert running == balance
+    assert money("before") + money("udhaar") - money("repaid") == money("billed") == balances[-1]
+
+    # Paytm settles yesterday's card + UPI as one credit.
+    assert terms[1] + terms[2] == _rupees(re.search(r'PAYTM PAYMENTS SERVICES", amount: "(₹[\d,]+\.\d\d)"', source).group(1))
+
+    # Each mix sums to the month's sales, and each share is its rupees over the total to 0.1%.
+    month = money("sales")
+    for block in ("FUEL_MIX", "PAYMENT_MIX"):
+        body = source.split(f"export const {block}", 1)[1].split("];", 1)[0]
+        rows = re.findall(r'share_pct: "([\d.]+)%".*?value: "(₹[\d,]+\.\d\d)"|value: "(₹[\d,]+\.\d\d)", share_pct: "([\d.]+)%"', body)
+        pairs = [(Decimal(a or d), _rupees(b or c)) for a, b, c, d in rows]
+        assert len(pairs) >= 3, block
+        assert sum(value for _, value in pairs) == month, block
+        for share, value in pairs:
+            assert (value / month * 100).quantize(Decimal("0.1")) == share, (block, share, value)
