@@ -232,6 +232,10 @@
   html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
+    /* A sheet locks the page's scroll. Where scrollbars take space (a Mac with a mouse attached,
+     * Windows), removing one widened the layout and the whole page jumped sideways on open and
+     * back on close (Phase 25 D6). Reserving the gutter keeps the width the same either way. */
+    scrollbar-gutter: stable;
   }
 
   body {

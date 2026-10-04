@@ -250,6 +250,36 @@ for (const [name, path] of [
   });
 }
 
+test.describe("sheets on a desktop (Phase 25 D6)", () => {
+  test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false, deviceScaleFactor: 1 });
+
+  test("a sheet opens as a centred dialog, and locking the scroll cannot shift the page", async ({ page }) => {
+    const problems = await watch(page);
+    await signedIn(page, { role: "attendant", responses: todayResponses("open") });
+    await page.goto(`/#/shifts/${SHIFT_ID}/readings`);
+    // This browser draws a classic scrollbar, which is exactly the case that used to jump: the
+    // page's width must be the same with the scroll locked as without.
+    const width = () => page.evaluate(() => document.documentElement.clientWidth);
+    const before = await width();
+    await page.getByRole("button", { name: /CBG-1/ }).click();
+    const dialog = page.getByRole("dialog", { name: "CBG-1" });
+    await expect(dialog).toBeVisible();
+    await expect.poll(() => dialog.evaluate((node) => getComputedStyle(node).opacity)).toBe("1");
+    expect(await width()).toBe(before);
+    const box = await dialog.boundingBox();
+    const visible = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    expect(box).not.toBeNull();
+    // Centred, not anchored to the bottom edge. Horizontally to within half a scrollbar: with a
+    // stable gutter, fixed elements centre on the same column as the page beneath them.
+    expect(Math.abs(box!.x + box!.width / 2 - visible.width / 2)).toBeLessThanOrEqual(8);
+    expect(Math.abs(box!.y + box!.height / 2 - visible.height / 2)).toBeLessThan(2);
+    // Focus landed inside the dialog, never left behind on the page.
+    expect(await page.evaluate(() => document.querySelector("[role=dialog]")!.contains(document.activeElement))).toBe(true);
+    await expectAccessible(page);
+    expect(problems).toEqual([]);
+  });
+});
+
 test("collections: cash is an answer, and a declaration carries an Idempotency-Key", async ({ page }) => {
   const problems = await watch(page);
   const writes = await signedIn(page, {

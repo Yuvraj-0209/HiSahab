@@ -19,6 +19,24 @@
  *
  * While a sheet is open the app behind it is `inert`: keyboard focus cannot wander underneath,
  * and a screen reader hears only the dialog.
+ *
+ * ## On a desktop it is a dialog, not a sheet (Phase 25 D6)
+ *
+ * A bottom sheet is a phone's shape: it rises from under the thumb. On a 1440x900 monitor the same
+ * motion carried the panel ~550 px up from the screen edge in ~300 ms, and the owner read that as
+ * a glitch -- correctly, since nothing a mouse did started at the bottom of the screen. So with a
+ * fine pointer and room to spare, the same component presents as a centred dialog: it rises
+ * 16 px, scales from 0.97 and fades in on a critically damped spring, with no overshoot and no
+ * drag. Open and close are still retargets of one spring, so either interrupts the other.
+ *
+ * Three more things made opening feel rough, and are fixed here or beside it:
+ *
+ *   - the page jumped sideways: locking the scroll removed a classic scrollbar and the layout
+ *     widened under the scrim. `html { scrollbar-gutter: stable }` (styles.css) keeps the width.
+ *   - on a phone the keyboard rose mid-animation, because the first field was focused the moment
+ *     the sheet mounted and the viewport resized under the spring. Focus now moves to the dialog
+ *     itself, so a screen reader still lands in it, and a field is focused only on a desktop and
+ *     only once the dialog has settled.
  */
 
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -73,6 +91,12 @@ interface FrameProps extends SheetProps {
   onExited: () => void;
 }
 
+/** Desktop presentation: a fine pointer and room for a centred panel. Decided once, at mount. */
+const DIALOG_QUERY = "(min-width: 640px) and (pointer: fine)";
+/** How far a dialog rises, and how much it grows, as it arrives. */
+const DIALOG_RISE = 16;
+const DIALOG_SCALE = 0.03;
+
 function SheetFrame({ open, onClose, onExited, title, subtitle, children, footer }: FrameProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const scrimRef = useRef<HTMLDivElement>(null);
@@ -84,14 +108,39 @@ function SheetFrame({ open, onClose, onExited, title, subtitle, children, footer
   onExitedRef.current = onExited;
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const [dialog] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(DIALOG_QUERY).matches);
 
-  // Built before paint, so the first frame the browser draws is the sheet at the bottom edge
+  // Built before paint, so the first frame the browser draws is the panel at its starting point
   // rather than a flash of it fully open.
   useLayoutEffect(() => {
     const sheet = sheetRef.current;
     const scrim = scrimRef.current;
     const body = bodyRef.current;
     if (!sheet || !scrim || !body) return;
+
+    if (dialog) {
+      // The spring runs from 1 (away) to 0 (here); every visual follows that one number.
+      const spring = new Spring({
+        ...PRESETS.ui,
+        value: 1,
+        onChange: (away) => {
+          sheet.style.transform = `translate3d(0, ${away * DIALOG_RISE}px, 0) scale(${1 - away * DIALOG_SCALE})`;
+          sheet.style.opacity = String(1 - away);
+          scrim.style.opacity = String(1 - away);
+        },
+        onRest: (away) => {
+          if (closingRef.current && away >= 0.999) onExitedRef.current();
+          // Settled open: now a field may take focus without anything moving under it.
+          if (!closingRef.current && away <= 0.001 && document.activeElement === sheet) {
+            body.querySelector<HTMLElement>("input, select, textarea")?.focus({ preventScroll: true });
+          }
+        },
+      });
+      springRef.current = spring;
+      spring.set(1);
+      spring.to(0);
+      return () => spring.stop();
+    }
 
     heightRef.current = sheet.offsetHeight;
     const spring = new Spring({
@@ -154,7 +203,7 @@ function SheetFrame({ open, onClose, onExited, title, subtitle, children, footer
       detachDrag();
       spring.stop();
     };
-  }, []);
+  }, [dialog]);
 
   // Open and close are retargets of the same spring, so either can interrupt the other.
   useEffect(() => {
@@ -165,9 +214,9 @@ function SheetFrame({ open, onClose, onExited, title, subtitle, children, footer
       spring.to(0);
     } else {
       closingRef.current = true;
-      spring.to(heightRef.current);
+      spring.to(dialog ? 1 : heightRef.current);
     }
-  }, [open]);
+  }, [open, dialog]);
 
   // Modal behaviour: the app behind goes inert, the page stops scrolling, Escape closes, and
   // focus returns to whatever opened the sheet.
@@ -178,8 +227,10 @@ function SheetFrame({ open, onClose, onExited, title, subtitle, children, footer
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
-    const first = bodyRef.current?.querySelector<HTMLElement>("input, select, textarea, button");
-    first?.focus({ preventScroll: true });
+    // Into the dialog, not onto its first field: focusing a field on a phone raises the keyboard
+    // mid-animation and resizes the viewport under the spring. A desktop dialog focuses its first
+    // field once it has settled (above).
+    sheetRef.current?.focus({ preventScroll: true });
 
     function handleKey(event: KeyboardEvent) {
       if (event.key === "Escape") onCloseRef.current();
@@ -195,7 +246,7 @@ function SheetFrame({ open, onClose, onExited, title, subtitle, children, footer
   }, []);
 
   return (
-    <div className="fixed inset-0 z-40">
+    <div className={`fixed inset-0 z-40 ${dialog ? "flex items-center justify-center p-6" : ""}`}>
       <div
         ref={scrimRef}
         className="scrim absolute inset-0"
@@ -208,12 +259,21 @@ function SheetFrame({ open, onClose, onExited, title, subtitle, children, footer
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="sheet absolute inset-x-0 bottom-0 mx-auto flex max-h-[92dvh] max-w-xl touch-pan-y flex-col rounded-t-[var(--radius-sheet)] pb-[env(safe-area-inset-bottom)] sm:bottom-4 sm:rounded-[var(--radius-sheet)]"
-        style={{ transform: "translate3d(0, 100vh, 0)" }}
+        tabIndex={-1}
+        className={`sheet flex flex-col outline-none ${
+          dialog
+            ? "relative max-h-[85dvh] w-full max-w-xl rounded-[var(--radius-sheet)]"
+            : "absolute inset-x-0 bottom-0 mx-auto max-h-[92dvh] max-w-xl touch-pan-y rounded-t-[var(--radius-sheet)] pb-[env(safe-area-inset-bottom)] sm:bottom-4 sm:rounded-[var(--radius-sheet)]"
+        }`}
+        style={dialog ? { opacity: 0, transform: `translate3d(0, ${DIALOG_RISE}px, 0) scale(${1 - DIALOG_SCALE})` } : { transform: "translate3d(0, 100vh, 0)" }}
       >
-        <div className="flex justify-center pt-2.5 pb-1" aria-hidden="true">
-          <div className="h-1.5 w-10 rounded-full bg-hairline-strong" />
-        </div>
+        {dialog ? (
+          <div className="pt-4" aria-hidden="true" />
+        ) : (
+          <div className="flex justify-center pt-2.5 pb-1" aria-hidden="true">
+            <div className="h-1.5 w-10 rounded-full bg-hairline-strong" />
+          </div>
+        )}
         <div className="flex items-start gap-3 px-5 pt-1 pb-3">
           <div className="min-w-0 grow">
             <h2 className="truncate text-[1.1875rem] font-semibold tracking-[-0.015em] text-ink">{title}</h2>
