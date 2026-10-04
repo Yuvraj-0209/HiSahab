@@ -33,7 +33,7 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
-import { AnchorIcon, CheckIcon, XIcon } from "@phosphor-icons/react";
+import { AnchorIcon, CaretRightIcon, CheckIcon, XIcon } from "@phosphor-icons/react";
 import { api } from "../api/client";
 import { useApiQuery, useRefreshApi } from "../api/queries";
 import type { Schemas } from "../api/types";
@@ -44,6 +44,7 @@ import { satisfies } from "../lib/roles";
 import { reportFailure } from "../ui/feedback";
 import { CheckboxField, TextField, useForm } from "../ui/form";
 import { useFlipList } from "../motion/flip";
+import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
 import { useArrival } from "../ui/motion";
 import { Button, Card, Empty, ErrorCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
@@ -83,7 +84,7 @@ export function ReadingsScreen() {
     return (
       <>
         <ScreenTitle title="Readings" />
-        <Skeleton rows={4} />
+        <Skeleton shape="cards" rows={4} />
       </>
     );
   }
@@ -123,7 +124,7 @@ export function ReadingsScreen() {
           {groupByFuel(data.lines).map((group) => (
             <section key={group.code}>
               <SectionLabel>{group.code}</SectionLabel>
-              <NozzleGrid lines={group.lines} onOpen={setSelected} />
+              <NozzleGrid lines={group.lines} editable={editable} onOpen={setSelected} />
             </section>
           ))}
         </div>
@@ -143,48 +144,128 @@ export function ReadingsScreen() {
   );
 }
 
-/** One fuel's tiles. When a reading lands, its tile changes shape (a pill, then three figures)
- * and the grid reflows; Flip moves every tile from where it was to where it now is, so the
- * attendant sees the reading land in place rather than the grid jumping (Phase 23 D8's intent,
- * delivered in Phase 24). */
-function NozzleGrid({ lines, onOpen }: { lines: Line[]; onOpen: (nozzleId: string) => void }) {
+/** One fuel's cards. When a reading lands its card changes (a step fills, figures appear) and the
+ * grid may reflow; Flip moves every card from where it was to where it now is, so the reading is
+ * seen landing in place rather than the grid jumping. */
+function NozzleGrid({ lines, editable, onOpen }: { lines: Line[]; editable: boolean; onOpen: (nozzleId: string) => void }) {
   const grid = useRef<HTMLDivElement>(null);
   useFlipList(grid, lines.map((line) => `${line.nozzle_id}:${status(line).text}:${line.reading?.closing_reading ?? ""}`).join("|"));
   return (
-    <div ref={grid} className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+    // Two wide columns on a monitor, one on a phone (Phase 25 D5): a nozzle is a thing a salesman
+    // works through one at a time, so it gets room for what it says, not a thumbnail.
+    <div ref={grid} className="grid grid-cols-1 gap-4 md:grid-cols-2">
       {lines.map((member) => (
-        <NozzleTile key={member.nozzle_id} line={member} onOpen={() => onOpen(member.nozzle_id)} />
+        <NozzleCard key={member.nozzle_id} line={member} editable={editable} onOpen={() => onOpen(member.nozzle_id)} />
       ))}
     </div>
   );
 }
 
-/** One nozzle as a tile. */
-function NozzleTile({ line, onOpen }: { line: Line; onOpen: () => void }) {
+const STEPS = ["Opening", "Closing", "Done"] as const;
+
+/** How far a nozzle has got this shift. A flagged reading stops short of Done until reviewed. */
+function stepsReached(line: Line): number {
+  const saved = line.reading;
+  if (!saved) return 0;
+  if (saved.closing_reading === null) return 1;
+  return saved.requires_review ? 2 : 3;
+}
+
+/** What tapping the card will do, in words, so the card says it before anyone taps. */
+function nextAction(line: Line, editable: boolean): string {
+  const saved = line.reading;
+  if (!editable) return "View the readings";
+  if (!saved) return line.requires_anchor ? "Anchor this meter" : "Confirm the opening";
+  if (saved.requires_review) return "Open the flagged reading";
+  return saved.closing_reading === null ? "Enter the closing" : "Check or correct the closing";
+}
+
+/**
+ * One nozzle, as a card with room to say where it stands (Phase 25 D5): its name and fuel, a
+ * three-step strip (Opening, Closing, Done), the three figures, and what a tap will do.
+ *
+ * §4.7 holds on the card as it does in the sheet: before an opening is confirmed, the chained
+ * value is shown as *carried forward* -- a prediction to check against the meter, with the strip's
+ * first step still empty -- never as an opening.
+ */
+function NozzleCard({ line, editable, onOpen }: { line: Line; editable: boolean; onOpen: () => void }) {
   const saved = line.reading;
   const pill = status(line);
+  const reached = stepsReached(line);
+  const strip = useRef<HTMLDivElement>(null);
+  const previous = useRef(reached);
+
+  // A step that has just been reached fills from the left: the reading landed, here.
+  useMotion(
+    (play) => {
+      const before = previous.current;
+      previous.current = reached;
+      if (reached <= before) return;
+      const fresh = Array.from(strip.current?.querySelectorAll("[data-step-fill]") ?? []).slice(before, reached);
+      play(() => {
+        gsap.from(fresh, { scaleX: 0, transformOrigin: "0% 50%", duration: DURATION.medium, ease: EASE.move.gsap, stagger: 0.12 });
+      });
+    },
+    { scope: strip, dependencies: [reached] },
+  );
+
+  const figures: { label: string; value: string; quiet?: boolean }[] = saved
+    ? [
+        { label: "Opening", value: reading(saved.opening_reading) },
+        { label: "Closing", value: reading(saved.closing_reading, { absent: "not yet" }), quiet: saved.closing_reading === null },
+        { label: "Sold", value: quantity(saved.quantity_sold, line.unit_of_measure, { absent: "-" }), quiet: saved.quantity_sold === null },
+      ]
+    : [
+        line.chained_opening_reading === null
+          ? { label: "No previous reading", value: "anchor needed", quiet: true }
+          : { label: "Carried forward", value: reading(line.chained_opening_reading), quiet: true },
+        { label: "Closing", value: "not yet", quiet: true },
+        { label: "Sold", value: "-", quiet: true },
+      ];
 
   return (
     <button
       type="button"
       data-arrive
       onClick={onOpen}
-      className={`pressable liftable flex flex-col items-start gap-2 rounded-[var(--radius-card)] border bg-surface p-3.5 text-left shadow-1 ${
+      className={`pressable liftable flex min-h-[13rem] w-full flex-col rounded-[var(--radius-card)] border bg-surface p-5 text-left shadow-1 ${
         saved?.requires_review ? "border-warning" : "border-hairline"
       }`}
     >
-      <span className="text-[0.9375rem] font-semibold text-ink">{line.nozzle_label}</span>
-      <Pill kind={pill.kind}>{pill.text}</Pill>
-      {saved ? (
-        <span className="tabular grid w-full grid-cols-[auto_1fr] gap-x-2 text-[0.75rem] text-ink-muted">
-          <span className="text-ink-faint">Open</span>
-          <span className="text-right">{reading(saved.opening_reading)}</span>
-          <span className="text-ink-faint">Close</span>
-          <span className="text-right">{reading(saved.closing_reading)}</span>
-          <span className="text-ink-faint">Sold</span>
-          <span className="text-right text-ink">{quantity(saved.quantity_sold, line.unit_of_measure)}</span>
+      <span className="flex w-full items-start justify-between gap-3">
+        <span className="min-w-0">
+          <span className="block text-headline text-ink">{line.nozzle_label}</span>
+          <span className="mt-0.5 block text-[0.8125rem] text-ink-muted">
+            {line.dispenser_label} · {line.fuel_type_code} · {unitWord(line)}
+          </span>
         </span>
-      ) : null}
+        <Pill kind={pill.kind}>{pill.text}</Pill>
+      </span>
+
+      <span ref={strip} className="mt-5 grid w-full grid-cols-3 gap-2">
+        {STEPS.map((step, index) => (
+          <span key={step} className="flex flex-col gap-1.5">
+            <span className="relative block h-1 overflow-hidden rounded-full bg-hairline-strong">
+              {index < reached ? <span data-step-fill className="absolute inset-0 rounded-full bg-accent" /> : null}
+            </span>
+            <span className={`text-[0.75rem] ${index < reached ? "text-ink" : "text-ink-faint"}`}>{step}</span>
+          </span>
+        ))}
+      </span>
+
+      <span className="tabular mt-5 grid w-full grid-cols-3 gap-3">
+        {figures.map((figure) => (
+          <span key={figure.label} className="min-w-0">
+            <span className="block text-[0.75rem] text-ink-faint">{figure.label}</span>
+            <span className={`mt-0.5 block truncate text-[1.0625rem] ${figure.quiet ? "text-ink-muted" : "font-semibold text-ink"}`}>{figure.value}</span>
+          </span>
+        ))}
+      </span>
+
+      <span className="mt-auto flex w-full items-center justify-between border-t border-hairline pt-4 text-[0.875rem] font-medium text-accent">
+        {nextAction(line, editable)}
+        <CaretRightIcon size={16} aria-hidden />
+      </span>
     </button>
   );
 }

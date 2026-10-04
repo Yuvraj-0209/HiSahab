@@ -282,6 +282,21 @@ test.describe("large titles on a page too short to scroll (Phase 25 D4)", () => 
     expect(problems).toEqual([]);
   });
 
+  test("nozzle readings are big cards, two across on a monitor (Phase 25 D5)", async ({ page }) => {
+    const problems = await watch(page);
+    await signedIn(page, { role: "attendant", responses: todayResponses("open") });
+    await page.goto(`/#/shifts/${SHIFT_ID}/readings`);
+    const card = page.getByRole("button", { name: /CBG-1/ });
+    await expect(card).toBeVisible();
+    await settle(page);
+    expect((await card.boundingBox())!.width).toBeGreaterThan(500);
+    // A nozzle nobody has confirmed shows its chained value as carried forward, never as an opening.
+    await expect(card.getByText("Carried forward")).toBeVisible();
+    await expect(card.getByText("Confirm the opening")).toBeVisible();
+    await expectAccessible(page);
+    expect(problems).toEqual([]);
+  });
+
   test("Entry's name is shown once, not twice", async ({ page }) => {
     await signedIn(page, { role: "admin", responses: todayResponses("open") });
     await page.goto("/#/entry");
