@@ -450,6 +450,16 @@ None.
   because a relative one is silently ignored by every link preview. No service worker. Playwright
   checks the manifest and that every icon it names is served as a PNG. Playwright 138.
 
+- **Commit 8 — verification and notes.**
+  - pytest **1,708 passed** (Phase 23 ended at 1,697; the eleven new tests are the five delivery
+    tests, the budget, and five structural checks). Vitest **75**, Playwright **138**, `npm run
+    budget` within both caps.
+  - **Slow 4G, measured** (Chrome DevTools Protocol: 150 ms latency, 1.6 Mbps down, 4× CPU),
+    against `uvicorn app.main:app` serving the build with the new delivery wrappers: Sign in
+    usable at 1.94 s, **LCP 2.23 s**, **CLS 0**. The entry chunk crosses the wire at 118.5 KB
+    gzipped, against 385 KB uncompressed before this phase.
+  - Not verified, and said so in the notes: a real phone, Safari, a Railway deploy.
+
 ## Still owed by the owner
 
 - Approval of the front-door copy, and the contact for "Talk to us" (WhatsApp number or email),
