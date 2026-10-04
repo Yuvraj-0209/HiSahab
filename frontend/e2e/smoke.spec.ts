@@ -250,6 +250,34 @@ for (const [name, path] of [
   });
 }
 
+test.describe("large titles on a page too short to scroll (Phase 25 D4)", () => {
+  test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false, deviceScaleFactor: 1 });
+
+  test("Entry's name is shown once, not twice", async ({ page }) => {
+    await signedIn(page, { role: "admin", responses: todayResponses("open") });
+    await page.goto("/#/entry");
+    await expect(page.getByRole("button", { name: /Nozzle readings/ })).toBeVisible();
+    await settle(page);
+    // The page fits the window, so nothing scrolls -- the case the owner saw both titles in.
+    expect(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight)).toBe(true);
+    const shown = await page.evaluate(() => ({
+      compact: getComputedStyle(document.querySelector(".compact-title")!).opacity,
+      large: getComputedStyle(document.querySelector(".large-title")!).display,
+    }));
+    expect(shown).toEqual({ compact: "0", large: "block" });
+  });
+
+  test("on a page that scrolls, the chrome's copy still arrives once the large title has gone", async ({ page }) => {
+    await signedIn(page, { role: "admin", responses: cashResponses() });
+    await page.goto("/#/cash");
+    await settle(page);
+    const compact = () => page.evaluate(() => getComputedStyle(document.querySelector(".compact-title")!).opacity);
+    expect(await compact()).toBe("0");
+    await page.mouse.wheel(0, 400);
+    await expect.poll(compact).toBe("1");
+  });
+});
+
 test.describe("sheets on a desktop (Phase 25 D6)", () => {
   test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false, deviceScaleFactor: 1 });
 

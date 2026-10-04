@@ -518,7 +518,13 @@ html[data-nav="fade"]::view-transition-new(root) {
       animation-range: 0 72px;
     }
 
+    /* Hidden by default, and the animation is what reveals it. On a page too short to scroll
+     * the scroll timeline is *inactive*, an inactive timeline applies no animation at all, and
+     * a compact title that was visible by default stayed visible beside the large one -- the
+     * owner saw "Entry" twice (Phase 25 D4). Now the inactive case shows the large title only,
+     * and a page that does scroll behaves exactly as before. */
     .compact-title.is-collapsible {
+      opacity: 0;
       animation: compact-title-arrive linear both;
       animation-timeline: scroll(root);
       animation-range: 44px 80px;
@@ -537,6 +543,10 @@ html[data-nav="fade"]::view-transition-new(root) {
   from {
     opacity: 0;
     transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
