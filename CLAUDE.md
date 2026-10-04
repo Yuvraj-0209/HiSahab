@@ -2641,6 +2641,24 @@ ahead — no empty modules for later phases.
     system, and §6.10's idempotency already makes a retry safe.
 
     See `docs/phase-24-plan.md`.
+25. **The owner's first look** — no migration, no table, no endpoint, no business rule. The
+    owner used Phase 24 and asked for six refinements, each traced to a cause before anything was
+    changed. One was a real bug: a large title collapses into the chrome by a scroll-driven
+    animation, and **on a page too short to scroll the scroll timeline is inactive**, so the
+    animation never applied and both titles showed.
+
+    The others were proportion and feel:
+    - the tab bar crammed into 36rem;
+    - Today and Readings capped at 76rem, with Today's six cards broken into three rows;
+    - a desktop sheet travelling 550 px from the screen edge in 300 ms;
+    - a page that jumped sideways when a scrollbar disappeared;
+    - a phone keyboard opening mid-animation.
+
+    The front door's scroll now walks into the station: the fixed photograph pushes in towards
+    the dispenser while a cut-out of the canopy passes overhead. That is a transform on two
+    layers, not a video. The owner chose that over filming or generating footage.
+
+    See `docs/phase-25-plan.md`.
 
 ---
 
