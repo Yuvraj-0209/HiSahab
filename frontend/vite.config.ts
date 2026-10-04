@@ -1,5 +1,5 @@
 /// <reference types="vitest/config" />
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -24,8 +24,22 @@ export const CONTENT_SECURITY_POLICY = [
   "frame-ancestors 'none'",
 ].join("; ");
 
-export default defineConfig({
-  plugins: [react(), tailwindcss()],
+/** The share preview's image (Phase 24 D7). Open Graph wants an absolute address, which only the
+ * deployment knows, so the tag is written at build time from PUBLIC_ORIGIN and left out without
+ * it -- a relative og:image is silently ignored by every preview, which is worse than none. */
+function shareImage(origin: string | undefined): Plugin {
+  return {
+    name: "hisahab-share-image",
+    transformIndexHtml(html) {
+      if (!origin) return html;
+      const tag = `<meta property="og:image" content="${origin.replace(/\/$/, "")}/img/og.jpg" />`;
+      return html.replace("</head>", `    ${tag}\n  </head>`);
+    },
+  };
+}
+
+export default defineConfig(({ mode }) => ({
+  plugins: [react(), tailwindcss(), shareImage(loadEnv(mode, ".", "").PUBLIC_ORIGIN)],
   server: {
     // The dev server has no CSP and no API of its own: /api goes to uvicorn on :8000, so the
     // browser sees one origin exactly as it does in production.
@@ -43,4 +57,4 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
   },
-});
+}));

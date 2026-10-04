@@ -443,6 +443,13 @@ None.
   - "Talk to us" reads `VITE_SALES_CONTACT` at build time and is absent without it.
   - Playwright 136.
 
+- **Commit 7 — installable.** `public/manifest.webmanifest` (standalone, starts on `#/today`,
+  cobalt splash), icons at 32/180/192/512 plus a maskable 512 with the glyph inside the safe zone,
+  a meta description, and Open Graph title and description. `og:image` (a 1200x630 card made from
+  the hero photograph) is written by a small Vite hook only when `PUBLIC_ORIGIN` is set at build,
+  because a relative one is silently ignored by every link preview. No service worker. Playwright
+  checks the manifest and that every icon it names is served as a PNG. Playwright 138.
+
 ## Still owed by the owner
 
 - Approval of the front-door copy, and the contact for "Talk to us" (WhatsApp number or email),
@@ -450,6 +457,6 @@ None.
 - Approval of the app icon.
 - Real photographs of the pump, to replace the two licensed stock placeholders (same file names
   and sizes; nothing else changes).
-- The production domain, for `og:image`.
+- The production domain, set as `PUBLIC_ORIGIN` in the build environment, for `og:image`.
 - The Phase 23 items still open: a Railway deploy, real-day parity, a phone hand-check, and the
   `confirm-repayments` business-rule question.

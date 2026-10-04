@@ -28,6 +28,18 @@ showroom/entry-light.jpg, showroom/entry-dark.jpg
   Today fixture carries a real trading day's takings, and the front door shows
   sample figures only (CLAUDE.md 14).
 
+og.jpg  (the link preview when the address is shared)
+
+  Derived from forecourt-1280.webp (Adobe Stock 969116629): cropped to 1200 x 630,
+  darkened, with the wordmark and headline set in Instrument Serif. Regenerate it
+  from the same photograph if the photograph is replaced.
+
+../icons/  (the home-screen icon, Phase 24 D8)
+
+  An "H" in Instrument Serif (SIL OFL 1.1, ../fonts/OFL.txt) on cobalt #2149c9.
+  No photograph involved. AWAITING THE OWNER'S APPROVAL: a brand mark never
+  changes silently.
+
 Replaced in Phase 24: city-2560.webp / city-1280.webp, Adobe Stock 396892454
 (the Phase 12-23 skyline backdrop), licensed 2026-08-25.
 

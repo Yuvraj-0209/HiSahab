@@ -109,6 +109,20 @@ test("front door: under reduced motion every section is simply there, without sc
   expect(problems).toEqual([]);
 });
 
+test("installable: the manifest is served, starts on Today, and every icon it names exists (Phase 24 D8)", async ({ page }) => {
+  const response = await page.request.get("/manifest.webmanifest");
+  expect(response.ok()).toBe(true);
+  const manifest = (await response.json()) as { start_url: string; display: string; icons: { src: string; purpose: string }[] };
+  expect(manifest.start_url).toBe("/#/today");
+  expect(manifest.display).toBe("standalone");
+  expect(manifest.icons.some((icon) => icon.purpose === "maskable")).toBe(true);
+  for (const icon of manifest.icons) {
+    const image = await page.request.get(icon.src);
+    expect(image.ok(), icon.src).toBe(true);
+    expect(image.headers()["content-type"]).toBe("image/png");
+  }
+});
+
 test.describe("front door on a desktop", () => {
   test.use({ viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false, deviceScaleFactor: 1 });
 
