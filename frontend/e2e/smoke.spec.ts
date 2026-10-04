@@ -123,6 +123,35 @@ test("installable: the manifest is served, starts on Today, and every icon it na
   }
 });
 
+/** The scale GSAP has given the photograph's layer, read from its computed transform matrix. */
+async function photoScale(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const layer = document.querySelector<HTMLElement>(".login-layer:not(.login-near)")!;
+    return new DOMMatrixReadOnly(getComputedStyle(layer).transform).a;
+  });
+}
+
+test("front door: scrolling walks into the station (Phase 25 D1)", async ({ page }) => {
+  const problems = await watch(page);
+  await frontDoor(page);
+  expect(await photoScale(page)).toBeCloseTo(1, 1);
+  const end = await page.evaluate(() => {
+    const travel = document.querySelector<HTMLElement>("[data-travel]")!;
+    return travel.offsetTop + travel.offsetHeight - window.innerHeight;
+  });
+  await page.mouse.wheel(0, Math.round(end * 0.7));
+  await expect.poll(() => photoScale(page)).toBeGreaterThan(1.5);
+  expect(problems).toEqual([]);
+});
+
+test("front door: under reduced motion the photograph does not move when scrolled", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await frontDoor(page);
+  await page.mouse.wheel(0, 900);
+  await page.waitForTimeout(600);
+  expect(await photoScale(page)).toBeCloseTo(1, 2);
+});
+
 test.describe("front door on a desktop", () => {
   test.use({ viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false, deviceScaleFactor: 1 });
 

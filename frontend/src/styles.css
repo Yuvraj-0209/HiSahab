@@ -674,10 +674,19 @@ select.field-control {
   padding-right: 2.25rem;
 }
 
-/* The login backdrop (§13.28, §13.29). The band owns translate3d (written by GSAP for the
- * parallax); its <img> owns the Ken Burns transform (CSS). Two elements, because one
- * `transform` cannot be driven from two places. The grade is stacked gradients and
- * deliberately NOT a CSS filter. */
+/* The login backdrop (§13.28, §13.29; Phase 25 D1).
+ *
+ * Three elements, each owning one transform, because one `transform` cannot be driven from two
+ * places:
+ *
+ *   .login-drift   the slow Ken Burns breathing (CSS), shared by both layers so they never
+ *                  slide apart while the page is at rest
+ *   .login-layer   the scroll push-in (GSAP), one per depth: the photograph, and in front of it
+ *                  a cut-out of the canopy and pillars that scales faster, so walking in feels
+ *                  like passing under the roof rather than zooming into a picture
+ *
+ * The grade is stacked gradients and deliberately NOT a CSS filter: nothing that moves carries a
+ * filter, and nothing sits blurred over it. */
 .login-backdrop {
   position: fixed;
   inset: 0;
@@ -687,23 +696,53 @@ select.field-control {
   background: #050506;
 }
 
-.login-band {
+.login-drift {
   position: absolute;
-  inset: -4% 0;
+  inset: 0;
+  transform: scale(1.06);
+  animation: ken-burns 84s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+.login-layer {
+  position: absolute;
+  inset: 0;
   will-change: transform;
   background-size: cover;
   background-position: center 38%;
 }
 
-.login-plate {
+.login-layer img {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
   object-position: center 38%;
-  transform: scale(1.06);
-  animation: ken-burns 84s ease-in-out infinite alternate;
-  will-change: transform;
+}
+
+/* The full-resolution copy, laid exactly over the light one once the page is idle. Same pixels,
+ * more of them, so it fades in without anything visibly changing -- until the walk-in magnifies
+ * it, which is when the difference shows. */
+.login-sharp {
+  opacity: 0;
+  transition: opacity var(--dur-large) ease;
+}
+
+.login-sharp[data-ready="true"] {
+  opacity: 1;
+}
+
+/* The canopy cut-out arrives after the photograph (it is not the page's largest paint); it is
+ * identical to the pixels beneath it until the push-in separates them, so it fades in unseen. */
+.login-near {
+  opacity: 0;
+  transition: opacity var(--dur-medium) ease;
+}
+
+.login-near[data-ready="true"] {
+  opacity: 1;
 }
 
 @keyframes ken-burns {
@@ -713,6 +752,21 @@ select.field-control {
   to {
     transform: scale(1.14) translate3d(-1.5%, -1%, 0);
   }
+}
+
+/* The line over the dispenser at the end of the walk: white on a moving photograph, so it gets a
+ * soft dark pool of its own -- a gradient behind the text, never a blur. */
+.travel-line {
+  position: relative;
+  text-shadow: 0 2px 24px rgb(5 5 8 / 0.65);
+}
+
+.travel-line::before {
+  content: "";
+  position: absolute;
+  inset: -40% -25%;
+  z-index: -1;
+  background: radial-gradient(closest-side, rgb(5 5 8 / 0.55), rgb(5 5 8 / 0));
 }
 
 /* The photograph is the same in both palettes; only the grade over it changes, so that the
@@ -758,7 +812,7 @@ select.field-control {
 /* Reduced motion means gentler, not dead. GSAP's matchMedia collapses every timeline to an
  * instant change; this catches the CSS that is left -- the Ken Burns drift and press scale. */
 @media (prefers-reduced-motion: reduce) {
-  .login-plate {
+  .login-drift {
     animation: none;
   }
   /* navigation.ts starts no view transition under reduced motion; this is the belt to that. */

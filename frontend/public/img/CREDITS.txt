@@ -8,6 +8,20 @@ forecourt-2560.webp, forecourt-1280.webp  (the sign-in backdrop)
   Licence     Adobe Stock free tier, licensed 2026-10-04 to the owner's Adobe
               account (Phase 24). Licensed -- not a watermarked comp.
 
+forecourt-3000.webp  (Phase 25: the same photograph at full size, fetched after the page is
+  idle, so the walk-in's 2.3x push magnifies real pixels rather than the light first-paint file)
+
+forecourt-near-3000.webp, forecourt-near-2560.webp, forecourt-near-1280.webp  (Phase 25: the
+  walk-in's near layer)
+
+  The canopy and its three pillars, cut out of the same photograph. The mask came from Adobe's
+  select-by-prompt ("the fuel station canopy roof with its orange light strip, and the white
+  pillars holding it up"), was trimmed to the roof above its underside plus the three pillar
+  columns, dilated 2 px and feathered 1.5 px, and applied as alpha with Pillow (numpy for the
+  trim, ephemerally via `uv run --with pillow --with numpy`). Nothing is painted in behind the
+  canopy: as the cut-out grows faster than the photograph, the photograph's own canopy reads as
+  the far side of the roof and the far row of pillars, which is what walking under one looks like.
+
 showroom/udhaar-slip-1920.webp, showroom/udhaar-slip-960.webp  (the udhaar section)
 
   Source      Adobe Stock asset 288456618, "Businessman holding bills"
