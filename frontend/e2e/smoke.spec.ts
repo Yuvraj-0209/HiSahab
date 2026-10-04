@@ -253,6 +253,17 @@ for (const [name, path] of [
 test.describe("large titles on a page too short to scroll (Phase 25 D4)", () => {
   test.use({ viewport: { width: 1440, height: 900 }, isMobile: false, hasTouch: false, deviceScaleFactor: 1 });
 
+  test("the six tabs spread across the window instead of huddling in the middle (Phase 25 D2)", async ({ page }) => {
+    await signedIn(page, { role: "admin", responses: todayResponses("open") });
+    await page.goto("/#/entry");
+    const tabs = page.getByRole("navigation", { name: "Sections" }).getByRole("button");
+    await expect(tabs).toHaveCount(6);
+    const first = await tabs.first().boundingBox();
+    const last = await tabs.last().boundingBox();
+    const span = last!.x + last!.width - first!.x;
+    expect(span / 1440).toBeGreaterThan(0.9);
+  });
+
   test("Entry's name is shown once, not twice", async ({ page }) => {
     await signedIn(page, { role: "admin", responses: todayResponses("open") });
     await page.goto("/#/entry");

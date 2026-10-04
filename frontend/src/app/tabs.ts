@@ -23,6 +23,9 @@ export type TabId = "today" | "entry" | "cash" | "credit" | "summary" | "admin";
 
 export interface RouteHandle {
   tab?: TabId;
+  /** A dashboard-shaped screen that should use a wide monitor's width (Phase 25 D2). List and
+   * form screens leave it unset and stay at a readable measure. */
+  wide?: boolean;
 }
 
 export interface Tab {

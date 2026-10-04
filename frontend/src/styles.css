@@ -352,13 +352,31 @@
   }
 }
 
-/* Opaque, unlike --accent-tint: the tab bar is translucent, so a tinted pill's colour depended on
- * whatever was scrolled beneath it, and a cobalt button passing under the bar took the active
- * label to 3.8:1 (axe, Phase 24). Mixed with the ground instead, the label always sits on a known
- * colour. */
+/* The pill is opaque, unlike --accent-tint: the tab bar is translucent, so a tinted pill's colour
+ * depended on whatever was scrolled beneath it, and a cobalt button passing under the bar took the
+ * active label to 3.8:1 (axe, Phase 24). Mixed with the ground instead, the label always sits on
+ * a known colour. */
 .tab-indicator {
   will-change: transform;
+}
+
+.tab-pill {
   background: color-mix(in srgb, var(--accent) 14%, var(--ground));
+}
+
+/* The bar's own spacing: a little on a phone, a real gutter on a monitor, so six tabs spread
+ * across the window like the Phase 12 bar rather than sitting in a strip (Phase 25 D2). */
+.tabbar-grid {
+  --tabbar-pad: 0.375rem;
+  --tabbar-gutter: 0.375rem;
+  padding: var(--tabbar-pad) var(--tabbar-gutter);
+}
+
+@media (min-width: 1024px) {
+  .tabbar-grid {
+    --tabbar-pad: 0.5rem;
+    --tabbar-gutter: 2.5rem;
+  }
 }
 
 .tab-indicator[data-placed="true"] {

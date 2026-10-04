@@ -36,6 +36,9 @@ export function Shell() {
   const visible = TABS.filter((tab) => satisfies(me.role, tab.role));
   const activeId = [...matches].reverse().map((m) => (m.handle as RouteHandle | undefined)?.tab).find(Boolean);
   const activeIndex = visible.findIndex((tab) => tab.id === activeId);
+  // Wide screens use a wide monitor; everything else keeps a readable measure (Phase 25 D2).
+  const wide = matches.some((m) => (m.handle as RouteHandle | undefined)?.wide);
+  const measure = wide ? "max-w-[100rem] lg:px-10" : "max-w-[76rem]";
 
   // Slots for <ScreenTitle> / <ScreenActions>, captured by callback refs.
   const [slots, setSlots] = useState<ChromeSlots>({ title: null, actions: null });
@@ -64,7 +67,7 @@ export function Shell() {
     <ChromeContext.Provider value={slots}>
       <div ref={sentinel} className="absolute top-0 h-px w-px" aria-hidden="true" />
       <header className="chrome sticky top-0 z-30 pt-[env(safe-area-inset-top)]" data-scrolled={scrolled ? "true" : "false"}>
-        <div className="mx-auto flex h-14 max-w-[76rem] items-center gap-3 px-4">
+        <div className={`mx-auto flex h-14 items-center gap-3 px-4 ${measure}`}>
           <div ref={titleRef} className="min-w-0 grow" />
           <div ref={actionsRef} className="shrink-0" />
           <button
@@ -79,7 +82,7 @@ export function Shell() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[76rem] px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+6.5rem)]">
+      <main className={`mx-auto px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+6.5rem)] ${measure}`}>
         {/* Keyed by path, so the CSS entrance replays on every route change. */}
         <div key={location.pathname} className="screen-enter">
           <Outlet />
@@ -110,24 +113,27 @@ function TabBar({
     return () => cancelAnimationFrame(frame);
   }, []);
 
+  // The indicator is one column wide and slides by whole columns; the pill inside it keeps a
+  // fixed width, so on a wide screen it stays a pill rather than becoming a 300 px slab.
   const indicator: CSSProperties = {
-    width: `calc((100% - 0.75rem) / ${tabs.length})`,
+    width: `calc((100% - var(--tabbar-gutter) * 2) / ${tabs.length})`,
     transform: `translateX(${Math.max(activeIndex, 0) * 100}%)`,
     opacity: activeIndex < 0 ? 0 : 1,
   };
 
   return (
     <nav aria-label="Sections" className="tabbar fixed inset-x-0 bottom-0 z-30 pb-[env(safe-area-inset-bottom)]">
-      <div
-        className="relative mx-auto grid max-w-xl px-1.5 py-1.5"
-        style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}
-      >
+      {/* Six equal columns across the whole window, as the Phase 12 bar had them: on a monitor the
+       * tabs spread out instead of huddling in a 36rem strip in the middle (Phase 25 D2). */}
+      <div className="tabbar-grid relative mx-auto grid max-w-[100rem]" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
         <span
           aria-hidden="true"
           data-placed={placed ? "true" : "false"}
-          className="tab-indicator pointer-events-none absolute top-1.5 bottom-1.5 left-1.5 rounded-full"
+          className="tab-indicator pointer-events-none absolute top-[var(--tabbar-pad)] bottom-[var(--tabbar-pad)] left-[var(--tabbar-gutter)] flex justify-center"
           style={indicator}
-        />
+        >
+          <span className="tab-pill h-full w-full max-w-[7.5rem] rounded-full" />
+        </span>
         {tabs.map((tab, index) => {
           const active = index === activeIndex;
           return (
@@ -136,7 +142,7 @@ function TabBar({
               type="button"
               aria-current={active ? "page" : undefined}
               onClick={() => onSelect(tab.route)}
-              className={`pressable relative flex h-12 flex-col items-center justify-center gap-0.5 rounded-full text-[0.6875rem] font-medium transition-colors ${active ? "text-accent" : "text-ink-muted"}`}
+              className={`pressable relative flex h-12 flex-col items-center justify-center gap-0.5 rounded-full text-[0.6875rem] font-medium transition-colors lg:h-14 lg:text-[0.75rem] ${active ? "text-accent" : "text-ink-muted"}`}
             >
               <tab.Icon size={22} weight={active ? "fill" : "regular"} aria-hidden />
               {tab.label}

@@ -50,7 +50,9 @@ function NotFound() {
   );
 }
 
-const tab = (id: RouteHandle["tab"]): RouteHandle => ({ tab: id });
+const tab = (id: RouteHandle["tab"], options: Omit<RouteHandle, "tab"> = {}): RouteHandle => ({ tab: id, ...options });
+/** Today, the shift it shows by id, Readings and Summary are read at a glance on a wide screen. */
+const WIDE = { wide: true } as const;
 
 /** Phase 16 moved a customer's ledger from Admin to Credit; old links still land. */
 function RedirectToLedger() {
@@ -101,11 +103,11 @@ export const routes: RouteObject[] = [
       {
         element: <RoleGate role="attendant" />,
         children: [
-          { path: "today", handle: tab("today"), lazy: () => today().then((m) => ({ Component: m.TodayScreen })) },
+          { path: "today", handle: tab("today", WIDE), lazy: () => today().then((m) => ({ Component: m.TodayScreen })) },
           { path: "entry", handle: tab("entry"), lazy: () => entry().then((m) => ({ Component: m.EntryScreen })) },
           {
             path: "shifts/:shiftId/readings",
-            handle: tab("entry"),
+            handle: tab("entry", WIDE),
             lazy: () => readings().then((m) => ({ Component: m.ReadingsScreen })),
           },
           {
@@ -143,7 +145,7 @@ export const routes: RouteObject[] = [
           // still reach it -- to lock it, reopen it, or just look.
           {
             path: "shifts/:shiftId",
-            handle: tab("today"),
+            handle: tab("today", WIDE),
             lazy: () => today().then((m) => ({ Component: m.ShiftByIdScreen })),
           },
           {
@@ -194,7 +196,7 @@ export const routes: RouteObject[] = [
           },
           { path: "admin/customers/:customerId/ledger", Component: RedirectToLedger },
 
-          { path: "summary", handle: tab("summary"), lazy: () => summary().then((m) => ({ Component: m.SummaryScreen })) },
+          { path: "summary", handle: tab("summary", WIDE), lazy: () => summary().then((m) => ({ Component: m.SummaryScreen })) },
         ],
       },
 
