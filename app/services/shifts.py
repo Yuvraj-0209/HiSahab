@@ -8,6 +8,7 @@ it will stand on:
 * which shift is the chain's current tip (`latest_shift`)
 * whether the chain is mid-link, i.e. something is still open (`open_shift`)
 * what number the next link gets (`next_sequence`)
+* whether a shift holds anything at all (`tables_holding`, Phase 27's void)
 
 Kept out of the router so Phase 5's reading code, and any later management command, can ask
 the same questions without going through HTTP.
@@ -19,7 +20,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.shifts import ShiftStatus
@@ -74,6 +75,76 @@ def next_sequence(db: Session, *, outlet_id: UUID, business_date: date) -> int:
         )
     ).scalar_one_or_none()
     return 1 if highest is None else int(highest) + 1
+
+
+# Every foreign key in the database whose referenced table is `shifts`, one row per key, with
+# the referencing table and both sides' column names in key order. `unnest(conkey, confkey)`
+# walks the two column lists in step, so a composite key -- §5.0 sketches
+# `(shift_id, outlet_id) REFERENCES shifts(id, outlet_id)` for later -- comes back as pairs
+# rather than being assumed away.
+_FOREIGN_KEYS_TO_SHIFTS = text(
+    """
+    SELECT n.nspname AS child_schema,
+           cl.relname AS child_table,
+           array_agg(child_col.attname ORDER BY k.ord) AS child_columns,
+           array_agg(parent_col.attname ORDER BY k.ord) AS parent_columns
+    FROM pg_constraint c
+    JOIN pg_class cl ON cl.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = cl.relnamespace
+    CROSS JOIN LATERAL unnest(c.conkey, c.confkey)
+        WITH ORDINALITY AS k(child_attnum, parent_attnum, ord)
+    JOIN pg_attribute child_col
+        ON child_col.attrelid = c.conrelid AND child_col.attnum = k.child_attnum
+    JOIN pg_attribute parent_col
+        ON parent_col.attrelid = c.confrelid AND parent_col.attnum = k.parent_attnum
+    WHERE c.contype = 'f' AND c.confrelid = 'shifts'::regclass
+    GROUP BY c.oid, n.nspname, cl.relname
+    ORDER BY cl.relname
+    """
+)
+
+
+def tables_holding(db: Session, shift_id: UUID) -> list[str]:
+    """The tables that have at least one row pointing at this shift, by name. Empty if none.
+
+    Phase 27's definition of an *empty* shift, the only kind §6.8 lets an admin void: no row
+    in any table that holds a foreign key to `shifts`. Nine tables answer today -- readings,
+    collections, expenses, the two credit tables, non-fuel sales, deposits and the two
+    shortfall tables.
+
+    **The list is read from `pg_constraint` on every call, and that is the point.** A list in
+    code would be right on the day it was written and silently wrong on the day a later phase
+    added a tenth table: a void would then reach a shift a new row still points at. §6.9
+    records `_CONSTRAINT_ERRORS` being forgotten twice in exactly that way. Asking the
+    database means a new table is covered the day its migration lands, without anybody
+    remembering to come back here.
+
+    The table and column names come from the catalogue rather than from a caller, and they are
+    quoted by the dialect's own preparer before they reach SQL anyway. The shift id is always a
+    bound parameter.
+
+    One `EXISTS` per foreign key -- nine indexed lookups. A void is an admin's rare act, so
+    there is nothing here worth optimising into one dynamic statement.
+    """
+    quote = db.get_bind().dialect.identifier_preparer.quote
+    # A set, so a table with two keys to `shifts` is named once.
+    holding: set[str] = set()
+    for key in db.execute(_FOREIGN_KEYS_TO_SHIFTS).mappings():
+        table = key["child_table"]
+        joined_on = " AND ".join(
+            f"child.{quote(child)} = shift.{quote(parent)}"
+            for child, parent in zip(key["child_columns"], key["parent_columns"])
+        )
+        found = db.execute(
+            text(
+                f"SELECT EXISTS (SELECT 1 FROM {quote(key['child_schema'])}.{quote(table)} "
+                f"AS child JOIN shifts AS shift ON {joined_on} WHERE shift.id = :shift_id)"
+            ),
+            {"shift_id": shift_id},
+        ).scalar_one()
+        if found:
+            holding.add(table)
+    return sorted(holding)
 
 
 def outlet_today(tz_name: str) -> date:

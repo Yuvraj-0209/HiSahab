@@ -6259,6 +6259,22 @@
         "title": "ShiftTemplateUpdate",
         "type": "object"
       },
+      "ShiftVoid": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ShiftVoid",
+        "type": "object"
+      },
       "ShortfallCreate": {
         "additionalProperties": false,
         "properties": {
@@ -7634,6 +7650,32 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "VoidedShiftResponse": {
+        "description": "What was removed. Not a `ShiftResponse`: that would describe a row that no longer\nexists, with a status of `open`.",
+        "properties": {
+          "business_date": {
+            "format": "date",
+            "title": "Business Date",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "business_date",
+          "sequence"
+        ],
+        "title": "VoidedShiftResponse",
         "type": "object"
       },
       "Worksheet": {
@@ -14915,6 +14957,65 @@
         "summary": "Reverse Shortfall",
         "tags": [
           "shortfalls"
+        ]
+      }
+    },
+    "/api/v1/shifts/{shift_id}/void": {
+      "patch": {
+        "description": "Void an open shift that holds nothing. Admin only, reason mandatory (\u00a76.8, Phase 27).\n\n**This deletes the row** -- \u00a73 rule 6's one exception. The rule protects money, and a\nshift with no row in any table that points at it holds none: it is a date and a name,\nopened by mistake. The 5 October shift that prompted this was opened before 2 October had\nbeen entered, and from then on every lifecycle rule refused the way back -- each of them\ncorrectly.\n\nWhy a delete rather than a `void` status is argued in \u00a76.8. The short form: a kept row\nwould hold this date's sequence 1, so the real day would open as sequence 2, miss the\noutlet's only template, and start at the wrong time -- which \u00a76.3 then prices from.\n\nThe record of the shift is the `status_change` audit row below. `audit_logs.record_id` is\ndeliberately not a foreign key (\u00a75.3), so it outlives the row it describes, and it carries\neverything needed to say what was removed, by whom and why.\n\n**Two locks on the same door.** `tables_holding` asks the catalogue whether anything points\nat this shift. If something lands between that answer and the delete -- an attendant saving\na reading on the open shift -- every foreign key to `shifts` is NO ACTION, so the DELETE\nitself is refused rather than cascading into the new row. Both give the same 409.",
+        "operationId": "void_shift_api_v1_shifts__shift_id__void_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shift_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Shift Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShiftVoid"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoidedShiftResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Void Shift",
+        "tags": [
+          "shifts"
         ]
       }
     },

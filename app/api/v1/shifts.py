@@ -1,11 +1,12 @@
 """Shifts -- the lifecycle every financial row hangs off (CLAUDE.md §5.2, §6.8, §4.7).
 
-Four state-changing routes and three reads. The states are `open -> closed -> locked`, with
+Five state-changing routes and three reads. The states are `open -> closed -> locked`, with
 one sanctioned reversal (`closed -> open`) that an admin performs with a reason and which is
-audit-logged, per §5.2.
+audit-logged, per §5.2. Phase 27 adds the fifth: an admin may *void* an open shift that holds
+nothing, which deletes the row and leaves its audit row as the record (§3 rule 6, §6.8).
 
-**Role floors (§8):** attendants open and read their own; managers close; admins lock and
-reopen. Ownership is enforced separately from role by `require_shift_access` in
+**Role floors (§8):** attendants open and read their own; managers close; admins lock,
+reopen and void. Ownership is enforced separately from role by `require_shift_access` in
 app/api/deps.py -- an attendant may act only on a shift whose `attendant_id` is their own.
 
 **All three of §6.8's close preconditions now exist**, each having landed with the phase
@@ -23,11 +24,13 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timezone
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 from sqlalchemy import select, tuple_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.cursor import (
@@ -147,6 +150,26 @@ class ShiftReopen(BaseModel):
     # audit row that records nothing. §5.2: a backwards transition without a stated reason
     # is exactly the thing the audit log exists to prevent.
     reason: str = Field(min_length=3, max_length=500)
+
+
+class ShiftVoid(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Mandatory for reopen's reason, and stripped *before* it is measured -- collections.py's
+    # rule -- so six spaces are a 422 rather than an audit row explaining nothing. The reason
+    # is all that will be left to say why a shift disappeared.
+    reason: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)
+    ]
+
+
+class VoidedShiftResponse(BaseModel):
+    """What was removed. Not a `ShiftResponse`: that would describe a row that no longer
+    exists, with a status of `open`."""
+
+    id: UUID
+    business_date: date
+    sequence: int
 
 
 def _to_response(shift: Shift) -> ShiftResponse:
@@ -807,3 +830,118 @@ def reopen_shift(
         },
     )
     return _to_response(shift)
+
+
+def _shift_not_empty(tables: list[str]) -> AppError:
+    return AppError(
+        status_code=409,
+        code="SHIFT_NOT_EMPTY",
+        detail=(
+            f"This shift has rows recorded against it, in: {', '.join(tables)}. Only a "
+            "shift with nothing on it can be voided. One that holds anything holds money, "
+            "and is closed and corrected like any other."
+        ),
+    )
+
+
+@router.patch("/shifts/{shift_id}/void", response_model=VoidedShiftResponse)
+def void_shift(
+    payload: ShiftVoid,
+    access: ShiftAccess = Depends(require_shift_access(Role.admin)),
+    db: Session = Depends(get_db),
+) -> VoidedShiftResponse:
+    """Void an open shift that holds nothing. Admin only, reason mandatory (§6.8, Phase 27).
+
+    **This deletes the row** -- §3 rule 6's one exception. The rule protects money, and a
+    shift with no row in any table that points at it holds none: it is a date and a name,
+    opened by mistake. The 5 October shift that prompted this was opened before 2 October had
+    been entered, and from then on every lifecycle rule refused the way back -- each of them
+    correctly.
+
+    Why a delete rather than a `void` status is argued in §6.8. The short form: a kept row
+    would hold this date's sequence 1, so the real day would open as sequence 2, miss the
+    outlet's only template, and start at the wrong time -- which §6.3 then prices from.
+
+    The record of the shift is the `status_change` audit row below. `audit_logs.record_id` is
+    deliberately not a foreign key (§5.3), so it outlives the row it describes, and it carries
+    everything needed to say what was removed, by whom and why.
+
+    **Two locks on the same door.** `tables_holding` asks the catalogue whether anything points
+    at this shift. If something lands between that answer and the delete -- an attendant saving
+    a reading on the open shift -- every foreign key to `shifts` is NO ACTION, so the DELETE
+    itself is refused rather than cascading into the new row. Both give the same 409.
+    """
+    shift = access.shift
+
+    # Open only. Not `_guard_transition`: void is not a status, so its wording ("cannot be
+    # closed") would describe the wrong act.
+    if shift.status == ShiftStatus.locked.value:
+        raise AppError(
+            status_code=409,
+            code="SHIFT_LOCKED",
+            detail="This shift is locked. Locking is final, and a locked shift is never voided.",
+        )
+    if shift.status != ShiftStatus.open.value:
+        raise AppError(
+            status_code=409,
+            code="SHIFT_NOT_OPEN",
+            detail=(
+                "Only an open shift can be voided. A closed shift is a manager's statement "
+                "about a day -- reopen it first, so both acts are on the record."
+            ),
+        )
+
+    holding = shift_service.tables_holding(db, shift.id)
+    if holding:
+        raise _shift_not_empty(holding)
+
+    # Captured before the delete: once the row is gone, the session can no longer load it.
+    removed = VoidedShiftResponse(
+        id=shift.id, business_date=shift.business_date, sequence=shift.sequence
+    )
+    audit.record(
+        db,
+        outlet_id=shift.outlet_id,
+        table_name="shifts",
+        record_id=shift.id,
+        # A shift lifecycle move -- exactly what §14 keeps this label for.
+        action=AuditAction.status_change,
+        changed_by=access.actor.user.id,
+        # The usual snapshot plus the shift's identity, so this row alone says what was
+        # removed. After the commit it is the only place that does (§13.45).
+        old_values=_audit_snapshot(shift)
+        | {
+            "business_date": shift.business_date,
+            "sequence": shift.sequence,
+            "started_at": shift.started_at,
+            "attendant_id": shift.attendant_id,
+        },
+        new_values={"status": "voided", "reason": payload.reason},
+    )
+    # The audit INSERT is flushed on its own first, so that the guarded flush below holds
+    # nothing but the DELETE. A DELETE can violate exactly one kind of constraint -- a foreign
+    # key pointing at the row -- so every IntegrityError there is this race and nothing else,
+    # while a failure writing the audit row stays a loud 500 (app/core/errors.py).
+    db.flush()
+    db.delete(shift)
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        # A row arrived after `tables_holding` answered. The audit row is in this same
+        # uncommitted transaction, so it goes with the delete: there is no record of a void
+        # that did not happen. The driver names the referencing table on the error.
+        db.rollback()
+        raise _shift_not_empty([exc.orig.diag.table_name]) from exc
+    db.commit()
+
+    logger.warning(
+        "shift voided",
+        extra={
+            "shift_id": str(removed.id),
+            "business_date": removed.business_date.isoformat(),
+            "sequence": removed.sequence,
+            "voided_by": str(access.actor.user.id),
+            "reason": payload.reason,
+        },
+    )
+    return removed
