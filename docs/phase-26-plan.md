@@ -177,7 +177,30 @@ None. The drill-down reuses `CATEGORY_NOT_FOUND`, `INVALID_DATE_RANGE` and
 
 ## What shipped
 
-*(filled in as commits land)*
+| Commit | |
+|---|---|
+| `cdc6178` | CLAUDE.md: Phase 26 (§6.6 note, §8 row, §11 entry, §13.44) |
+| `84968b5` | The expense drill-down and the udhaar bridge: `expense_rows_range`, `statement_rows`, `credit_bridge`, the route, 18 tests |
+| `255da9f` | The Summary screen: `CategoryBars`, `Bridge`, `Donut` focus, `keepPrevious`, fixtures, 8 Vitest and 10 Playwright tests |
+
+**Deviations from the plan:**
+
+- **Build steps 2 and 3 landed as one commit.** The drill-down and the bridge share
+  `reports.py`.
+- **The drill-down is cut only between whole days.** The plan said "capped at 500"; while
+  building, the cap turned out to need a day boundary, or a subtotal would describe rows the
+  client never received. §13.44 was amended to match.
+- **The bridge layout changed after looking at it.** Label, track and figure on one row gave each
+  track a different length, so each bar had a different scale. Each bar now sits on a
+  full-width track under its label.
+- **`useApiQuery` gained `keepPrevious`,** after a frame-by-frame probe found the ledger blinking
+  empty for two frames on a click with no hover before it.
+- **The screen behaviour is tested in Playwright, not Vitest.** The plan listed hover, click,
+  preselect, the margin wording and the quantities under Vitest. Playwright already mocks the API
+  and renders the real build, so those checks went there. Vitest tests the three chart pieces.
+
+**Final counts:** pytest 1,726, Vitest 86, Playwright 164 (both palettes), front-door budget
+65.6 KB of 70.
 
 ## Still owed by the owner
 
