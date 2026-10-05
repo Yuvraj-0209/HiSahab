@@ -687,6 +687,49 @@
         "title": "Body_upload_receipt_api_v1_uploads_receipt_post",
         "type": "object"
       },
+      "BridgeStepResponse": {
+        "properties": {
+          "amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Amount",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "offset_pct": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offset Pct"
+          },
+          "width_pct": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width Pct"
+          }
+        },
+        "required": [
+          "key",
+          "amount",
+          "offset_pct",
+          "width_pct"
+        ],
+        "title": "BridgeStepResponse",
+        "type": "object"
+      },
       "CashPositionResponse": {
         "description": "Every term of \u00a76.4's per-shift half, plus the two figures that get compared.\n\nReturned in full rather than as a single number on purpose. \u00a75.2's argument for storing\n`expected_closing`'s components applies to showing them too: a manager told \"you are\n\u20b9500 short\" and nothing else cannot check the claim, and this is the number that decides\nwhether a debt lands on somebody's name.",
         "properties": {
@@ -2938,6 +2981,157 @@
           "description"
         ],
         "title": "ExpenseCreate",
+        "type": "object"
+      },
+      "ExpenseDrillDayResponse": {
+        "properties": {
+          "business_date": {
+            "format": "date",
+            "title": "Business Date",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExpenseDrillRowResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total",
+            "type": "string"
+          }
+        },
+        "required": [
+          "business_date",
+          "total",
+          "items"
+        ],
+        "title": "ExpenseDrillDayResponse",
+        "type": "object"
+      },
+      "ExpenseDrillResponse": {
+        "description": "One category's expenses over the Summary's window, by business date (Phase 26).\n\n`total` and each day's `total` are summed here over **every** row, before the cap, so they\nstay exact when the list is cut short; the list is only ever cut between whole days, so a\nday's subtotal never describes rows the client was not sent (\u00a713.44). Reversals are listed\nand tagged, and net into every total -- the same rows, the same sum, as the category's bar.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/ExpenseDrillDayResponse"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "from": {
+            "title": "From",
+            "type": "string"
+          },
+          "row_count": {
+            "title": "Row Count",
+            "type": "integer"
+          },
+          "to": {
+            "title": "To",
+            "type": "string"
+          },
+          "total": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "code",
+          "display_name",
+          "total",
+          "row_count",
+          "days",
+          "truncated"
+        ],
+        "title": "ExpenseDrillResponse",
+        "type": "object"
+      },
+      "ExpenseDrillRowResponse": {
+        "properties": {
+          "amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Amount",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_reversal": {
+            "title": "Is Reversal",
+            "type": "boolean"
+          },
+          "is_reversed": {
+            "title": "Is Reversed",
+            "type": "boolean"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "paid_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid To"
+          },
+          "reversal_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reversal Reason"
+          },
+          "shift_id": {
+            "format": "uuid",
+            "title": "Shift Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "shift_id",
+          "mode",
+          "amount",
+          "description",
+          "paid_to",
+          "is_reversal",
+          "is_reversed",
+          "reversal_reason"
+        ],
+        "title": "ExpenseDrillRowResponse",
         "type": "object"
       },
       "ExpenseMode": {
@@ -6634,37 +6828,6 @@
         "title": "StatementTotalsResponse",
         "type": "object"
       },
-      "SummaryCategoryResponse": {
-        "properties": {
-          "amount": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Amount",
-            "type": "string"
-          },
-          "code": {
-            "title": "Code",
-            "type": "string"
-          },
-          "share_pct": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Share Pct"
-          }
-        },
-        "required": [
-          "code",
-          "amount",
-          "share_pct"
-        ],
-        "title": "SummaryCategoryResponse",
-        "type": "object"
-      },
       "SummaryCreate": {
         "additionalProperties": false,
         "properties": {
@@ -6719,6 +6882,113 @@
           "business_date"
         ],
         "title": "SummaryCreate",
+        "type": "object"
+      },
+      "SummaryCreditResponse": {
+        "description": "The udhaar bridge: the billing statement's totals for the same window (\u00a76.6).\n\nRead from `credit.statement_rows`, the function `GET /credit-customers/statement` uses, so\nthe two screens agree to the paisa -- including every bank-transfer repayment and every\nrepayment with no shift, which the \u00a76.4 drawer terms this card used to show leave out.",
+        "properties": {
+          "basis": {
+            "default": "The billing statement's totals for the same dates, summed over every customer (\u00a76.6): owed_at_start + given - collected = owed_at_end. collected counts every repayment by its own business date, in every mode -- cash, card, UPI and bank transfer, with or without a shift. These are ledger figures, recomputed on every read (\u00a713.41), not the \u00a76.4 drawer terms credit_sales_total and *_credit_repayments, which answer what reached the locker.",
+            "title": "Basis",
+            "type": "string"
+          },
+          "bridge": {
+            "items": {
+              "$ref": "#/components/schemas/BridgeStepResponse"
+            },
+            "title": "Bridge",
+            "type": "array"
+          },
+          "collected": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Collected",
+            "type": "string"
+          },
+          "customers_owing": {
+            "title": "Customers Owing",
+            "type": "integer"
+          },
+          "given": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Given",
+            "type": "string"
+          },
+          "owed_at_end": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Owed At End",
+            "type": "string"
+          },
+          "owed_at_start": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Owed At Start",
+            "type": "string"
+          },
+          "owes_today": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Owes Today",
+            "type": "string"
+          },
+          "top_owing": {
+            "items": {
+              "$ref": "#/components/schemas/TopOwingResponse"
+            },
+            "title": "Top Owing",
+            "type": "array"
+          }
+        },
+        "required": [
+          "owed_at_start",
+          "given",
+          "collected",
+          "owed_at_end",
+          "owes_today",
+          "customers_owing",
+          "bridge",
+          "top_owing"
+        ],
+        "title": "SummaryCreditResponse",
+        "type": "object"
+      },
+      "SummaryExpenseCategoryResponse": {
+        "description": "One category's bar on the Summary (Phase 26).\n\nTwo percentages, answering two questions. `share_pct` is this category's part of all\nexpenses -- the label. `bar_pct` is its length relative to the **largest** category, so the\nbiggest bar spans the chart rather than stopping at 40% of it. Both are computed here in\n`Decimal`; the client assigns them (\u00a714).",
+        "properties": {
+          "amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Amount",
+            "type": "string"
+          },
+          "bar_pct": {
+            "title": "Bar Pct",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "share_pct": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share Pct"
+          }
+        },
+        "required": [
+          "code",
+          "display_name",
+          "amount",
+          "share_pct",
+          "bar_pct"
+        ],
+        "title": "SummaryExpenseCategoryResponse",
         "type": "object"
       },
       "SummaryFuelLineResponse": {
@@ -6934,6 +7204,31 @@
           }
         },
         "title": "SummaryUpdate",
+        "type": "object"
+      },
+      "TopOwingResponse": {
+        "properties": {
+          "customer_id": {
+            "format": "uuid",
+            "title": "Customer Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owed_at_end": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Owed At End",
+            "type": "string"
+          }
+        },
+        "required": [
+          "customer_id",
+          "name",
+          "owed_at_end"
+        ],
+        "title": "TopOwingResponse",
         "type": "object"
       },
       "TransactionPage": {
@@ -7862,6 +8157,9 @@
             "title": "Cash Sales",
             "type": "string"
           },
+          "credit": {
+            "$ref": "#/components/schemas/SummaryCreditResponse"
+          },
           "credit_sales_total": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Credit Sales Total",
@@ -7876,7 +8174,7 @@
           },
           "expenses_by_category": {
             "items": {
-              "$ref": "#/components/schemas/SummaryCategoryResponse"
+              "$ref": "#/components/schemas/SummaryExpenseCategoryResponse"
             },
             "title": "Expenses By Category",
             "type": "array"
@@ -7946,13 +8244,6 @@
           "partial": {
             "title": "Partial",
             "type": "boolean"
-          },
-          "payment_mix": {
-            "items": {
-              "$ref": "#/components/schemas/SummaryCategoryResponse"
-            },
-            "title": "Payment Mix",
-            "type": "array"
           },
           "profit_basis": {
             "default": "Gross fuel margin on quantity sold: quantity x margin_at(fuel, shift start). This is NOT business profit. It excludes stock revaluation -- holding 12 kL when the rate rises \u20b91 is a real \u20b912,000 gain this system never sees, because nothing moved through a nozzle -- and it excludes non-fuel income and the IOCL ledger entirely (CLAUDE.md \u00a74.6, \u00a713.7, \u00a713.9). A fuel whose margin has never been entered reports null, never 0.",
@@ -8029,11 +8320,11 @@
           "credit_sales_total",
           "cash_credit_repayments",
           "card_upi_credit_repayments",
-          "payment_mix",
           "expenses_by_category",
           "expenses_total",
           "bank_deposits_total",
           "shortfalls_booked",
+          "credit",
           "trend"
         ],
         "title": "SummaryResponse",
@@ -11282,6 +11573,90 @@
           }
         ],
         "summary": "Read Summary",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/api/v1/reports/summary/expenses": {
+      "get": {
+        "description": "Where one category's money went over the Summary's window, by date (Phase 26).\n\nThe Summary draws a bar per category; this is the list behind one bar. **The same rows,\nfrom the same query** (`expense_rows_range`), so the grand total here is the bar's figure\nto the paisa. It is a separate endpoint rather than a field on `/reports/summary` because a\nyear of expense rows would ride along on every load of the tab for a list somebody opens\none category at a time.\n\nManager floor, like the Summary it drills into (\u00a78). The window resolves exactly as the\nSummary's does, so an unspecified window here is the one the screen is showing.\n\n**It writes nothing.**",
+        "operationId": "read_summary_expenses_api_v1_reports_summary_expenses_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "category",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Category",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpenseDrillResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Summary Expenses",
         "tags": [
           "reports"
         ]

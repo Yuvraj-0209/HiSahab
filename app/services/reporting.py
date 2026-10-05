@@ -782,6 +782,57 @@ def share_pct(value: Decimal | None, *, total: Decimal | None) -> str | None:
     return f"{pct}%"
 
 
+@dataclass(frozen=True)
+class BridgeStep:
+    """One step of the Summary's udhaar bridge (Phase 26), with the geometry to draw it.
+
+    `offset_pct` is where the bar starts and `width_pct` how long it is, both as CSS
+    percentage strings of the walk's extent. The client assigns them; it never subtracts one
+    rupee figure from another to find where a bar should begin (§14).
+    """
+
+    key: str  # "start" | "given" | "collected" | "end"
+    amount: Decimal
+    offset_pct: str | None
+    width_pct: str | None
+
+
+def credit_bridge(
+    *, start: Decimal, given: Decimal, collected: Decimal, end: Decimal
+) -> list[BridgeStep]:
+    """Owed at start, plus given, minus collected, equals owed at end, as a waterfall.
+
+        start      [=========          ]   from 0
+        given      [         ====      ]   from where start ended
+        collected  [            ==     ]   ending where given ended
+        end        [============       ]   from 0
+
+    The extent is `start + given`, the highest the balance reached on the walk. **The
+    geometry is withheld -- every offset and width `None` -- when any figure is negative or
+    the extent is zero.** §6.6 says a negative balance is legitimate (a customer who paid in
+    advance), and a net-negative "given" is a reversal artefact; neither has an honest bar on
+    a left-to-right walk, and a bar clamped to zero would draw a different fact from the one
+    printed beside it. The figures themselves are always returned.
+    """
+    figures = {"start": start, "given": given, "collected": collected, "end": end}
+    extent = start + given
+    drawable = extent > 0 and all(value >= 0 for value in figures.values())
+
+    def pct(value: Decimal) -> str | None:
+        return share_pct(value, total=extent) if drawable else None
+
+    offsets = {"start": _ZERO, "given": start, "collected": end, "end": _ZERO}
+    return [
+        BridgeStep(
+            key=key,
+            amount=value,
+            offset_pct=pct(offsets[key]) if drawable else None,
+            width_pct=pct(value),
+        )
+        for key, value in figures.items()
+    ]
+
+
 def range_report(
     db: Session,
     *,

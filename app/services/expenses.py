@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from datetime import date
+from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -211,6 +212,91 @@ def resolve_category(
     return category
 
 
+@dataclass(frozen=True)
+class RangeExpenseRow:
+    """One expense inside a date range, carrying the date it belongs to.
+
+    `business_date` is the shift's, never `created_at`'s (§6.1): §4.7 says the day is typed in
+    after the fact, so an expense entered on the 12th for the 10th belongs to the 10th.
+    """
+
+    id: UUID
+    shift_id: UUID
+    business_date: date
+    category_code: str
+    mode: str
+    amount: Decimal
+    description: str
+    paid_to: str | None
+    reverses_id: UUID | None
+    reversal_reason: str | None
+    created_at: datetime
+
+
+def expense_rows_range(
+    db: Session,
+    *,
+    outlet_id: UUID,
+    date_from: date,
+    date_to: date,
+    category_code: str | None = None,
+) -> list[RangeExpenseRow]:
+    """Every expense on a shift at this outlet dated inside `[date_from, date_to]`, reversals
+    included, newest business date first.
+
+    **The one query behind both the Summary's category bars and its drill-down** (Phase 26).
+    `totals_by_category_range` sums this list; `GET /reports/summary/expenses` lists it. A bar
+    and the rows beneath it therefore cannot disagree, because they are not two queries --
+    the drift a second implementation of one sum always produces eventually (§6.4).
+    """
+    statement = (
+        select(
+            Expense.id,
+            Expense.shift_id,
+            Shift.business_date,
+            ExpenseCategory.code,
+            Expense.mode,
+            Expense.amount,
+            Expense.description,
+            Expense.paid_to,
+            Expense.reverses_id,
+            Expense.reversal_reason,
+            Expense.created_at,
+        )
+        .join(ExpenseCategory, ExpenseCategory.id == Expense.category_id)
+        .join(Shift, Shift.id == Expense.shift_id)
+        .where(
+            Shift.outlet_id == outlet_id,
+            Shift.business_date >= date_from,
+            Shift.business_date <= date_to,
+        )
+        # Newest trading day first, then newest entry within it; the id makes two rows typed
+        # in the same instant come back in the same order on every read.
+        .order_by(
+            Shift.business_date.desc(), Expense.created_at.desc(), Expense.id.desc()
+        )
+    )
+    if category_code is not None:
+        statement = statement.where(ExpenseCategory.code == category_code)
+
+    return [
+        RangeExpenseRow(
+            id=row.id,
+            shift_id=row.shift_id,
+            business_date=row.business_date,
+            category_code=row.code,
+            mode=str(row.mode),
+            amount=row.amount,
+            description=row.description,
+            paid_to=row.paid_to,
+            reverses_id=row.reverses_id,
+            reversal_reason=row.reversal_reason,
+            created_at=row.created_at,
+        )
+        for row in db.execute(statement).all()
+    ]
+
+
 def totals_by_category_range(
     db: Session, *, outlet_id: UUID, date_from: date, date_to: date
 ) -> dict[str, Decimal]:
@@ -221,21 +307,31 @@ def totals_by_category_range(
     Summed across every row rather than filtered to the live ones, for the identical reason
     `totals_by_category` gives: a reversal that has not yet been replaced must show as the
     reduction it is, not vanish from the report.
+
+    Phase 26: summed over `expense_rows_range`, so the Summary's drill-down lists exactly the
+    rows this total is made of.
     """
-    rows = db.execute(
-        select(ExpenseCategory.code, Expense.amount)
-        .join(ExpenseCategory, ExpenseCategory.id == Expense.category_id)
-        .join(Shift, Shift.id == Expense.shift_id)
-        .where(
-            Shift.outlet_id == outlet_id,
-            Shift.business_date >= date_from,
-            Shift.business_date <= date_to,
-        )
-    ).all()
     totals: dict[str, Decimal] = {}
-    for code, amount in rows:
-        totals[code] = totals.get(code, Decimal("0.00")) + amount
+    for row in expense_rows_range(
+        db, outlet_id=outlet_id, date_from=date_from, date_to=date_to
+    ):
+        totals[row.category_code] = (
+            totals.get(row.category_code, Decimal("0.00")) + row.amount
+        )
     return totals
+
+
+def category_display_names(db: Session, *, outlet_id: UUID) -> dict[str, str]:
+    """`code -> display_name` for every category at this outlet, retired ones included --
+    a retired category's historical expenses still report under it (§5.1)."""
+    return {
+        code: display_name
+        for code, display_name in db.execute(
+            select(ExpenseCategory.code, ExpenseCategory.display_name).where(
+                ExpenseCategory.outlet_id == outlet_id
+            )
+        ).all()
+    }
 
 
 def reversal_of(db: Session, *, expense_id: UUID) -> UUID | None:

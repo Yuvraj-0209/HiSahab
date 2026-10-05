@@ -39,6 +39,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import Actor, require_role
@@ -48,6 +49,8 @@ from app.core.config import Settings, get_settings
 from app.core.errors import AppError
 from app.core.roles import Role
 from app.db.session import get_db
+from app.models.expense_category import ExpenseCategory
+from app.services import credit as credit_service
 from app.services import expenses as expense_service
 from app.services import reporting
 from app.services import shifts as shift_service
@@ -104,6 +107,22 @@ _WINDOW_BASIS = (
     "so the totals are a floor rather than a complete figure -- a skipped day is never "
     "counted as zero."
 )
+
+_CREDIT_BASIS = (
+    "The billing statement's totals for the same dates, summed over every customer (§6.6): "
+    "owed_at_start + given - collected = owed_at_end. collected counts every repayment by its "
+    "own business date, in every mode -- cash, card, UPI and bank transfer, with or without a "
+    "shift. These are ledger figures, recomputed on every read (§13.41), not the §6.4 drawer "
+    "terms credit_sales_total and *_credit_repayments, which answer what reached the locker."
+)
+
+# §13.44. A category's rows inside one window, cut between whole days. Generous for this
+# outlet -- a month is dozens of expenses -- and it bounds a 366-day window of daily tea.
+_MAX_DRILL_ROWS = 500
+
+# How many customers the udhaar card names. The card answers "who owes the most"; the full
+# list is one tap away on the statement for the same dates.
+_TOP_OWING = 5
 
 _ALERTS_BASIS = (
     "Derived on every read from figures and flags that are already stored; nothing here is "
@@ -263,10 +282,52 @@ class SummaryFuelLineResponse(BaseModel):
     share_pct: str | None
 
 
-class SummaryCategoryResponse(BaseModel):
+class SummaryExpenseCategoryResponse(BaseModel):
+    """One category's bar on the Summary (Phase 26).
+
+    Two percentages, answering two questions. `share_pct` is this category's part of all
+    expenses -- the label. `bar_pct` is its length relative to the **largest** category, so the
+    biggest bar spans the chart rather than stopping at 40% of it. Both are computed here in
+    `Decimal`; the client assigns them (§14).
+    """
+
     code: str
+    display_name: str
     amount: Decimal
     share_pct: str | None
+    bar_pct: str
+
+
+class BridgeStepResponse(BaseModel):
+    key: str
+    amount: Decimal
+    offset_pct: str | None
+    width_pct: str | None
+
+
+class TopOwingResponse(BaseModel):
+    customer_id: UUID
+    name: str
+    owed_at_end: Decimal
+
+
+class SummaryCreditResponse(BaseModel):
+    """The udhaar bridge: the billing statement's totals for the same window (§6.6).
+
+    Read from `credit.statement_rows`, the function `GET /credit-customers/statement` uses, so
+    the two screens agree to the paisa -- including every bank-transfer repayment and every
+    repayment with no shift, which the §6.4 drawer terms this card used to show leave out.
+    """
+
+    owed_at_start: Decimal
+    given: Decimal
+    collected: Decimal
+    owed_at_end: Decimal
+    owes_today: Decimal
+    customers_owing: int
+    bridge: list[BridgeStepResponse]
+    top_owing: list[TopOwingResponse]
+    basis: str = _CREDIT_BASIS
 
 
 class SummaryTrendDayResponse(BaseModel):
@@ -310,12 +371,13 @@ class SummaryResponse(BaseModel):
     credit_sales_total: Decimal
     cash_credit_repayments: Decimal
     card_upi_credit_repayments: Decimal
-    payment_mix: list[SummaryCategoryResponse]
 
-    expenses_by_category: list[SummaryCategoryResponse]
+    expenses_by_category: list[SummaryExpenseCategoryResponse]
     expenses_total: Decimal
     bank_deposits_total: Decimal
     shortfalls_booked: Decimal
+
+    credit: SummaryCreditResponse
 
     trend: list[SummaryTrendDayResponse]
 
@@ -323,6 +385,45 @@ class SummaryResponse(BaseModel):
     fuel_basis: str = _FUEL_BASIS
     profit_basis: str = _PROFIT_BASIS
     window_basis: str = _WINDOW_BASIS
+
+
+class ExpenseDrillRowResponse(BaseModel):
+    id: UUID
+    shift_id: UUID
+    mode: str
+    amount: Decimal
+    description: str
+    paid_to: str | None
+    is_reversal: bool
+    is_reversed: bool
+    reversal_reason: str | None
+
+
+class ExpenseDrillDayResponse(BaseModel):
+    business_date: date
+    total: Decimal
+    items: list[ExpenseDrillRowResponse]
+
+
+class ExpenseDrillResponse(BaseModel):
+    """One category's expenses over the Summary's window, by business date (Phase 26).
+
+    `total` and each day's `total` are summed here over **every** row, before the cap, so they
+    stay exact when the list is cut short; the list is only ever cut between whole days, so a
+    day's subtotal never describes rows the client was not sent (§13.44). Reversals are listed
+    and tagged, and net into every total -- the same rows, the same sum, as the category's bar.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_: str = Field(alias="from")
+    to: str
+    code: str
+    display_name: str
+    total: Decimal
+    row_count: int
+    days: list[ExpenseDrillDayResponse]
+    truncated: bool
 
 
 class AlertResponse(BaseModel):
@@ -555,33 +656,54 @@ def read_summary(
         for line in fuel.lines
     ]
 
-    # §6.4's five ways money arrives, as the client will draw them. Ordered largest-first is
-    # deliberately NOT done here: a stable order across reloads makes the chart comparable
-    # between two windows, and a colour that moves between renders is worse than a long bar.
-    mix_rows = [
-        ("cash", cash.cash_sales),
-        ("card", cash.card_total),
-        ("upi", cash.upi_total),
-        ("wallet", cash.wallet_total),
-        ("credit", cash.credit_sales_total),
-    ]
-    payment_mix = [
-        SummaryCategoryResponse(
-            code=code,
-            amount=amount,
-            share_pct=reporting.share_pct(amount, total=cash.total_sales),
-        )
-        for code, amount in mix_rows
-    ]
-
+    # Largest first (Phase 26). Phase 19 kept these alphabetical so each category kept its
+    # colour between windows; the chart is now one hue with the selection highlighted, so
+    # that reason is gone and the order can answer "where did most of it go". The code breaks
+    # ties so two equal categories do not swap places between reloads.
+    names = expense_service.category_display_names(db, outlet_id=actor.outlet_id)
+    largest = max(by_category.values(), default=Decimal("0.00"))
     expenses = [
-        SummaryCategoryResponse(
+        SummaryExpenseCategoryResponse(
             code=code,
+            display_name=names.get(code, code),
             amount=amount,
             share_pct=reporting.share_pct(amount, total=expenses_total),
+            bar_pct=reporting.bar_height(amount, largest=largest),
         )
-        for code, amount in sorted(by_category.items())
+        for code, amount in sorted(by_category.items(), key=lambda item: (-item[1], item[0]))
     ]
+
+    rows, totals = credit_service.statement_rows(
+        db, outlet_id=actor.outlet_id, date_from=start, date_to=end
+    )
+    credit = SummaryCreditResponse(
+        owed_at_start=totals.owed_before,
+        given=totals.udhaar_in,
+        collected=totals.repaid_in,
+        owed_at_end=totals.billed,
+        owes_today=totals.owes_today,
+        customers_owing=sum(1 for row in rows if row.billed > 0),
+        bridge=[
+            BridgeStepResponse(
+                key=step.key,
+                amount=step.amount,
+                offset_pct=step.offset_pct,
+                width_pct=step.width_pct,
+            )
+            for step in reporting.credit_bridge(
+                start=totals.owed_before,
+                given=totals.udhaar_in,
+                collected=totals.repaid_in,
+                end=totals.billed,
+            )
+        ],
+        # `statement_rows` already sorts by `billed`, biggest first, name breaking ties.
+        top_owing=[
+            TopOwingResponse(customer_id=row.customer_id, name=row.name, owed_at_end=row.billed)
+            for row in rows
+            if row.billed > 0
+        ][:_TOP_OWING],
+    )
 
     return SummaryResponse(
         from_=start.isoformat(),
@@ -604,11 +726,11 @@ def read_summary(
         credit_sales_total=cash.credit_sales_total,
         cash_credit_repayments=cash.cash_credit_repayments,
         card_upi_credit_repayments=cash.card_upi_credit_repayments,
-        payment_mix=payment_mix,
         expenses_by_category=expenses,
         expenses_total=expenses_total,
         bank_deposits_total=cash.bank_deposits_total,
         shortfalls_booked=cash.shortfalls_booked,
+        credit=credit,
         trend=[
             SummaryTrendDayResponse(
                 business_date=day.business_date,
@@ -619,6 +741,111 @@ def read_summary(
             )
             for day in days
         ],
+    )
+
+
+@router.get("/reports/summary/expenses", response_model=ExpenseDrillResponse)
+def read_summary_expenses(
+    category: str = Query(min_length=1, max_length=64),
+    date_from: date | None = Query(default=None, alias="from"),
+    date_to: date | None = Query(default=None, alias="to"),
+    actor: Actor = Depends(require_role(Role.manager)),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+) -> ExpenseDrillResponse:
+    """Where one category's money went over the Summary's window, by date (Phase 26).
+
+    The Summary draws a bar per category; this is the list behind one bar. **The same rows,
+    from the same query** (`expense_rows_range`), so the grand total here is the bar's figure
+    to the paisa. It is a separate endpoint rather than a field on `/reports/summary` because a
+    year of expense rows would ride along on every load of the tab for a list somebody opens
+    one category at a time.
+
+    Manager floor, like the Summary it drills into (§8). The window resolves exactly as the
+    Summary's does, so an unspecified window here is the one the screen is showing.
+
+    **It writes nothing.**
+    """
+    start, end = _resolve_window(
+        date_from,
+        date_to,
+        settings,
+        db,
+        actor.outlet_id,
+        max_days=_MAX_SUMMARY_RANGE_DAYS,
+        default_days=_DEFAULT_SUMMARY_WINDOW_DAYS,
+    )
+
+    found = db.execute(
+        select(ExpenseCategory.code, ExpenseCategory.display_name).where(
+            ExpenseCategory.outlet_id == actor.outlet_id,
+            ExpenseCategory.code == category,
+        )
+    ).one_or_none()
+    if found is None:
+        # Another outlet's category is "not found" here too, never "forbidden": existence is
+        # not leaked across tenants (§7.3's rule).
+        raise AppError(
+            status_code=404,
+            code="CATEGORY_NOT_FOUND",
+            detail=f"There is no expense category {category} at this outlet.",
+        )
+
+    rows = expense_service.expense_rows_range(
+        db,
+        outlet_id=actor.outlet_id,
+        date_from=start,
+        date_to=end,
+        category_code=found.code,
+    )
+    reversed_ids = {row.reverses_id for row in rows if row.reverses_id is not None}
+
+    # Grouped in the query's order -- newest business date first -- with every day's total
+    # summed over ALL its rows before anything is cut.
+    grouped: dict[date, list[expense_service.RangeExpenseRow]] = {}
+    for row in rows:
+        grouped.setdefault(row.business_date, []).append(row)
+
+    days: list[ExpenseDrillDayResponse] = []
+    listed = 0
+    truncated = False
+    for business_date, members in grouped.items():
+        # §13.44: cut only between whole days, so a subtotal never describes rows the client
+        # was not sent. The first day is always listed whole, however long it is.
+        if days and listed + len(members) > _MAX_DRILL_ROWS:
+            truncated = True
+            break
+        listed += len(members)
+        days.append(
+            ExpenseDrillDayResponse(
+                business_date=business_date,
+                total=sum((member.amount for member in members), Decimal("0.00")),
+                items=[
+                    ExpenseDrillRowResponse(
+                        id=member.id,
+                        shift_id=member.shift_id,
+                        mode=member.mode,
+                        amount=member.amount,
+                        description=member.description,
+                        paid_to=member.paid_to,
+                        is_reversal=member.reverses_id is not None,
+                        is_reversed=member.id in reversed_ids,
+                        reversal_reason=member.reversal_reason,
+                    )
+                    for member in members
+                ],
+            )
+        )
+
+    return ExpenseDrillResponse(
+        from_=start.isoformat(),
+        to=end.isoformat(),
+        code=found.code,
+        display_name=found.display_name,
+        total=sum((row.amount for row in rows), Decimal("0.00")),
+        row_count=len(rows),
+        days=days,
+        truncated=truncated,
     )
 
 

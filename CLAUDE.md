@@ -3342,10 +3342,12 @@ future reader must be able to tell the difference.
     first day may be split across two pages, and its subtotal would then describe rows the
     client has not seen.
 
-    So the totals are computed over **every** row and the list is truncated, with `truncated`
-    saying so. The grand total always equals the category's bar, because one row query feeds
-    both (`expenses.expense_rows_range`). A category with more than 500 rows in one window —
-    a daily tea run across a year — shows its newest 500 and says the rest exist. The fix when
+    So the totals are computed over **every** row, and the list is cut **only between whole
+    days**, with `truncated` saying so — a day is either listed with all its rows or not at
+    all, so no subtotal describes rows the client was not sent. The grand total always equals
+    the category's bar, because one row query feeds both (`expenses.expense_rows_range`). A
+    category with more than 500 rows in one window — a daily tea run across a year — shows
+    its newest days and says the rest exist. The fix when
     it bites is a narrower window, which the date picker already offers. §9, §13.31, §14
 
 ---

@@ -985,7 +985,49 @@ def _bucket(column, predicate) -> object:
 def period_statement(
     db: Session, *, outlet_id: UUID, date_from: date, date_to: date
 ) -> PeriodStatement:
-    """§6.6's statement over `[date_from, date_to]`, for every customer at the outlet.
+    """§6.6's statement over `[date_from, date_to]`, for every customer at the outlet: the
+    per-customer figures from `statement_rows`, plus the expanded view's lines and the count of
+    shifts still open inside the window.
+    """
+    rows, totals = statement_rows(
+        db, outlet_id=outlet_id, date_from=date_from, date_to=date_to
+    )
+
+    lines, truncated = _statement_lines(
+        db, outlet_id=outlet_id, date_from=date_from, date_to=date_to
+    )
+
+    open_shift_count = db.execute(
+        select(func.count())
+        .select_from(Shift)
+        .where(
+            Shift.outlet_id == outlet_id,
+            Shift.status == ShiftStatus.open.value,
+            Shift.business_date >= date_from,
+            Shift.business_date <= date_to,
+        )
+    ).scalar_one()
+
+    return PeriodStatement(
+        date_from=date_from,
+        date_to=date_to,
+        rows=rows,
+        totals=totals,
+        lines=lines,
+        lines_truncated=truncated,
+        open_shift_count=open_shift_count,
+    )
+
+
+def statement_rows(
+    db: Session, *, outlet_id: UUID, date_from: date, date_to: date
+) -> tuple[list[StatementRow], StatementTotals]:
+    """Every customer's statement figures over `[date_from, date_to]`, and their totals.
+
+    Split out of `period_statement` in Phase 26 so the Summary tab's udhaar bridge can ask the
+    statement's own question rather than a copy of it. Before that, the Summary card summed two
+    §6.4 *drawer* terms and so never saw a bank-transfer repayment -- the drift that a second
+    implementation of one sum always produces eventually (§6.6's Phase 26 note).
 
     **Every row counts, reversals included**, which is `outstanding`'s convention: a reversal
     carries its original's shift and date (§6.9), so the pair nets inside one period. A sale is
@@ -1145,30 +1187,7 @@ def period_statement(
         owes_today=sum((row.owes_today for row in rows), _ZERO),
     )
 
-    lines, truncated = _statement_lines(
-        db, outlet_id=outlet_id, date_from=first, date_to=last
-    )
-
-    open_shift_count = db.execute(
-        select(func.count())
-        .select_from(Shift)
-        .where(
-            Shift.outlet_id == outlet_id,
-            Shift.status == ShiftStatus.open.value,
-            Shift.business_date >= first,
-            Shift.business_date <= last,
-        )
-    ).scalar_one()
-
-    return PeriodStatement(
-        date_from=first,
-        date_to=last,
-        rows=rows,
-        totals=totals,
-        lines=lines,
-        lines_truncated=truncated,
-        open_shift_count=open_shift_count,
-    )
+    return rows, totals
 
 
 def _statement_lines(
