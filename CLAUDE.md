@@ -113,6 +113,14 @@ These are not preferences. Violating any of them is a bug, even if tests pass.
 6. **No hard deletes on any financial table.** Corrections happen via reversal
    entries that reference the original row. See §6.9.
 
+   **Phase 27 amendment — one exception, and it is not a correction.** An *open* shift that
+   nothing references may be deleted by an admin, through `PATCH /shifts/{id}/void` (§6.8).
+   The rule protects money, and **an empty shift holds no money**: with no row in any table
+   that holds a foreign key to it, it is a date and a name, opened by mistake. Its record is
+   the `status_change` audit row written in the same transaction, which carries the whole
+   shift in `old_values` and outlives it, because `audit_logs.record_id` is deliberately not
+   a foreign key (§5.3). This is §7.4's argument for unlinked attachments, one table up.
+
 7. **Every write endpoint validates input via a Pydantic model.** Never accept a raw
    `dict`. Never trust a client-supplied `total`, `amount_due`, or any derived figure —
    recompute it server-side.
@@ -576,6 +584,10 @@ Dispensers are deliberately *not* a separate table in V1 (YAGNI — a label suff
 
 Status transitions: `open → closed → locked`. Never backwards without an admin action
 that is itself audit-logged. Nothing referencing a `locked` shift may be modified.
+
+**Phase 27:** an `open` shift with nothing recorded against it may instead be **voided** —
+deleted, with a reason, by an admin (§6.8). It is the one lifecycle act that leaves no row
+behind, and it can only ever remove a shift that holds nothing.
 
 **Only one shift per outlet may be `open` at a time.** This is what makes §4.7's chain
 unambiguous: there is always exactly one closing reading to carry forward.
@@ -1699,6 +1711,46 @@ chained opening (§4.7) would be left stale; Phase 5 lifted that by **flagging**
 reading for review rather than recomputing it, which would have been the silent rewrite
 §4.7 exists to prevent. `NOT_THE_LATEST_SHIFT` no longer exists. See §13.10.
 
+**Voiding. Phase 27.** An admin may void an `open` shift that holds nothing, with a
+mandatory reason: `PATCH /shifts/{id}/void`. The shift row is **deleted**, and a
+`status_change` audit row written in the same transaction records the whole shift and the
+reason. A `closed` shift is refused with 409 `SHIFT_NOT_OPEN` (reopen it first, and both acts
+are then on the record); a `locked` one with 409 `SHIFT_LOCKED`. **An empty shift holds no
+money**, which is the whole of the case for §3 rule 6's one exception.
+
+> **Why it exists.** On 5 October a manager opened that day's shift before 2 October had been
+> entered. 2 October could then not be opened at all — `SHIFT_ALREADY_OPEN` while 5 October was
+> open, and `SHIFT_OUT_OF_SEQUENCE` once it was not, because a new shift may only extend the
+> chain (§4.7). 5 October could not be closed either: it had no readings, and
+> `MISSING_NOZZLE_READINGS` is right to refuse that. Every rule did its job, and together they
+> left no way out except editing production by hand — the one thing this document exists to
+> make unnecessary.
+>
+> **"Holds nothing" is asked of the catalogue, never of a list.** The route reads
+> `pg_constraint` for every foreign key that points at `shifts` and refuses with 409
+> `SHIFT_NOT_EMPTY`, naming the tables, if any of them has a row for this shift. Nine tables
+> answer today. A hand-written list is right on the day it is written and silently wrong on the
+> day a later phase adds a tenth — the failure §6.9 records twice for `_CONSTRAINT_ERRORS`.
+> Asking the database means a table added later is covered the day its migration lands.
+>
+> **Every one of those foreign keys is `NO ACTION`, and that is the second lock on the same
+> door.** If an attendant saves a reading between the check and the delete, the delete fails
+> on the foreign key instead of cascading, and the caller gets the same 409. **No foreign key
+> to `shifts` may ever be `ON DELETE CASCADE`**; a test reads the catalogue to keep it so.
+>
+> **Why a delete and not a `void` status.** A voided row that stayed would have to be filtered
+> out of every reader of `shifts` — the chain's tip, the one-open-shift rule, `next_sequence`,
+> "traded means has a shift" (§6.5), the Cash worklist, every report's default window — and
+> the one that forgot would be a plausible, wrong figure. The sharpest case: the kept row would
+> hold sequence 1, so the real 5 October would open as sequence 2, find no template (this outlet
+> has one, for sequence 1), and start at the previous shift's end, at 22:00 the night before.
+> §6.3 prices a shift from its `started_at`, so a 06:00 price revision that morning would value
+> the whole day at the old rate with no error anywhere. A deleted empty row leaves nothing for
+> any reader to forget.
+>
+> **Void is not undo.** It reaches only a shift that never recorded anything. A shift that did
+> is closed and corrected like any other (§6.9), and the 409 says which tables to look in.
+
 ### 6.9 Corrections after close
 
 No `UPDATE` and no `DELETE` on financial rows in a `closed` or `locked` shift.
@@ -1934,6 +1986,7 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | Read the shortfall ledger / who owes what | ❌ | ✅ | ✅ |
 | Create or update a daily cash summary, incl. `actual_counted` | ❌ | ✅ | ✅ |
 | Lock a shift / finalise a day | ❌ | ❌ | ✅ |
+| Void an open shift with nothing recorded on it (§6.8, mandatory reason, audit-logged) | ❌ | ❌ | ✅ |
 | Unfinalise a day (mandatory reason, audit-logged) | ❌ | ❌ | ✅ |
 | **Read the audit log (§5.3)** | ❌ | ❌ | ✅ |
 | Enter fuel prices and margins | ❌ | ❌ | ✅ |
@@ -1986,7 +2039,10 @@ Write a permission test for the attendant-touching-another-shift case specifical
 
 - Base: `/api/v1`
 - Resources are plural nouns: `/shifts`, `/shifts/{id}/expenses`
-- Methods: `GET` read, `POST` create, `PATCH` partial update, `DELETE` unused (§6.9)
+- Methods: `GET` read, `POST` create, `PATCH` partial update, `DELETE` unused (§6.9).
+  **Phase 27:** the one row the API removes, an empty shift, goes through
+  `PATCH /shifts/{id}/void` — a lifecycle act with a reason, shaped like `/close`, `/lock` and
+  `/reopen`, not a resource deletion a client could reach for elsewhere
 - Status codes: `200` ok, `201` created, `400` malformed, `401` unauthenticated,
   `403` unauthorised, `404` missing, `409` business-rule conflict, `422` validation,
   `413` payload too large
@@ -2180,6 +2236,20 @@ test suite would give false confidence about exactly the rules that matter most.
 
 *Immutability*
 - Any write to a `locked` shift → 409
+
+*Voiding an empty shift (§6.8, Phase 27)*
+- An admin voids an empty open shift: the row is gone, and exactly one `status_change` audit
+  row carries its date, sequence, attendant, times and the reason
+- A manager or an attendant → 403; a missing or blank reason → 422
+- A closed shift → 409 `SHIFT_NOT_OPEN`; a locked one → 409 `SHIFT_LOCKED`
+- A shift with a reading, a collection, an expense or a bank repayment on it → 409
+  `SHIFT_NOT_EMPTY` naming the table, and **nothing is deleted and nothing is audited**
+- **A table added later is covered without touching the route** — a probe table with a foreign
+  key to `shifts`, created inside the test, blocks the void
+- No foreign key to `shifts` is `ON DELETE CASCADE`
+- A row that lands between the check and the delete is refused by the foreign key, with the
+  same 409
+- After voiding the tip, an earlier date opens as sequence 1 — the 2 October case
 
 *Audit trail (§5.3, Phase 11)*
 - Every admin write to reference data records exactly one `audit_logs` row — asserted per
@@ -2688,6 +2758,27 @@ ahead — no empty modules for later phases.
     same dates.
 
     See `docs/phase-26-plan.md`.
+27. **Voiding an empty shift** — no migration, no table, one route, one button, and §3 rule 6's
+    one exception. Written after the outlet hit it on real data: on 5 October a manager opened
+    that day's shift before 2 October had been entered, and the rules left no way back. §6.8
+    tells it in full; the short version is that 2 October could not be opened
+    (`SHIFT_ALREADY_OPEN`, then `SHIFT_OUT_OF_SEQUENCE`) and 5 October could not be closed
+    (`MISSING_NOZZLE_READINGS`), and every one of those refusals was correct.
+
+    **(a) `PATCH /shifts/{id}/void`** — admin only, open shifts only, reason mandatory. It
+    deletes the row and writes a `status_change` audit row in the same transaction.
+
+    **(b) "Empty" is asked of `pg_constraint`, not written down.** Every table with a foreign
+    key to `shifts` is checked for a row, so the table a later phase adds is covered the day its
+    migration lands. Every such key is `NO ACTION`, so a race loses at the database.
+
+    **(c) A "Void shift" button for admins** on the shift screen and on the Cash tab's open-shift
+    card, behind a sheet that takes the reason — the reopen shape.
+
+    **(d) Used once in production, through the API,** on the 5 October shift. Nothing was edited
+    by hand, which is the reason the route was built rather than the row deleted.
+
+    See `docs/phase-27-plan.md`.
 
 ---
 
@@ -3350,6 +3441,17 @@ future reader must be able to tell the difference.
     its newest days and says the rest exist. The fix when
     it bites is a narrower window, which the date picker already offers. §9, §13.31, §14
 
+45. **A voided shift leaves only its audit row.** Phase 27. `GET /shifts/{id}` for a voided id
+    is a 404, not a 410, because nothing but `audit_logs` remembers that the id existed — and
+    an admin can read that by record id (§5.3): the business date, sequence, attendant, times,
+    who voided it and why. That is the whole record, and it is enough, because the shift held
+    nothing.
+
+    Voiding an open shift that is not the last on its business date — reachable only by
+    reopening an empty mid-chain shift — leaves a gap in that date's sequence numbers, since
+    `next_sequence` is the maximum plus one. A gap is a label, not money: no chain reads through
+    a shift that recorded no reading. §4.7, §6.8
+
 ---
 
 ## 14. Guardrails for Claude Code
@@ -3737,6 +3839,20 @@ to occur on this specific project.
   figure this document opens by warning about (§3 rule 1, §6.6)
 - **Show "owed before: ₹0" for a customer whose opening balance was never entered.** The sum
   is genuinely `0.00`; the fact is "unknown". Same rule as the Credit hub (§6.8, §14 above)
+- **List a shift's child tables by hand.** Phase 27. Whether a shift holds anything is asked of
+  `pg_constraint`. A list in code is right until the next phase adds a table, and from then on
+  a void would try to delete a shift a new row still points at. The `NO ACTION` foreign key
+  would refuse it — do not let the second lock excuse removing the first (§6.8)
+- **Make a foreign key to `shifts` `ON DELETE CASCADE`.** Every one is `NO ACTION`, which is
+  what turns a race between a saved reading and a void into a refusal rather than a deleted
+  reading. A cascade would let one click delete a day's money (§6.8)
+- **Void a shift by marking it.** A `void` status would have to be filtered out of every reader
+  of `shifts`, and the one that forgets misprices a day — the kept row holds sequence 1, so the
+  real day opens as sequence 2 with no template and the wrong `started_at` (§6.3, §6.8). The
+  empty row is deleted; its audit row is the record (§3 rule 6)
+- **Fix a lifecycle mistake by editing the production database.** If the rules leave no way
+  out, a route is missing; Phase 27 is the precedent. A hand edit writes no audit row and skips
+  every check the route would make (§5.3, §6.8)
 - "Improve" the schema mid-implementation without flagging it first
 
 **Do:**
