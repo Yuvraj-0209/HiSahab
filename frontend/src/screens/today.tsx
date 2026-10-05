@@ -22,6 +22,13 @@
  * `/shifts/current` answers only for an *open* shift, so the instant a shift closes it would
  * vanish from Today and strand an admin with nothing to lock. A close therefore moves to
  * `#/shifts/{id}`, which reads the shift by id in any status.
+ *
+ * ## Voiding goes the other way (Phase 27)
+ *
+ * An admin may void an open shift that holds nothing (§6.8). The server deletes it, so there is
+ * no `#/shifts/{id}` left to follow: a void lands on `#/today`, and the deleted shift's cached
+ * reads are dropped rather than refetched into 404s. That happens once the sheet has *left*:
+ * done sooner, it replaces the very screen the sheet belongs to and cuts it off mid-exit.
  */
 
 import { type ComponentType, type ReactNode, useRef, useState } from "react";
@@ -140,6 +147,11 @@ function ShiftHeader({ shift }: { shift: Shift }) {
   const refresh = useRefreshApi();
   const [busy, setBusy] = useState<"close" | "lock" | null>(null);
   const [reopening, setReopening] = useState(false);
+  const [voiding, setVoiding] = useState(false);
+  // Set by a successful void. The shift no longer exists, so every action on it is dead -- and a
+  // second press during the sheet's exit would turn the sheet round instead of letting it leave.
+  const [voided, setVoided] = useState(false);
+  const forgetShift = useForgetShift();
 
   async function transition(action: "close" | "lock") {
     // No client-side pre-check of collections against sales (§6.8, §14). The server decides.
@@ -159,6 +171,8 @@ function ShiftHeader({ shift }: { shift: Shift }) {
   }
 
   const canClose = shift.status === "open" && satisfies(me.role, "manager");
+  // Phase 27. Offered on every open shift to an admin; whether it is empty is the server's call.
+  const canVoid = shift.status === "open" && satisfies(me.role, "admin");
   const canLockOrReopen = shift.status === "closed" && satisfies(me.role, "admin");
   const isOwnAttendantShift = !satisfies(me.role, "manager") && shift.status === "open";
 
@@ -204,8 +218,13 @@ function ShiftHeader({ shift }: { shift: Shift }) {
                 Enter this shift
               </Button>
             ) : null}
+            {canVoid ? (
+              <Button className={act} disabled={busy !== null || voided} onClick={() => setVoiding(true)}>
+                Void shift
+              </Button>
+            ) : null}
             {canClose ? (
-              <Button variant="primary" className={act} disabled={busy !== null} onClick={() => void transition("close")}>
+              <Button variant="primary" className={act} disabled={busy !== null || voided} onClick={() => void transition("close")}>
                 {busy === "close" ? "Closing…" : "Close shift"}
               </Button>
             ) : null}
@@ -227,8 +246,83 @@ function ShiftHeader({ shift }: { shift: Shift }) {
       <Sheet open={reopening} onClose={() => setReopening(false)} title="Reopen shift" subtitle={shiftSubtitle(shift)}>
         <ReopenForm shift={shift} onDone={() => setReopening(false)} />
       </Sheet>
+      <Sheet
+        open={voiding}
+        onClose={() => setVoiding(false)}
+        title="Void shift"
+        subtitle={shiftSubtitle(shift)}
+        onExited={() => {
+          if (!voided) return;
+          // The shift is gone, so #/shifts/{id} has nothing left to show.
+          navigate("/today", { replace: true });
+          void forgetShift(shift.id);
+        }}
+      >
+        <VoidShiftForm
+          shift={shift}
+          onVoided={() => {
+            setVoided(true);
+            setVoiding(false);
+          }}
+        />
+      </Sheet>
     </Card>
   );
+}
+
+/** §6.8, Phase 27: an admin voids an open shift that holds nothing. The server deletes it and
+ * keeps the whole shift, with this reason, in the audit trail -- so, like reopening, the reason
+ * is the point and this is a sheet with a sentence in it. Whether the shift is empty is the
+ * server's answer, not this form's (§8): its 409 names the tables that hold something. Used on
+ * Today and on the Cash tab's open-shift card.
+ *
+ * It reports success and leaves the refresh to its caller, because *when* to refresh differs:
+ * the Cash tab's sheet sits at screen level and can refresh at once, while Today's belongs to the
+ * shift screen the refresh replaces, and must wait for the sheet to leave. */
+export function VoidShiftForm({ shift, onVoided }: { shift: Shift; onVoided: () => void }) {
+  const form = useForm({ reason: "" });
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    form.clearErrors();
+    setBusy(true);
+    try {
+      const removed = await api.patch<Schemas["VoidedShiftResponse"]>(`/shifts/${shift.id}/void`, { reason: form.values.reason });
+      commitTick();
+      notify.success(`Shift ${removed.sequence} on ${businessDate(removed.business_date)} voided.`);
+      onVoided();
+    } catch (error) {
+      reportFailure(error, form);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-[0.875rem] text-ink-muted">
+        Voiding removes this shift entirely. It is possible only while nothing has been recorded on it: no readings, cash, expenses or udhaar. The
+        shift and your reason stay in the audit trail against your name.
+      </p>
+      <TextField form={form} name="reason" label="Why is this being voided?" hint="3 to 500 characters." required />
+      <Button variant="danger" block disabled={busy} onClick={() => void submit()}>
+        {busy ? "Voiding…" : "Void shift"}
+      </Button>
+    </div>
+  );
+}
+
+/** After a void: every read under `/shifts/{id}` describes a row that no longer exists, so it is
+ * dropped rather than refetched into a screenful of 404s. Everything else refreshes as it does
+ * after any write. */
+export function useForgetShift(): (shiftId: string) => Promise<void> {
+  const queryClient = useQueryClient();
+  const refresh = useRefreshApi();
+  return async (shiftId) => {
+    const gone = `/shifts/${shiftId}`;
+    queryClient.removeQueries({ predicate: ({ queryKey }) => typeof queryKey[1] === "string" && queryKey[1].startsWith(gone) });
+    await refresh();
+  };
 }
 
 /** §6.8: reopening takes a MANDATORY reason and is audit-logged. The reason is the point, so it

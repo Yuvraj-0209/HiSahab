@@ -54,12 +54,16 @@ export interface SheetProps {
   children: ReactNode;
   /** Usually the submit button. Sits below the scrolling body, always reachable. */
   footer?: ReactNode;
+  /** Called once the sheet has finished leaving (Phase 27). For the parent whose own screen is
+   * about to be replaced -- a voided shift's -- and would otherwise take the sheet with it
+   * mid-exit: make the change here, after the sheet has gone, rather than before. */
+  onExited?: (() => void) | undefined;
 }
 
 /** Mounts while open, and stays mounted for its exit so the sheet can leave along the path it
  * came in by. The content seen during the exit is the last content shown while open, so a
  * parent may clear its own state the moment it asks to close. */
-export function Sheet({ open, onClose, title, subtitle, children, footer }: SheetProps) {
+export function Sheet({ open, onClose, title, subtitle, children, footer, onExited }: SheetProps) {
   const [mounted, setMounted] = useState(open);
   const last = useRef({ title, subtitle, children, footer });
   if (open) last.current = { title, subtitle, children, footer };
@@ -76,7 +80,10 @@ export function Sheet({ open, onClose, title, subtitle, children, footer }: Shee
     <SheetFrame
       open={open}
       onClose={onClose}
-      onExited={() => setMounted(false)}
+      onExited={() => {
+        setMounted(false);
+        onExited?.();
+      }}
       title={last.current.title}
       subtitle={last.current.subtitle}
       footer={last.current.footer}

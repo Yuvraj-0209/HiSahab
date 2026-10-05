@@ -201,6 +201,81 @@ test("today: no open shift", async ({ page }) => {
   expect(problems.filter((p) => !p.includes("404"))).toEqual([]);
 });
 
+/* --- voiding an empty shift (Phase 27, §6.8) --------------------------------------------- */
+
+/** Today's or the Cash tab's reads, with the shift disappearing once the void lands -- so the
+ * screen is checked against what the server says afterwards, not against the button's hopes. */
+function voidableResponses(base: Record<string, unknown>) {
+  let voided = false;
+  const open = base["GET /shifts/current"];
+  return {
+    ...base,
+    "GET /shifts": { items: [], next_cursor: null },
+    "GET /shifts/current": () => (voided ? new Failure(404, "NO_OPEN_SHIFT") : open),
+    [`PATCH /shifts/${SHIFT_ID}/void`]: () => {
+      voided = true;
+      return { id: SHIFT_ID, business_date: "2026-10-02", sequence: 1 };
+    },
+  };
+}
+
+const VOID_REASON = "Opened by mistake before the earlier day was entered";
+
+test("today: an admin voids an open shift with a reason, and Today then has no shift", async ({ page }) => {
+  const problems = await watch(page);
+  const writes = await signedIn(page, { role: "admin", responses: voidableResponses(todayResponses("open")) });
+  await page.goto("/#/today");
+
+  await page.getByRole("button", { name: "Void shift" }).click();
+  const sheet = page.getByRole("dialog", { name: "Void shift" });
+  await expect(sheet.getByText(/only while nothing has been recorded/)).toBeVisible();
+  await sheet.getByLabel("Why is this being voided?").fill(VOID_REASON);
+  await sheet.getByRole("button", { name: "Void shift" }).click();
+
+  await expect(sheet).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Open a shift" })).toBeVisible();
+  expect(writes).toEqual([expect.objectContaining({ method: "PATCH", path: `/shifts/${SHIFT_ID}/void`, body: { reason: VOID_REASON } })]);
+  // The 404 is /shifts/current answering NO_OPEN_SHIFT after the void: the state under test.
+  expect(problems.filter((p) => !p.includes("404"))).toEqual([]);
+});
+
+test("today: void is offered to an admin on an open shift only, never to a manager (§8)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: todayResponses("open") });
+  await page.goto("/#/today");
+  await expect(page.getByRole("button", { name: "Close shift" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Void shift" })).toHaveCount(0);
+});
+
+test("today: a closed shift offers reopen and lock to an admin, not void", async ({ page }) => {
+  await signedIn(page, { role: "admin", responses: todayResponses("closed") });
+  await page.goto(`/#/shifts/${SHIFT_ID}`);
+  await expect(page.getByRole("button", { name: "Reopen shift" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Void shift" })).toHaveCount(0);
+});
+
+test("cash: an admin voids the open shift from the Cash tab", async ({ page }) => {
+  const problems = await watch(page);
+  const writes = await signedIn(page, { role: "admin", responses: voidableResponses(cashResponses()) });
+  await page.goto("/#/cash");
+
+  await page.getByRole("button", { name: "Void shift" }).click();
+  const sheet = page.getByRole("dialog", { name: "Void shift" });
+  await sheet.getByLabel("Why is this being voided?").fill(VOID_REASON);
+  await sheet.getByRole("button", { name: "Void shift" }).click();
+
+  await expect(sheet).toHaveCount(0);
+  await expect(page.getByText("No shift is currently open.")).toBeVisible();
+  expect(writes).toEqual([expect.objectContaining({ method: "PATCH", path: `/shifts/${SHIFT_ID}/void`, body: { reason: VOID_REASON } })]);
+  expect(problems.filter((p) => !p.includes("404"))).toEqual([]);
+});
+
+test("cash: a manager sees the open shift but is not offered void (§8)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: cashResponses() });
+  await page.goto("/#/cash");
+  await expect(page.getByRole("button", { name: "Cash position" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Void shift" })).toHaveCount(0);
+});
+
 test("entry: the hub lists the register's lines", async ({ page }) => {
   const problems = await watch(page);
   await signedIn(page, { role: "attendant", responses: todayResponses("open") });
