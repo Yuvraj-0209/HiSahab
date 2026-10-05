@@ -586,13 +586,6 @@ export const summaryReport: Schemas["app__api__v1__reports__SummaryResponse"] = 
     },
   ],
   quantity_by_unit: { litre: "28135.200", kilogram: "1550.250" },
-  payment_mix: [
-    { code: "card", amount: "1404220.00", share_pct: "48.18%" },
-    { code: "upi", amount: "1003610.15", share_pct: "34.44%" },
-    { code: "cash", amount: "306086.25", share_pct: "10.50%" },
-    { code: "credit", amount: "200390.00", share_pct: "6.88%" },
-    { code: "wallet", amount: "0.00", share_pct: "0.00%" },
-  ],
   card_total: "1404220.00",
   upi_total: "1003610.15",
   wallet_total: "0.00",
@@ -601,13 +594,37 @@ export const summaryReport: Schemas["app__api__v1__reports__SummaryResponse"] = 
   cash_credit_repayments: "42000.00",
   card_upi_credit_repayments: "15000.00",
   expenses_total: "88420.00",
+  // Largest first, with `bar_pct` scaled to the largest (Phase 26).
   expenses_by_category: [
-    { code: "SALARY", amount: "60000.00", share_pct: "67.86%" },
-    { code: "ELECTRICITY", amount: "21870.00", share_pct: "24.73%" },
-    { code: "MAINTENANCE", amount: "6550.00", share_pct: "7.41%" },
+    { code: "SALARY", display_name: "Salaries", amount: "60000.00", share_pct: "67.86%", bar_pct: "100.00%" },
+    { code: "ELECTRICITY", display_name: "Electricity", amount: "21870.00", share_pct: "24.73%", bar_pct: "36.45%" },
+    { code: "MAINTENANCE", display_name: "Maintenance", amount: "6550.00", share_pct: "7.41%", bar_pct: "10.92%" },
   ],
   bank_deposits_total: "250000.00",
   shortfalls_booked: "500.00",
+  // 4,12,850 + 2,00,390 − 1,48,720.50 = 4,64,519.50, over an extent of 6,13,240.
+  credit: {
+    owed_at_start: "412850.00",
+    given: "200390.00",
+    collected: "148720.50",
+    owed_at_end: "464519.50",
+    owes_today: "471019.50",
+    customers_owing: 14,
+    bridge: [
+      { key: "start", amount: "412850.00", offset_pct: "0.00%", width_pct: "67.32%" },
+      { key: "given", amount: "200390.00", offset_pct: "67.32%", width_pct: "32.68%" },
+      { key: "collected", amount: "148720.50", offset_pct: "75.75%", width_pct: "24.25%" },
+      { key: "end", amount: "464519.50", offset_pct: "0.00%", width_pct: "75.75%" },
+    ],
+    top_owing: [
+      { customer_id: CUSTOMER_ID, name: "Ramesh Transport", owed_at_end: "96400.00" },
+      { customer_id: "c0ffee00-0000-4000-8000-000000000202", name: "Gupta Tractors", owed_at_end: "71250.00" },
+      { customer_id: "c0ffee00-0000-4000-8000-000000000203", name: "Verma Logistics", owed_at_end: "58900.50" },
+      { customer_id: "c0ffee00-0000-4000-8000-000000000204", name: "Singh Roadways", owed_at_end: "44120.00" },
+      { customer_id: "c0ffee00-0000-4000-8000-000000000205", name: "Bansal Agro", owed_at_end: "31775.00" },
+    ],
+    basis: "The billing statement's totals for the same dates, summed over every customer.",
+  },
   trend: [
     trendDay("2026-09-22", "281220.10", "88.20%", "snapshot"),
     trendDay("2026-09-23", "297410.00", "93.27%", "snapshot"),
@@ -621,6 +638,95 @@ export const summaryReport: Schemas["app__api__v1__reports__SummaryResponse"] = 
     trendDay(PREVIOUS_DATE, "289831.00", "90.89%"),
     trendDay(BUSINESS_DATE, "302827.45", "94.97%"),
   ],
+};
+
+/* The list behind each expense bar (Phase 26). Each total equals its bar's amount above, as the
+ * server guarantees by feeding both from one query. Maintenance carries a reversal pair, which
+ * nets out of its day. */
+function drillItem(
+  id: string,
+  amount: string,
+  description: string,
+  extra: Partial<Schemas["ExpenseDrillRowResponse"]> = {},
+): Schemas["ExpenseDrillRowResponse"] {
+  return {
+    id: `e0e0e0e0-0000-4000-8000-${id.padStart(12, "0")}`,
+    shift_id: "5f5f5f5f-0000-4000-8000-000000000001",
+    mode: "cash",
+    amount,
+    description,
+    paid_to: null,
+    is_reversal: false,
+    is_reversed: false,
+    reversal_reason: null,
+    ...extra,
+  };
+}
+
+const drillWindow = { from: "2026-09-22", to: BUSINESS_DATE };
+
+export const expenseDrill: Record<string, Schemas["ExpenseDrillResponse"]> = {
+  SALARY: {
+    ...drillWindow,
+    code: "SALARY",
+    display_name: "Salaries",
+    total: "60000.00",
+    row_count: 3,
+    truncated: false,
+    days: [
+      {
+        business_date: PREVIOUS_DATE,
+        total: "60000.00",
+        items: [
+          drillItem("1", "20000.00", "September salary", { paid_to: "Ramesh", mode: "bank_transfer" }),
+          drillItem("2", "20000.00", "September salary", { paid_to: "Suresh", mode: "bank_transfer" }),
+          drillItem("3", "20000.00", "September salary", { paid_to: "Mohan", mode: "cash" }),
+        ],
+      },
+    ],
+  },
+  ELECTRICITY: {
+    ...drillWindow,
+    code: "ELECTRICITY",
+    display_name: "Electricity",
+    total: "21870.00",
+    row_count: 1,
+    truncated: false,
+    days: [
+      {
+        business_date: "2026-09-28",
+        total: "21870.00",
+        items: [drillItem("4", "21870.00", "PSPCL bill, September", { paid_to: "PSPCL", mode: "bank_transfer" })],
+      },
+    ],
+  },
+  MAINTENANCE: {
+    ...drillWindow,
+    code: "MAINTENANCE",
+    display_name: "Maintenance",
+    total: "6550.00",
+    row_count: 5,
+    truncated: false,
+    days: [
+      {
+        business_date: BUSINESS_DATE,
+        total: "3250.00",
+        items: [
+          drillItem("5", "2800.00", "Nozzle seal replaced", { paid_to: "Sharma Pumps" }),
+          drillItem("6", "450.00", "Hose clamp"),
+        ],
+      },
+      {
+        business_date: "2026-09-26",
+        total: "3300.00",
+        items: [
+          drillItem("7", "3300.00", "Canopy light fitting", { paid_to: "Jain Electricals", mode: "upi" }),
+          drillItem("8", "900.00", "Canopy light fitting", { is_reversed: true }),
+          drillItem("9", "-900.00", "Canopy light fitting", { is_reversal: true, reversal_reason: "Entered twice" }),
+        ],
+      },
+    ],
+  },
 };
 
 /* --- the Admin tab ------------------------------------------------------------------------ */

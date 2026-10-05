@@ -133,9 +133,13 @@ export function creditResponses(): Responses {
   };
 }
 
-/** The Summary tab reads one endpoint, by design (§14). */
+/** The Summary tab's figures come from one endpoint, by design (§14); the expense drill-down
+ * lists the rows behind one bar and adds nothing to them (Phase 26). */
 export function summaryResponses(): Responses {
-  return { "GET /reports/summary": fixture.summaryReport };
+  return {
+    "GET /reports/summary": fixture.summaryReport,
+    "GET /reports/summary/expenses": (url: URL) => fixture.expenseDrill[url.searchParams.get("category") ?? ""] ?? new Failure(404, "CATEGORY_NOT_FOUND"),
+  };
 }
 
 /** Everything the Admin tab reads. */

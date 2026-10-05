@@ -720,9 +720,63 @@ test("summary: a fuel with no commission withholds the combined margin, in words
 test("summary: every share is the server's string, assigned and never computed (§14)", async ({ page }) => {
   await signedIn(page, { role: "manager", responses: summaryResponses() });
   await page.goto("/#/summary");
-  const card = page.locator("[data-share]").first();
-  await expect(card).toHaveAttribute("style", /width: 48\.18%/);
+  // The largest category's bar spans the chart; the next is the server's 36.45%, not a division.
+  await expect(page.locator("[data-catbar]").first()).toHaveAttribute("style", /width: 100(\.00)?%/);
+  await expect(page.locator("[data-catbar]").nth(1)).toHaveAttribute("style", /width: 36\.45%/);
   await expect(page.locator("[data-slice]")).toHaveCount(3);
+  // The bridge's offsets and widths are assigned as sent: "collected" starts where it lands.
+  await expect(page.locator('[data-bridge="collected"]')).toHaveAttribute("style", /left: 75\.75%; width: 24\.25%/);
+});
+
+test("summary: the money-arrived card is gone, and quantity sits in the headline (Phase 26)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: summaryResponses() });
+  await page.goto("/#/summary");
+  await expect(page.getByText("Non-fuel sales")).toBeVisible();
+  await expect(page.getByText("Litres sold")).toBeVisible();
+  await expect(page.getByText("Kilograms sold")).toBeVisible();
+  await expect(page.getByText("How the money arrived")).toHaveCount(0);
+  await expect(page.getByText("Quantity sold")).toHaveCount(0);
+});
+
+test("summary: the largest category's rows are listed by date before anything is chosen (Phase 26)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: summaryResponses() });
+  await page.goto("/#/summary");
+  const bars = page.getByRole("radiogroup", { name: "Expense categories" });
+  await expect(bars.getByRole("radio", { name: /Salaries/ })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByText("3 entries · 67.86% of all expenses")).toBeVisible();
+  await expect(page.getByText("Ramesh", { exact: false }).first()).toBeVisible();
+});
+
+test("summary: choosing a category lists where its money went, reversals tagged (Phase 26)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: summaryResponses() });
+  await page.goto("/#/summary");
+  await page.getByRole("radio", { name: /Maintenance/ }).click();
+  await expect(page.getByRole("radio", { name: /Maintenance/ })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByText("Nozzle seal replaced")).toBeVisible();
+  await expect(page.getByText("Cancelled: Entered twice")).toBeVisible();
+  await expect(page.getByText("Reversed", { exact: true })).toBeVisible();
+  // Each day's subtotal is the server's string: ₹3,300.00 on the 26th, reversal pair netted.
+  await expect(page.getByRole("button", { name: /26 Sept|26 Sep/ })).toContainText("₹3,300.00");
+});
+
+test("summary: the arrow keys move the chosen category (Phase 26)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: summaryResponses() });
+  await page.goto("/#/summary");
+  await page.getByRole("radio", { name: /Salaries/ }).focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("radio", { name: /Electricity/ })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radio", { name: /Electricity/ })).toBeFocused();
+  await expect(page.getByText("PSPCL bill, September")).toBeVisible();
+});
+
+test("summary: udhaar is a bridge with who owes most, linking to the statement for the same dates (Phase 26)", async ({ page }) => {
+  await signedIn(page, { role: "manager", responses: { ...summaryResponses(), ...creditResponses() } });
+  await page.goto("/#/summary");
+  await expect(page.getByText("Owed at start")).toBeVisible();
+  await expect(page.getByText("₹4,64,519.50")).toBeVisible();
+  await expect(page.getByText("Ramesh Transport")).toBeVisible();
+  await page.getByRole("button", { name: "Statement for these dates" }).click();
+  await expect(page).toHaveURL(/#\/credit\/statement\?from=2026-09-22&to=2026-10-02$/);
 });
 
 test("summary: 'Last month' asks for last month's own dates (the Phase 19 preset bug)", async ({ page }) => {

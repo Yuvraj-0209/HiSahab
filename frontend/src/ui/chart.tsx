@@ -289,7 +289,18 @@ export interface Slice {
  * tweening the dash from zero; reduced motion shows them whole. The SVG is aria-hidden because
  * every slice is also a labelled row in the legend beside it.
  */
-export function Donut({ slices, children }: { slices: Slice[]; children?: ReactNode }) {
+export function Donut({
+  slices,
+  children,
+  active = null,
+  size = "md",
+}: {
+  slices: Slice[];
+  children?: ReactNode;
+  /** The slice being pointed at, if any (Phase 26). The others recede; nothing is resized. */
+  active?: string | null;
+  size?: "md" | "lg";
+}) {
   const scope = useRef<HTMLDivElement>(null);
   const drawable = slices
     .map((slice) => ({ ...slice, pct: percentForGeometry(slice.share_pct) }))
@@ -319,29 +330,237 @@ export function Donut({ slices, children }: { slices: Slice[]; children?: ReactN
   let cursor = 0;
   return (
     <div ref={scope} className="relative grid place-items-center py-2">
-      <svg viewBox="0 0 168 168" className="size-52 -rotate-90" aria-hidden="true" focusable="false">
+      <svg
+        viewBox="0 0 168 168"
+        className={`-rotate-90 ${size === "lg" ? "size-60 sm:size-72" : "size-52"}`}
+        aria-hidden="true"
+        focusable="false"
+      >
         <circle cx={84} cy={84} r={64} fill="none" strokeWidth={24} className="stroke-surface-sunken" />
         {drawable.map((slice) => {
           const start = cursor;
           cursor += slice.pct;
+          // The receding is opacity on a wrapping group, so GSAP's dash tween and this CSS
+          // transition never write to the same element (§14's one-engine rule).
+          const receded = active !== null && active !== slice.key;
           return (
-            <circle
-              key={slice.key}
-              data-slice
-              cx={84}
-              cy={84}
-              r={64}
-              fill="none"
-              pathLength={100}
-              strokeWidth={24}
-              strokeDasharray={`${Math.max(slice.pct - gap, 0.2)} 100`}
-              strokeDashoffset={-start}
-              className={CAT_STROKE[slice.colour % CAT_STROKE.length]}
-            />
+            <g key={slice.key} className={`transition-opacity duration-200 ${receded ? "opacity-25" : "opacity-100"}`}>
+              <circle
+                data-slice
+                cx={84}
+                cy={84}
+                r={64}
+                fill="none"
+                pathLength={100}
+                strokeWidth={24}
+                strokeDasharray={`${Math.max(slice.pct - gap, 0.2)} 100`}
+                strokeDashoffset={-start}
+                className={CAT_STROKE[slice.colour % CAT_STROKE.length]}
+              />
+            </g>
           );
         })}
       </svg>
-      <div className="pointer-events-none absolute grid max-w-32 place-items-center text-center">{children}</div>
+      <div className={`pointer-events-none absolute grid place-items-center text-center ${size === "lg" ? "max-w-40" : "max-w-32"}`}>{children}</div>
+    </div>
+  );
+}
+
+/* --- selectable category bars (Phase 26) -------------------------------------------------- */
+
+export interface CategoryBar {
+  key: string;
+  label: string;
+  /** Pre-formatted by the caller, from the server's string. */
+  value: string;
+  /** This category's part of the whole, the label beside the bar. */
+  share_pct: string | null;
+  /** The bar's LENGTH, relative to the largest category -- the server's string, assigned. */
+  bar_pct: string;
+}
+
+/**
+ * Horizontal bars a reader can choose between: the list behind the chosen one is shown beside
+ * it. One series, so one hue (the dataviz rule: a single series needs no legend and no
+ * categorical palette); the chosen bar is the accent and the rest recede.
+ *
+ * A radio group, because exactly one category is chosen at a time: arrow keys move the choice,
+ * Tab leaves the group. `onPoint` fires as a pointer arrives, so the caller can fetch ahead and
+ * choose after a short intent delay; `onChoose` is a deliberate pick.
+ */
+export function CategoryBars({
+  rows,
+  selected,
+  onChoose,
+  onPoint,
+  onUnpoint,
+  label,
+}: {
+  rows: CategoryBar[];
+  selected: string | null;
+  onChoose: (key: string) => void;
+  onPoint?: (key: string) => void;
+  onUnpoint?: () => void;
+  label: string;
+}) {
+  const scope = useRef<HTMLDivElement>(null);
+  useMotion(
+    (play) => {
+      if (!scope.current) return;
+      play(() => {
+        gsap.from("[data-catbar]", {
+          scaleX: 0,
+          transformOrigin: "0% 50%",
+          duration: DURATION.large,
+          ease: EASE.enter.gsap,
+          stagger: 0.05,
+          scrollTrigger: { trigger: scope.current, start: ON_VIEW, once: true },
+        });
+      });
+    },
+    { scope },
+  );
+
+  function step(from: number, direction: 1 | -1) {
+    const next = (from + direction + rows.length) % rows.length;
+    const row = rows[next];
+    if (!row) return;
+    onChoose(row.key);
+    scope.current?.querySelectorAll<HTMLButtonElement>("[role=radio]")[next]?.focus();
+  }
+
+  return (
+    <div ref={scope} role="radiogroup" aria-label={label} className="flex flex-col gap-1" onPointerLeave={onUnpoint}>
+      {rows.map((row, index) => {
+        const isSelected = row.key === selected;
+        return (
+          <button
+            key={row.key}
+            type="button"
+            role="radio"
+            aria-checked={isSelected}
+            tabIndex={isSelected || (selected === null && index === 0) ? 0 : -1}
+            onClick={() => onChoose(row.key)}
+            onPointerEnter={onPoint ? () => onPoint(row.key) : undefined}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+                event.preventDefault();
+                step(index, 1);
+              } else if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+                event.preventDefault();
+                step(index, -1);
+              }
+            }}
+            className={`group rounded-[var(--radius-control)] px-3 py-2.5 text-left transition-colors duration-200 ${
+              isSelected ? "bg-accent-tint" : "hover:bg-surface-sunken"
+            }`}
+          >
+            <span className="flex items-baseline justify-between gap-3">
+              <span className={`truncate text-[0.9375rem] ${isSelected ? "font-semibold text-ink" : "text-ink"}`}>{row.label}</span>
+              <span className="tabular shrink-0 text-[0.9375rem] font-medium text-ink">{row.value}</span>
+            </span>
+            <span className="mt-2 flex items-center gap-2.5">
+              <span className="h-2.5 grow overflow-hidden rounded-full bg-surface-sunken">
+                {/* The server's length, assigned; the first-view growth is a scaleX on top. */}
+                <span
+                  data-catbar
+                  className={`block h-full rounded-full transition-colors duration-200 ${isSelected ? "bg-accent" : "bg-accent/35 group-hover:bg-accent/55"}`}
+                  style={{ width: row.bar_pct }}
+                />
+              </span>
+              <span className={`tabular w-14 shrink-0 text-right text-[0.75rem] ${row.share_pct === null ? "t-absent" : "text-ink-muted"}`}>
+                {row.share_pct ?? "unknown"}
+              </span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* --- the udhaar bridge (Phase 26) --------------------------------------------------------- */
+
+export interface BridgeRow {
+  key: string;
+  /** What this step does, in words: the sign is a word's job here, not a colour's. */
+  label: string;
+  /** Pre-formatted by the caller, from the server's string. */
+  value: string;
+  offset_pct: string | null;
+  width_pct: string | null;
+  emphasis?: boolean;
+}
+
+const BRIDGE_TONE: Record<string, string> = {
+  start: "bg-cat-5",
+  given: "bg-cat-1",
+  collected: "bg-cat-2",
+  end: "bg-cat-5",
+};
+
+/**
+ * Owed at start, plus given, minus collected, equals owed at end: a waterfall a reader follows
+ * top to bottom. Where each bar starts and how long it is are the server's strings (§14): the
+ * client never subtracts one figure from another to place a bar.
+ *
+ * On first view the bars draw in order, as a walk: the balance, then what was added growing
+ * rightwards, then what came back growing LEFTWARDS from where the addition ended -- the motion
+ * says "taken away" -- then where it landed. When the server withholds the geometry (a negative
+ * balance has no honest bar), the rows still carry every figure and no track is drawn.
+ */
+export function Bridge({ rows }: { rows: BridgeRow[] }) {
+  const scope = useRef<HTMLDivElement>(null);
+  useMotion(
+    (play) => {
+      if (!scope.current) return;
+      play(() => {
+        const bars = gsap.utils.toArray<HTMLElement>("[data-bridge]");
+        const timeline = gsap.timeline({ scrollTrigger: { trigger: scope.current, start: ON_VIEW, once: true } });
+        bars.forEach((bar, index) => {
+          timeline.from(
+            bar,
+            {
+              scaleX: 0,
+              transformOrigin: bar.dataset.bridge === "collected" ? "100% 50%" : "0% 50%",
+              duration: DURATION.medium,
+              ease: EASE.enter.gsap,
+            },
+            index * 0.16,
+          );
+        });
+      });
+    },
+    { scope },
+  );
+
+  /* Every track is the full width of the card, beneath its own label and figure. That is what
+   * makes the bars comparable: one scale needs one track length, and a track squeezed between a
+   * label and a figure gets a different length on every row whose figure is wider. */
+  const drawn = rows.some((row) => row.width_pct !== null);
+  return (
+    <div ref={scope} className="flex flex-col">
+      {rows.map((row) => (
+        <div key={row.key} className={`py-2.5 ${row.emphasis ? "mt-1 border-t border-hairline-strong pt-3.5" : ""}`}>
+          <div className="flex items-baseline justify-between gap-3">
+            <span className={`text-[0.9375rem] ${row.emphasis ? "font-semibold text-ink" : "text-ink-muted"}`}>{row.label}</span>
+            <span className={`tabular text-right ${row.emphasis ? "text-[1.25rem] font-semibold tracking-[-0.02em] text-ink" : "text-[1.0625rem] text-ink"}`}>
+              {row.value}
+            </span>
+          </div>
+          {drawn ? (
+            <span className="relative mt-2 block h-2.5 overflow-hidden rounded-full bg-surface-sunken" aria-hidden="true">
+              {row.width_pct !== null && row.offset_pct !== null ? (
+                <span
+                  data-bridge={row.key}
+                  className={`absolute inset-y-0 rounded-full ${BRIDGE_TONE[row.key] ?? "bg-cat-5"}`}
+                  style={{ left: row.offset_pct, width: row.width_pct }}
+                />
+              ) : null}
+            </span>
+          ) : null}
+        </div>
+      ))}
     </div>
   );
 }

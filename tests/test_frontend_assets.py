@@ -125,19 +125,26 @@ def test_chart_geometry_is_assigned_from_the_server_never_derived() -> None:
     and the client assigns a string. Re-scaling a page of bars to its own tallest would be
     `value / max` in JavaScript and a lie besides -- every page's tallest bar would reach the
     top. So every inline `height` or `width` in the chart module must be one of those fields.
+
+    Phase 26 added three more of the same kind, each a percentage string computed in `Decimal`
+    by the server: `bar_pct` (a category bar's length against the largest), and the udhaar
+    bridge's `width_pct` and `offset_pct` -- where a bar *starts* is geometry too, so an inline
+    `left` is held to the same rule as a width.
     """
     chart = _SRC / "ui" / "chart.tsx"
     assert chart.exists(), "ui/chart.tsx moved -- update this test"
 
-    allowed = ("bar_height_pct", "share_pct")
+    allowed = ("bar_height_pct", "share_pct", "bar_pct", "width_pct", "offset_pct")
     assignments = [
         (number, line.strip())
         for number, line in _code_lines(chart)
-        if re.search(r"\b(height|width)\s*:", line)
+        if re.search(r"\b(height|width|left)\s*:", line)
     ]
     assert assignments, "no inline geometry found -- the scan is not looking at the chart"
     offenders = [f"chart.tsx:{number}: {line}" for number, line in assignments if not any(name in line for name in allowed)]
     assert offenders == [], f"chart geometry not assigned from a server percentage: {offenders}"
+    # A bar's start is the server's offset, never a figure subtracted from another here.
+    assert "left: row.offset_pct" in chart.read_text()
 
     # The donut's arcs are sized by the server's share too, never by a computed fraction.
     source = chart.read_text()
