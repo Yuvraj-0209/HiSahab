@@ -1620,6 +1620,13 @@ owes_today   = outstanding(c)                           ← the definition above
   from `billed` beside `paid_since` (§13.40).
 - **Computed server-side, including the column totals.** A statement is money arithmetic from
   top to bottom and §14 forbids any of it in the client.
+- **The Summary tab's udhaar figures are this statement's totals. Phase 26 amendment.** Its
+  bridge — owed at start, given, collected, owed at end — is `owed_before`, `udhaar_in`,
+  `repaid_in` and `billed` summed over every customer, from the same function. Before Phase 26
+  that card summed §6.4's `cash_credit_repayments` and `card_upi_credit_repayments`, which are
+  *drawer* terms: every `bank_transfer` repayment and every repayment with no shift was missing,
+  so "repaid" was understated and disagreed with this statement. A cash-engine term answers
+  "what reached the locker", never "what did customers pay".
 
 ### 6.7 Expense review flagging
 
@@ -1908,6 +1915,7 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | Read the rolling range report | ❌ | ✅ | ✅ |
 | Read the variance alerts (§13.23) | ❌ | ✅ | ✅ |
 | Read the range summary dashboard (§13.34) | ❌ | ✅ | ✅ |
+| Read the summary's expense drill-down (§13.44) | ❌ | ✅ | ✅ |
 | Upload a bank statement; classify lines; confirm repayments (§5.3a) | ❌ | ✅ | ✅ |
 | Manage bank accounts | ❌ | ❌ | ✅ |
 | List expense categories (to fill a dropdown) | ✅ | ✅ | ✅ |
@@ -2659,6 +2667,27 @@ ahead — no empty modules for later phases.
     layers, not a video. The owner chose that over filming or generating footage.
 
     See `docs/phase-25-plan.md`.
+26. **The Summary tab, rebuilt for reading** — no migration, no table, no business rule, one
+    new read endpoint. The owner used Phase 19's dashboard and asked for it to be easier to
+    read and to answer the next question by itself.
+
+    **(a) Fewer boxes, each answering one question.** "How the money arrived" is removed (the
+    split still lives on each day's screen). Quantity sold, a card half empty, joins the
+    headline beside non-fuel sales, litres and kilograms still never added (§4.5). Fuel becomes
+    a wide card: a larger donut, with each fuel's figures beside it in larger type.
+
+    **(b) An expense category opens onto its rows.** Hover or tap a category and the money is
+    listed by date, like a customer's ledger. `GET /reports/summary/expenses` serves it, manager
+    floor, rows grouped by business date with subtotals computed on the server, capped
+    (§13.44). One row query feeds both the bar and the list, so they cannot disagree.
+
+    **(c) Udhaar is a bridge, and it was wrong.** The card summed two §6.4 drawer terms, so a
+    repayment by bank transfer never appeared. It now reads the billing statement's own
+    aggregation (§6.6): owed at start, plus given, minus collected, equals owed at end, with
+    the five customers owing most at the window's end and a link to the statement for the
+    same dates.
+
+    See `docs/phase-26-plan.md`.
 
 ---
 
@@ -3305,6 +3334,19 @@ future reader must be able to tell the difference.
     own back and forward buttons get that plain fade too, because the router starts a view
     transition only for navigations it initiates. A difference in feel, never in what a screen
     shows.
+
+44. **The Summary's expense drill-down is capped at 500 rows, not cursor-paginated.** Phase 26,
+    and §13.31's exception again for §13.31's reason. The drill-down groups a category's rows by
+    business date with a **server-computed subtotal per day** and a grand total over the whole
+    window, so the client adds nothing (§14). A cursor cannot carry that honestly: page two's
+    first day may be split across two pages, and its subtotal would then describe rows the
+    client has not seen.
+
+    So the totals are computed over **every** row and the list is truncated, with `truncated`
+    saying so. The grand total always equals the category's bar, because one row query feeds
+    both (`expenses.expense_rows_range`). A category with more than 500 rows in one window —
+    a daily tea run across a year — shows its newest 500 and says the rest exist. The fix when
+    it bites is a narrower window, which the date picker already offers. §9, §13.31, §14
 
 ---
 
