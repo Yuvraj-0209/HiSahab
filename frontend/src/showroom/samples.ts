@@ -12,7 +12,34 @@
  *                28,010.00 declared as 27,510.00 is 500.00 short
  *   the ledger   12,400.00 + 3,200.00 = 15,600.00; − 10,000.00 = 5,600.00
  *   the bank     yesterday's card 38,210.00 + UPI 51,940.00 = 90,150.00 from Paytm
+ *   the day      (Phase 28) the phone's sample day IS the gap's day: metered 1,24,560.00, card
+ *                38,210.00, UPI 51,940.00 and cash counted 27,510.00 are the gap's own figures,
+ *                and the two udhaar slips, 4,150.00 + 2,250.00, are its 6,400.00. It is also
+ *                the ninth bar of the sales chart below.
+ *
+ * Key names are deliberately unique across the file: the pytest that checks the arithmetic finds
+ * each figure by its key (`udhaar:`, `sales:`, `balance:`), so a second key of the same name
+ * would be read in place of the first.
  */
+
+/** The day the phone shows, step by step (Phase 28 D4). Shift times are labels, never instants. */
+export const DAY = {
+  date: "Wed 9 Sep 2026",
+  shift: "Shift 1",
+  opened: "06:00 am onwards",
+  closed: "06:00 am to 10:00 pm",
+  metered: "₹1,24,560.00",
+  cardTaken: "₹38,210.00",
+  upiTaken: "₹51,940.00",
+  cashCounted: "₹27,510.00",
+  udhaarIssued: "₹6,400.00",
+};
+
+/** The day's two udhaar slips, each photographed before it could be saved (§6.6). */
+export const SLIPS = [
+  { customer: "Singh Roadways", vehicle: "PB-08 CX 2041", fuel: "Diesel", slip: "₹4,150.00" },
+  { customer: "Bansal Agro", vehicle: "PB-10 HK 7712", fuel: "Diesel", slip: "₹2,250.00" },
+];
 
 export const METER = {
   nozzle: "DU-1 / N-2",

@@ -387,6 +387,19 @@ def test_the_front_doors_sample_figures_agree_with_each_other() -> None:
     # Paytm settles yesterday's card + UPI as one credit.
     assert terms[1] + terms[2] == _rupees(re.search(r'PAYTM PAYMENTS SERVICES", amount: "(₹[\d,]+\.\d\d)"', source).group(1))
 
+    # Phase 28: the phone walks through one sample day, and it is the gap's day. Its screens show
+    # the gap's terms one at a time, so each must be the same figure the equation uses -- and the
+    # udhaar slips photographed that day must add up to the udhaar the equation subtracts.
+    assert money("metered") == terms[0]
+    assert money("cardTaken") == terms[1]
+    assert money("upiTaken") == terms[2]
+    assert money("udhaarIssued") == terms[3]
+    assert money("cashCounted") == money("declared")
+    slips = [_rupees(v) for v in re.findall(r'slip: "(₹[\d,]+\.\d\d)"', source)]
+    assert len(slips) >= 2 and sum(slips) == terms[3]
+    # It is also a bar on the month's chart: the day the sales chart shows as 9 September.
+    assert _rupees(re.search(r'\["2026-09-09", "(₹[\d,]+\.\d\d)"', source).group(1)) == terms[0]
+
     # Each mix sums to the month's sales, and each share is its rupees over the total to 0.1%.
     month = money("sales")
     for block in ("FUEL_MIX", "PAYMENT_MIX"):
@@ -397,3 +410,19 @@ def test_the_front_doors_sample_figures_agree_with_each_other() -> None:
         assert sum(value for _, value in pairs) == month, block
         for share, value in pairs:
             assert (value / month * 100).quantize(Decimal("0.1")) == share, (block, share, value)
+
+
+def test_the_front_door_never_links_to_a_hash() -> None:
+    """§14 (Phase 28): the app is hash-routed (§2), so on the front door `href="#how"` is not a
+    place on the page -- it is a route, and the router takes the visitor away from the story to
+    find it. The front door moves around its own page with buttons and `scrollIntoView`
+    (showroom/doors.ts). Every module under `showroom/`, and the sign-in page that hosts it."""
+    front_door = [*sorted((_SRC / "showroom").rglob("*.tsx")), _SRC / "screens" / "Login.tsx"]
+    assert len(front_door) > 3
+    offenders = [
+        f"{_name(path)}:{number}"
+        for path in front_door
+        for number, line in _code_lines(path)
+        if re.search(r"""href=\{?["'`]#""", line)
+    ]
+    assert offenders == [], f"use a button and scrollIntoView, not a hash anchor: {offenders}"

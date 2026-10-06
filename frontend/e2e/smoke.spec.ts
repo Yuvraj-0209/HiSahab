@@ -70,7 +70,7 @@ test("login renders with no console errors", async ({ page }) => {
     route.fulfill({ json: { supabase_url: "https://e2e-test.supabase.co", supabase_anon_key: "e2e-anon" } }),
   );
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await expect(page.locator("form").getByRole("button", { name: "Sign in" })).toBeVisible();
   await expectAccessible(page);
   expect(problems).toEqual([]);
 });
@@ -82,12 +82,12 @@ async function frontDoor(page: Page) {
     route.fulfill({ json: { supabase_url: "https://e2e-test.supabase.co", supabase_anon_key: "e2e-anon" } }),
   );
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await expect(page.locator("form").getByRole("button", { name: "Sign in" })).toBeVisible();
 }
 
 test("front door: the sign-in button is inside the first screen of a phone (§14)", async ({ page }) => {
   await frontDoor(page);
-  const box = await page.getByRole("button", { name: "Sign in" }).boundingBox();
+  const box = await page.locator("form").getByRole("button", { name: "Sign in" }).boundingBox();
   const viewport = page.viewportSize();
   expect(box && viewport && box.y + box.height <= viewport.height).toBe(true);
 });
@@ -144,6 +144,17 @@ test("front door: scrolling walks into the station (Phase 25 D1)", async ({ page
   expect(problems).toEqual([]);
 });
 
+test("front door: 'How it works' scrolls down the page without leaving it (Phase 28 D3)", async ({ page }) => {
+  const problems = await watch(page);
+  await frontDoor(page);
+  const route = await page.evaluate(() => location.hash);
+  // A button, not an "#how" anchor: the app is hash-routed, so a hash is a route (§14).
+  await page.getByRole("button", { name: "How it works" }).click();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(400);
+  expect(await page.evaluate(() => location.hash)).toBe(route);
+  expect(problems).toEqual([]);
+});
+
 test("front door: the photograph's slow drift stops once the walk in starts (Phase 28 B3)", async ({ page }) => {
   await frontDoor(page);
   const drift = () => page.evaluate(() => getComputedStyle(document.querySelector(".login-drift")!).animationPlayState);
@@ -177,6 +188,16 @@ test.describe("front door on a desktop", () => {
     await expect(page.getByRole("heading", { name: "Bring HiSahab to your pump." })).toBeInViewport();
     expect(problems).toEqual([]);
     await expectAccessible(page);
+  });
+
+  test("the hero shows the product beside the form, and the nav's Sign in puts the cursor in it (Phase 28 D3)", async ({ page }) => {
+    const problems = await watch(page);
+    await frontDoor(page);
+    // The phone arrives with the story, once the page is idle; it is a picture, named by its caption.
+    await expect(page.getByRole("figure", { name: /^The Today screen/ })).toBeInViewport();
+    await page.getByRole("navigation", { name: "Front door" }).getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByLabel("Email")).toBeFocused();
+    expect(problems).toEqual([]);
   });
 
   test("a headline below the fold waits lowered, then rises as it arrives (Phase 28 B1)", async ({ page }) => {

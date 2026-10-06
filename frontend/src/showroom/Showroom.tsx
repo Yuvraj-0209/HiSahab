@@ -25,13 +25,11 @@ import "../motion/draw";
 import { ScrollTrigger, useStory } from "../motion/story";
 import { Donut, SalesBars, ShareBars } from "../ui/chart";
 import { Pill } from "../ui/primitives";
+import { CONTACT } from "./doors";
 import { BANK, DAYS, FUEL_MIX, GAP, LEDGER, METER, MONTH, PAYMENT_MIX } from "./samples";
 import { Words } from "./Words";
 
-/** Where "Talk to us" goes: a build-time setting, because the owner has not chosen one yet
- * (WhatsApp, a phone number or an email). Without it the closing section has no button rather
- * than a placeholder one. */
-const CONTACT: string | undefined = import.meta.env.VITE_SALES_CONTACT || undefined;
+export { HeroPhone } from "./HeroPhone";
 
 export default function Showroom({ outletName }: { outletName?: string | undefined }) {
   const root = useRef<HTMLDivElement>(null);

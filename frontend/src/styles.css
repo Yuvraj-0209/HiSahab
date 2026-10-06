@@ -91,6 +91,9 @@
    * the one token that does not change with the phone's setting. */
   --on-photo: #f4f5f8;
   --on-photo-muted: rgb(244 245 248 / 0.78);
+
+  /* The bezel of the front door's phone (Phase 28): dark in both palettes, as a phone is. */
+  --device: #16181c;
 }
 
 /* Motion tokens (Phase 24 D2): the CSS copy of src/motion/gsap.ts's DURATION and EASE, for the
@@ -150,6 +153,9 @@
 
     --chrome: rgb(12 13 15 / 0.86);
     --scrim: rgb(0 0 0 / 0.55);
+
+    /* Lifted off the graphite ground, so the phone's edge still reads at night. */
+    --device: #2c2e34;
   }
 }
 
@@ -797,6 +803,82 @@ select.field-control {
     color-mix(in srgb, var(--ground) 92%, transparent) 80%,
     var(--ground) 100%
   );
+}
+
+/* The front door's phone (Phase 28 D4; showroom/phone/PhoneFrame.tsx).
+ *
+ * The screen is laid out at 390 px, a real phone's width, and drawn smaller with `zoom`. Zoom
+ * re-lays the text out at the smaller size rather than scaling a bitmap of it, so it stays sharp,
+ * and it leaves `transform` free for the story to animate. The zoom shrinks on a short window so
+ * the pinned phone always fits between the top and bottom of the screen. */
+.phone {
+  width: fit-content;
+  margin: 0;
+}
+
+.phone-bezel {
+  position: relative;
+  overflow: hidden;
+  border: 8px solid var(--device);
+  border-radius: 3rem;
+  background: var(--ground);
+  box-shadow:
+    var(--shadow-3),
+    0 0 0 1px var(--hairline-strong);
+}
+
+.phone-island {
+  position: absolute;
+  top: 9px;
+  right: 0;
+  left: 0;
+  z-index: 1;
+  width: 5.5rem;
+  height: 1.5rem;
+  margin-inline: auto;
+  border-radius: 999px;
+  background: var(--device);
+}
+
+.phone-screen {
+  width: 390px;
+  height: 844px;
+  overflow: hidden;
+  zoom: var(--phone-zoom);
+}
+
+.phone-hero {
+  --phone-zoom: 0.72;
+}
+
+.phone-story {
+  --phone-zoom: 0.76;
+}
+
+@media (max-height: 820px) {
+  .phone-hero,
+  .phone-story {
+    --phone-zoom: 0.66;
+  }
+}
+
+@media (max-height: 720px) {
+  .phone-hero,
+  .phone-story {
+    --phone-zoom: 0.58;
+  }
+}
+
+/* On a wide screen the words sit on the left of the photograph rather than at the bottom of it
+ * (Phase 28 D3), so the wash that seats them turns sideways: a dark scrim behind the headline and
+ * the form, the photograph clear on the right where the phone stands. Still a gradient, never a
+ * filter (§13.29), and the walk-in lifts it exactly as before. */
+@media (min-width: 1024px) {
+  .login-wash {
+    background:
+      linear-gradient(to right, rgb(5 5 8 / 0.72) 0%, rgb(5 5 8 / 0.5) 38%, rgb(5 5 8 / 0) 66%),
+      linear-gradient(to bottom, transparent 70%, color-mix(in srgb, var(--ground) 55%, transparent) 100%);
+  }
 }
 
 .wordmark {

@@ -28,7 +28,7 @@ import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
 import { sharedSource, useGo } from "../app/navigation";
 import { useSession } from "../app/session";
-import { type Day, dayState, type DayState, LIFECYCLE, mergeDays, oldestUnreconciled } from "../lib/days";
+import { type Day, dayState, LIFECYCLE, mergeDays, oldestUnreconciled } from "../lib/days";
 import { format, varianceLabel } from "../lib/money";
 import { satisfies } from "../lib/roles";
 import { businessDate, todayAtOutlet } from "../lib/time";
@@ -36,7 +36,7 @@ import { Amount } from "../ui/Amount";
 import { describeSource } from "../ui/chart";
 import { reportFailure } from "../ui/feedback";
 import { TextField, useForm } from "../ui/form";
-import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
+import { LifecycleStrip } from "../ui/lifecycle";
 import { useArrival } from "../ui/motion";
 import { Button, Card, Empty, ErrorCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
@@ -74,53 +74,6 @@ export function useDays() {
     error: shifts.error ?? summaries.error,
     refetch: () => Promise.all([shifts.refetch(), summaries.refetch()]),
   };
-}
-
-/* --- the lifecycle strip --------------------------------------------------------------- */
-
-/** Five dots, filled up to `reached`. When a day moves on, each newly reached step's connector
- * draws in from the dot before it and then the dot lands -- a state transition the reader just
- * caused, told in the order it happened. */
-export function LifecycleStrip({ state }: { state: DayState }) {
-  const scope = useRef<HTMLDivElement>(null);
-  const previous = useRef(state.reached);
-
-  useMotion(
-    (play) => {
-      const before = previous.current;
-      previous.current = state.reached;
-      if (state.reached <= before) return;
-      play(() => {
-        // Each newly reached step: its connector draws from the previous dot, then the dot lands.
-        const links = Array.from(scope.current?.querySelectorAll("[data-link]") ?? []);
-        const dots = Array.from(scope.current?.querySelectorAll("[data-step]") ?? []);
-        const timeline = gsap.timeline();
-        for (let index = before; index < state.reached; index += 1) {
-          const link = links[index - 1]; // the connector before step `index`; step 0 has none
-          const dot = dots[index];
-          if (link) timeline.from(link, { scaleX: 0, transformOrigin: "0% 50%", duration: DURATION.small, ease: EASE.move.gsap });
-          if (dot) timeline.from(dot, { scale: 0.3, opacity: 0, duration: DURATION.small, ease: EASE.settle.gsap }, "<0.12");
-        }
-      });
-    },
-    { dependencies: [state.reached], scope },
-  );
-
-  return (
-    <div ref={scope} className="flex flex-wrap items-center gap-x-3 gap-y-1" aria-label={`${state.label}: step ${state.reached} of ${LIFECYCLE.length}`}>
-      <div className="flex items-center" aria-hidden="true">
-        {LIFECYCLE.map((step, index) => (
-          <span key={step} className="flex items-center">
-            {index > 0 ? <span data-link className={`h-0.5 w-3 ${index < state.reached ? "bg-accent" : "bg-hairline-strong"}`} /> : null}
-            <span className="relative grid size-3 place-items-center rounded-full border border-hairline-strong" title={step}>
-              {index < state.reached ? <span data-step className="absolute inset-[-1px] rounded-full bg-accent" /> : null}
-            </span>
-          </span>
-        ))}
-      </div>
-      <span className="text-[0.8125rem] whitespace-nowrap text-ink-muted">{state.label}</span>
-    </div>
-  );
 }
 
 /* --- reconciling ----------------------------------------------------------------------- */
