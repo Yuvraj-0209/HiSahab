@@ -266,7 +266,36 @@ None.
 
 ## What shipped
 
-_Filled in as commits land._
+| Commit | What landed |
+|---|---|
+| `778107c` | CLAUDE.md: §11 entry 28, §13.46, four §14 guardrails, this plan |
+| `b25e7d9` | B1–B4 test-first; ScrollSmoother removed (front door 65.6 → 60.7 KB) |
+| `6db88cd` | Nav, two-column hero, the phone (`showroom/phone/*`), the sample day, `ui/lifecycle.tsx`, the hash-anchor ban. Plan steps 3 and 4 merged: the hero cannot show a phone that does not exist yet |
+| `5f4c832` | "A day at the pump": the sticky phone, fade-through screens, the beats, the rail. Steps reordered to the order the day happens |
+| `c2bbc7c` | The feature grid, the close with Sign in always; `PAYMENT_MIX` retired (Phase 26 removed the screen it advertised) |
+| `88b73d1` | The type scale: twelve steps, not six (the codemod found three recurring compound sizes); `.display` → `.serif` |
+| `9f57db1` | `LinkTile`, `RowLink`, `ListCard`, `HeroFigure`, `Notice`; Summary top-owing → ledger shared element |
+| `340f186` | B5 (broader than the audit: a failed collections read said "not declared") and B6, test-first |
+| `c14deff` | Today's cards open from anywhere; `ui/Arrive` on twelve screens; statement → ledger shared element; the Cash hub band; shaped skeletons. **Not done:** metered sales spanning two columns (Phase 25 removed it at the owner's request); sticky labels (those screens have no group labels) |
+| `4105a99` | CSS springs on the tab indicator and `pressable` (the pill keeps its Phase 24 settle) |
+
+**21st references** (public pages; the CLI was never signed in, so nothing was pulled with
+`21st get`). Each was read for its layout and ported onto our primitives and GSAP:
+- Sticky Scroll (uilayout, built on Lenis);
+- Stacking Cards (Daniel Petho);
+- Feature Section with Bento Grid (Tommy Jepsen);
+- Scroll Morph Hero (Prashant Som, framer-motion).
+
+**Motion references:** "Hero: Parallax layers", "Screenshot scroll reveal" and "Scroll word
+reveal" (Motion UI). The CSS `linear()` spring technique was used with our own presets.
+
+Verification:
+- **Pytest:** 1,742 passed.
+- **Vitest:** 90 passed.
+- **Playwright:** 200 passed, in both palettes, under the production CSP, with axe.
+- **Budget:** initial JS 125.1 of 150 KB; front door 66.5 of 70 KB.
+- **By eye:** frames were captured at 1440 and 390 in both palettes and read. See
+  `phase-28-notes.md` for what they showed.
 
 ## Still owed by the owner
 

@@ -2798,7 +2798,7 @@ ahead — no empty modules for later phases.
     and nobody had recorded that. It also breaks `position: sticky`, which the pinned phone needs.
 
     **(c) Inside the app: one type scale and one shape per pattern.** About 390 one-off text sizes
-    become six named steps. Link tiles, clickable rows, hero figures and warning notices each had
+    become twelve named steps. Link tiles, clickable rows, hero figures and warning notices each had
     up to five hand-made copies; each now has one primitive.
 
     **(d) The audit found six bugs**, each fixed test-first:
