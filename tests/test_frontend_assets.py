@@ -400,9 +400,11 @@ def test_the_front_doors_sample_figures_agree_with_each_other() -> None:
     # It is also a bar on the month's chart: the day the sales chart shows as 9 September.
     assert _rupees(re.search(r'\["2026-09-09", "(₹[\d,]+\.\d\d)"', source).group(1)) == terms[0]
 
-    # Each mix sums to the month's sales, and each share is its rupees over the total to 0.1%.
+    # The fuel mix sums to the month's sales, and each share is its rupees over the total to 0.1%.
+    # (Phase 28 retired the payment mix: Phase 26 took "How the money arrived" off the Summary at
+    # the owner's request, so the front door no longer shows it.)
     month = money("sales")
-    for block in ("FUEL_MIX", "PAYMENT_MIX"):
+    for block in ("FUEL_MIX",):
         body = source.split(f"export const {block}", 1)[1].split("];", 1)[0]
         rows = re.findall(r'share_pct: "([\d.]+)%".*?value: "(₹[\d,]+\.\d\d)"|value: "(₹[\d,]+\.\d\d)", share_pct: "([\d.]+)%"', body)
         pairs = [(Decimal(a or d), _rupees(b or c)) for a, b, c, d in rows]

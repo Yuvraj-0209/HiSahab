@@ -191,6 +191,7 @@
   --color-cat-6: var(--cat-6);
   --color-on-photo: var(--on-photo);
   --color-on-photo-muted: var(--on-photo-muted);
+  --color-device: var(--device);
 
   --shadow-1: var(--shadow-1);
   --shadow-2: var(--shadow-2);

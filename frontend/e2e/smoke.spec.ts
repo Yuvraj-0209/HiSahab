@@ -96,7 +96,7 @@ test("front door: under reduced motion every section is simply there, without sc
   await page.emulateMedia({ reducedMotion: "reduce" });
   const problems = await watch(page);
   await frontDoor(page);
-  await expect(page.locator("[data-section]")).toHaveCount(4);
+  await expect(page.locator("[data-section]")).toHaveCount(3);
   const hidden = await page.evaluate(() =>
     Array.from(document.querySelectorAll<HTMLElement>("[data-section] *")).filter((node) => getComputedStyle(node).opacity !== "1").length,
   );
@@ -156,6 +156,18 @@ test("front door: on a phone each step of the day carries its own screen, inline
   expect(problems).toEqual([]);
 });
 
+test("front door: the page never ends without a way in -- Sign in goes back to the form (Phase 28 D3)", async ({ page }) => {
+  const problems = await watch(page);
+  await frontDoor(page);
+  const close = page.locator('[data-section="close"]');
+  await close.scrollIntoViewIfNeeded();
+  // Present whether or not the owner has set a contact for "Talk to us".
+  await close.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByLabel("Email")).toBeFocused();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(10);
+  expect(problems).toEqual([]);
+});
+
 test("front door: 'How it works' scrolls down the page without leaving it (Phase 28 D3)", async ({ page }) => {
   const problems = await watch(page);
   await frontDoor(page);
@@ -191,7 +203,7 @@ test.describe("front door on a desktop", () => {
   test("the whole story scrolls through under the production CSP, with nothing in the console", async ({ page }) => {
     const problems = await watch(page);
     await frontDoor(page);
-    await expect(page.locator("[data-section]")).toHaveCount(4);
+    await expect(page.locator("[data-section]")).toHaveCount(3);
     for (let step = 0; step < 60; step += 1) {
       await page.mouse.wheel(0, 400);
       await page.waitForTimeout(40);

@@ -105,11 +105,12 @@ export const FUEL_MIX = [
   { key: "CBG", share_pct: "12.3%", colour: 3, value: "₹1,52,110.00" },
 ];
 
-export const PAYMENT_MIX = [
-  { key: "upi", label: "UPI", value: "₹5,02,860.00", share_pct: "40.7%", colour: 1 },
-  { key: "card", label: "Card", value: "₹3,71,480.00", share_pct: "30.0%", colour: 2 },
-  { key: "cash", label: "Cash", value: "₹2,99,120.00", share_pct: "24.2%", colour: 3 },
-  { key: "udhaar", label: "Udhaar", value: "₹63,195.00", share_pct: "5.1%", colour: 5 },
-];
 
 export const MONTH = { sales: "₹12,36,655.00", margin: "₹41,382.50" };
+
+/** §6.10: the save that was sent twice and recorded once. */
+export const TWICE = { what: "Electricity bill", sum: "₹5,000.00" };
+
+/** §5.3: one line of the audit log. `was` and `now`, never `before`: the pytest reads the bill's
+ * `before` by its key, and a second one would be read in its place. */
+export const AUDIT = { what: "Fuel price · Petrol", was: "₹94.72 / L", now: "₹95.13 / L", who: "Admin", when: "9 Sep, 06:00" };
