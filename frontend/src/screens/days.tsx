@@ -138,7 +138,7 @@ function CreateSummaryForm({ businessDate: date, onDone }: { businessDate: strin
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-[0.875rem] text-ink-muted">
+      <p className="text-callout text-ink-muted">
         No earlier day has been reconciled, so there is nothing to carry the opening balance from. Count what is in the locker at the start of this day. Only an admin can seed it, once.
       </p>
       <TextField form={form} name="business_date" label="Business date" type="date" max={todayAtOutlet()} required />
@@ -173,16 +173,16 @@ export function DayRow({ day, unblocked }: { day: MergedDay; unblocked: string |
       className="pressable flex w-full items-center gap-3 border-b border-hairline py-3 text-left last:border-b-0"
     >
       <div className="min-w-0 grow">
-        <p data-shared-source className="text-[0.9375rem] text-ink">
+        <p data-shared-source className="text-body text-ink">
           {businessDate(day.business_date)}
         </p>
         <LifecycleStrip state={state} />
       </div>
       <div className="flex shrink-0 flex-col items-end">
-        <span className="tabular text-[0.9375rem] text-ink">
+        <span className="tabular text-body text-ink">
           <Amount value={day.summary?.expected_closing ?? null} absent="not reconciled" />
         </span>
-        <span className={`tabular text-[0.8125rem] ${variance.className}`}>{variance.text}</span>
+        <span className={`tabular text-footnote ${variance.className}`}>{variance.text}</span>
       </div>
       <CaretRightIcon size={16} className="shrink-0 text-ink-faint" aria-hidden />
     </button>
@@ -207,7 +207,7 @@ export function WorklistCard({
     <div data-arrive data-shared-scope>
       <Card className={day.summary?.requires_review ? "border-warning" : ""}>
         <div className="flex items-start justify-between gap-3">
-          <p data-shared-source className="text-[1.125rem] font-semibold tracking-[-0.015em] text-ink">
+          <p data-shared-source className="text-subhead text-ink">
             {businessDate(day.business_date)}
           </p>
           <Pill kind={state.kind}>{state.label}</Pill>
@@ -215,10 +215,10 @@ export function WorklistCard({
         <div className="mt-2">
           <LifecycleStrip state={state} />
         </div>
-        <p className="mt-2 text-[0.8125rem] text-ink-muted">{state.hint}</p>
+        <p className="mt-2 text-footnote text-ink-muted">{state.hint}</p>
         {state.blockedBy ? (
           // §6.5: an ordering problem, not a permission one, so it names the day to do first.
-          <p className="mt-2 text-[0.8125rem] text-ink-muted">
+          <p className="mt-2 text-footnote text-ink-muted">
             Reconcile {businessDate(state.blockedBy)} first: the opening balance chains from the day before.
           </p>
         ) : null}
@@ -281,7 +281,7 @@ export function DaysScreen() {
         ) : (
           <Empty>No trading day has been entered yet.</Empty>
         )}
-        <p className="text-[0.8125rem] text-ink-muted">
+        <p className="text-footnote text-ink-muted">
           Every date the outlet traded appears here, whether or not it has been reconciled. The {LIFECYCLE.join(", ")} strip says how far each one has got.
         </p>
       </div>
@@ -355,15 +355,15 @@ export function DayScreen() {
         {/* Where this day stands, and the one act that moves it on. */}
         <Card className="lg:col-span-2">
           <div className="flex items-center justify-between gap-3">
-            <span className="text-[0.8125rem] font-medium text-ink-muted">This day is</span>
+            <span className="text-footnote font-medium text-ink-muted">This day is</span>
             <Pill kind={state.kind}>{state.label}</Pill>
           </div>
           <div className="mt-2">
             <LifecycleStrip state={state} />
           </div>
-          <p className="mt-2 text-[0.8125rem] text-ink-muted">{state.hint}</p>
+          <p className="mt-2 text-footnote text-ink-muted">{state.hint}</p>
           {state.blockedBy ? (
-            <p className="mt-2 text-[0.8125rem] text-ink-muted">
+            <p className="mt-2 text-footnote text-ink-muted">
               Reconcile {businessDate(state.blockedBy)} first: the opening balance chains from the day before.
             </p>
           ) : null}
@@ -380,7 +380,7 @@ export function DayScreen() {
         {summary?.requires_review ? (
           <Card className="border-warning lg:col-span-2">
             <Pill kind="review">needs review</Pill>
-            <p className="mt-2 text-[0.875rem] text-ink">
+            <p className="mt-2 text-callout text-ink">
               {summary.review_note ?? "A shift beneath this day was reopened after it was finalised. Nothing was recomputed: the figures below are as they stood."}
             </p>
           </Card>
@@ -388,48 +388,48 @@ export function DayScreen() {
 
         {/* Provenance, first and unmissable (§13.20). */}
         <Card className="lg:col-span-2">
-          <span className="text-[0.8125rem] font-medium text-ink-muted">These figures are</span>
+          <span className="text-footnote font-medium text-ink-muted">These figures are</span>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <Pill kind={SOURCE_PILL[cash.source] ?? "neutral"}>{cash.source.replace("_", " ")}</Pill>
-            <span className="text-[0.9375rem] text-ink">{describeSource(cash.source)}</span>
+            <span className="text-body text-ink">{describeSource(cash.source)}</span>
           </div>
           {cash.unavailable_reason ? (
-            <p className="mt-2 text-[0.8125rem] text-ink-muted">
+            <p className="mt-2 text-footnote text-ink-muted">
               This day cannot be calculated: {cash.unavailable_reason}. Enter the missing rate and it will appear.
             </p>
           ) : null}
-          {cash.requires_review ? <p className="mt-2 text-[0.8125rem] text-short">{cash.review_note ?? "Flagged for review."}</p> : null}
+          {cash.requires_review ? <p className="mt-2 text-footnote text-short">{cash.review_note ?? "Flagged for review."}</p> : null}
         </Card>
 
         {/* §13.22: a backdated price makes the live breakdown disagree with the stored total. */}
         {r.breakdown_reconciles === false ? (
           <Card className="border-warning lg:col-span-2">
             <SectionLabel>The fuel breakdown does not match</SectionLabel>
-            <p className="text-[0.9375rem] text-ink">
+            <p className="text-body text-ink">
               This day was reconciled at one figure, but pricing it again now gives another. A fuel price was probably backdated beneath it.
             </p>
             <ListRow label="Recorded that day" value={<Amount value={r.snapshot_metered_fuel_sales} />} />
             <ListRow label="Priced again now" value={<Amount value={r.fuel_sales_total} />} />
-            <p className="mt-2 text-[0.8125rem] text-ink-muted">
+            <p className="mt-2 text-footnote text-ink-muted">
               Neither figure has been changed. The recorded one is what the day was reconciled against; check the audit log for who revised the price.
             </p>
           </Card>
         ) : null}
 
         <Card>
-          <span className="text-[0.8125rem] font-medium text-ink-muted">Expected closing</span>
-          <p className="mt-1 text-[2rem] leading-none font-semibold tracking-[-0.03em] text-ink">
+          <span className="text-footnote font-medium text-ink-muted">Expected closing</span>
+          <p className="mt-1 text-figure text-ink">
             <Amount value={cash.expected_closing} absent="not known" />
           </p>
           {cash.expected_closing === null && cash.source === "computed" ? (
-            <p className="mt-2 text-[0.8125rem] text-ink-muted">
+            <p className="mt-2 text-footnote text-ink-muted">
               No earlier day has been reconciled, so there is no opening balance to carry from. An admin seeds the first one.
             </p>
           ) : null}
           <div className="mt-3">
             <Term label="Opening balance" value={cash.opening_balance} />
             {cash.opening_balance_source ? (
-              <p className="pb-1 text-[0.75rem] text-ink-muted">{OPENING_SOURCE[cash.opening_balance_source] ?? cash.opening_balance_source}</p>
+              <p className="pb-1 text-caption text-ink-muted">{OPENING_SOURCE[cash.opening_balance_source] ?? cash.opening_balance_source}</p>
             ) : null}
             <Term label="Metered fuel sales" value={cash.metered_fuel_sales} />
             <Term label="Non-fuel sales" value={cash.non_fuel_sales_total} />
@@ -458,12 +458,12 @@ export function DayScreen() {
               <ListRow label="Gross fuel margin" value={<Amount value={r.gross_fuel_margin_total} absent="not known" />} />
             </div>
             {r.fuels_missing_margin.length ? (
-              <p className="mt-2 text-[0.8125rem] text-ink-muted">
+              <p className="mt-2 text-footnote text-ink-muted">
                 No total, because no dealer commission has been entered for {r.fuels_missing_margin.join(", ")}. The figure is unknown, not zero.
               </p>
             ) : null}
             {/* §13.7's label, from the server, wherever profit is shown. */}
-            <p className="mt-2 text-[0.8125rem] text-ink-muted">{r.profit_basis}</p>
+            <p className="mt-2 text-footnote text-ink-muted">{r.profit_basis}</p>
           </Card>
 
           <Card>
@@ -488,7 +488,7 @@ export function DayScreen() {
                   onClick={() => navigate(`/shifts/${shift.id}`)}
                   className="pressable flex w-full items-center justify-between gap-3 border-b border-hairline py-3 text-left last:border-b-0"
                 >
-                  <span className="text-[0.9375rem] text-ink">Shift {shift.sequence}</span>
+                  <span className="text-body text-ink">Shift {shift.sequence}</span>
                   <span className="flex items-center gap-2">
                     <Pill kind="neutral">{shift.status}</Pill>
                     <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
@@ -506,7 +506,7 @@ export function DayScreen() {
         {summary ? (
           <Card>
             <SectionLabel>The count</SectionLabel>
-            <p className="text-[0.8125rem] text-ink-muted">
+            <p className="text-footnote text-ink-muted">
               The physical cash in the locker is what carries forward, not the theoretical figure, so a shortage stays visible instead of disappearing into tomorrow. Most days are never counted, and that is normal.
             </p>
             {!summary.is_finalised ? (
@@ -521,7 +521,7 @@ export function DayScreen() {
 
         {summary?.notes ? (
           <Card>
-            <p className="text-[0.9375rem] text-ink">{summary.notes}</p>
+            <p className="text-body text-ink">{summary.notes}</p>
           </Card>
         ) : null}
 
@@ -542,7 +542,7 @@ export function DayScreen() {
                 </Button>
               )}
             </div>
-            <p className="mt-2 text-[0.8125rem] text-ink-muted">
+            <p className="mt-2 text-footnote text-ink-muted">
               {summary.is_finalised
                 ? "Finalising is otherwise terminal. Unfinalising takes a mandatory reason and is audit-logged."
                 : "Every shift on this date must be locked first, and the previous day finalised: the opening balance chains from it."}
@@ -583,9 +583,9 @@ function FuelRow({ line }: { line: Schemas["FuelLineResponse"] }) {
         <span className="flex flex-col items-end">
           <Amount value={line.sale_value} absent="not known" />
           {line.gross_fuel_margin === null ? (
-            <span className="t-absent text-[0.8125rem]">no commission entered</span>
+            <span className="t-absent text-footnote">no commission entered</span>
           ) : (
-            <span className="text-[0.8125rem] text-ink-muted">{format(line.gross_fuel_margin)} margin</span>
+            <span className="text-footnote text-ink-muted">{format(line.gross_fuel_margin)} margin</span>
           )}
         </span>
       }

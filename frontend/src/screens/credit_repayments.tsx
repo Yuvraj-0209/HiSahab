@@ -101,7 +101,7 @@ export function CreditRepaymentsScreen() {
             caption={repayment.mode.replace("_", " ")}
             amount={repayment.amount}
             badges={<ReversalBadge row={repayment} />}
-            notes={repayment.reversal_reason ? <p className="mt-2 text-[0.8125rem] text-ink-muted">Reason: {repayment.reversal_reason}</p> : null}
+            notes={repayment.reversal_reason ? <p className="mt-2 text-footnote text-ink-muted">Reason: {repayment.reversal_reason}</p> : null}
             actions={
               isLive(repayment) ? (
                 <>
@@ -200,7 +200,7 @@ function RepaymentForm({
   return (
     <div className="flex flex-col gap-4">
       {existing ? (
-        <p className="text-[0.9375rem] text-ink">
+        <p className="text-body text-ink">
           {customers.find((customer) => customer.id === existing.credit_customer_id)?.name ?? "Unknown customer"}
         </p>
       ) : (
@@ -235,7 +235,7 @@ function RepaymentForm({
         hint="Only cash reaches the locker and the shift's cash position."
       />
       {existing ? (
-        <p className="text-[0.8125rem] text-ink-muted">The receipt cannot be changed.</p>
+        <p className="text-footnote text-ink-muted">The receipt cannot be changed.</p>
       ) : (
         <ReceiptUpload shiftId={shiftId} attachmentId={attachmentId} label="Receipt (optional)" onUploaded={setAttachmentId} />
       )}
@@ -297,11 +297,11 @@ export function LedgerRepaymentsScreen() {
       </ScreenActions>
       <div className="flex flex-col gap-5">
         <Card>
-          <p className="text-[0.8125rem] font-medium text-ink-muted">Money that reached the bank</p>
-          <p className="mt-1 text-[0.9375rem] text-ink">
+          <p className="text-footnote font-medium text-ink-muted">Money that reached the bank</p>
+          <p className="mt-1 text-body text-ink">
             A settlement that arrived by transfer rather than at the pump. It reduces what the customer owes and changes no day's cash: the locker never saw it.
           </p>
-          <p className="mt-2 text-[0.8125rem] text-ink-muted">Cash belongs on the shift it arrived on. Enter that under Entry, Credit repayments.</p>
+          <p className="mt-2 text-footnote text-ink-muted">Cash belongs on the shift it arrived on. Enter that under Entry, Credit repayments.</p>
         </Card>
         {page.data.items.length ? (
           <div className="flex flex-col gap-3">
@@ -312,7 +312,7 @@ export function LedgerRepaymentsScreen() {
                 caption={`${businessDate(repayment.business_date)} · ${repayment.mode.replace("_", " ")}${repayment.shift_id === null ? "" : " · on a shift"}`}
                 amount={repayment.amount}
                 badges={<ReversalBadge row={repayment} />}
-                notes={repayment.reversal_reason ? <p className="mt-2 text-[0.8125rem] text-ink-muted">Reason: {repayment.reversal_reason}</p> : null}
+                notes={repayment.reversal_reason ? <p className="mt-2 text-footnote text-ink-muted">Reason: {repayment.reversal_reason}</p> : null}
                 actions={
                   // §6.9: a shift-less row cannot reach the shift-scoped reversal route, so it has
                   // its own. Without it a mistyped transfer would sit in a ledger permanently.

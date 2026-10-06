@@ -76,10 +76,10 @@ export function OpeningBalancesScreen() {
       <div className="flex flex-col gap-5">
         <Card>
           <SectionLabel>What this is</SectionLabel>
-          <p className="text-[0.9375rem] text-ink">
+          <p className="text-body text-ink">
             What each customer owed before this app started counting. Without it their ledger begins at zero, and the first payment they make drives their balance negative, as though the pump owed them money.
           </p>
-          <p className="mt-2 text-[0.8125rem] text-ink-muted">
+          <p className="mt-2 text-footnote text-ink-muted">
             It can only be set once per customer. Correcting one reverses the old figure with a reason and records the new one, so the change stays on the record.
           </p>
         </Card>
@@ -92,8 +92,8 @@ export function OpeningBalancesScreen() {
                 <Card key={entry.credit_customer_id}>
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <h2 className="text-[0.9375rem] font-semibold text-ink">{entry.name}</h2>
-                      <p className="t-absent text-[0.8125rem]">No opening balance entered</p>
+                      <h2 className="text-body font-semibold text-ink">{entry.name}</h2>
+                      <p className="t-absent text-footnote">No opening balance entered</p>
                     </div>
                     {entry.is_active ? null : <Pill kind="neutral">inactive</Pill>}
                   </div>
@@ -116,10 +116,10 @@ export function OpeningBalancesScreen() {
                 <Card key={entry.credit_customer_id}>
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h2 className="text-[0.9375rem] font-semibold text-ink">{entry.name}</h2>
-                      <p className="text-[0.8125rem] text-ink-muted">As of {businessDate(entry.as_of_date)}</p>
+                      <h2 className="text-body font-semibold text-ink">{entry.name}</h2>
+                      <p className="text-footnote text-ink-muted">As of {businessDate(entry.as_of_date)}</p>
                     </div>
-                    <span className="text-[1.125rem] font-semibold text-ink">
+                    <span className="text-subhead text-ink">
                       <Amount value={entry.opening_balance} />
                     </span>
                   </div>
@@ -204,7 +204,7 @@ function OpeningForm({ entry, defaultDate, onDone }: { entry: Entry; defaultDate
         required
         hint="Their ledger starts here. Nothing dated before this can be entered afterwards, so if you are still back-entering July this must be the start of July, not today."
       />
-      <p className="text-[0.8125rem] text-ink-muted">
+      <p className="text-footnote text-ink-muted">
         This can only be set once. Getting it wrong is recoverable, by reversing it with a reason, but the correction stays visible, so it is worth checking the register.
       </p>
       <Button

@@ -75,7 +75,7 @@ export function EntryScreen() {
       <>
         <ScreenTitle large title="Entry" subtitle="No open shift" />
         <Card>
-          <p className="text-[0.9375rem] text-ink">There is no open shift to type into.</p>
+          <p className="text-body text-ink">There is no open shift to type into.</p>
           <div className="mt-4">
             <Button variant="primary" onClick={() => navigate("/today")}>
               Go to Today
@@ -104,8 +104,8 @@ export function EntryScreen() {
               <line.Icon size={22} aria-hidden />
             </span>
             <span className="min-w-0 grow">
-              <span className="block text-[0.9375rem] font-medium text-ink">{line.label}</span>
-              <span className="block text-[0.8125rem] text-ink-muted">{line.hint}</span>
+              <span className="block text-body font-medium text-ink">{line.label}</span>
+              <span className="block text-footnote text-ink-muted">{line.hint}</span>
             </span>
             <CaretRightIcon size={18} className="shrink-0 text-ink-faint" aria-hidden />
           </button>

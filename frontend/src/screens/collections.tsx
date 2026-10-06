@@ -90,11 +90,11 @@ export function CollectionsScreen() {
       <ScreenTitle title="Collections" subtitle={`Shift ${shift.data.sequence} · ${shift.data.status}`} />
       <div className="flex flex-col gap-5">
         <Card>
-          <p className="text-[0.8125rem] font-medium text-ink-muted">Cash declared</p>
-          <p className="mt-1 text-[2.25rem] leading-none font-semibold tracking-[-0.03em] text-ink">
+          <p className="text-footnote font-medium text-ink-muted">Cash declared</p>
+          <p className="mt-1 text-figure text-ink">
             <Amount value={declared} absent="not declared" />
           </p>
-          <p className="mt-3 max-w-[60ch] text-[0.875rem] text-ink-muted">
+          <p className="mt-3 max-w-[60ch] text-callout text-ink-muted">
             {declared === null
               ? "Nobody has declared cash for this shift yet. That is different from declaring zero: the shift cannot close until somebody answers."
               : isZero(declared)
@@ -112,14 +112,14 @@ export function CollectionsScreen() {
                 <Card key={mode.value}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <h2 className="text-[0.9375rem] font-semibold text-ink">{mode.label}</h2>
-                      <p className="text-[0.8125rem] text-ink-muted">{mode.hint}</p>
+                      <h2 className="text-body font-semibold text-ink">{mode.label}</h2>
+                      <p className="text-footnote text-ink-muted">{mode.hint}</p>
                     </div>
-                    <span className="text-[1.25rem] font-semibold tracking-[-0.02em] text-ink">
+                    <span className="text-headline text-ink">
                       <Amount value={existing?.amount ?? null} absent="not entered" />
                     </span>
                   </div>
-                  {existing?.reference ? <p className="mt-2 text-[0.8125rem] text-ink-muted">Reference {existing.reference}</p> : null}
+                  {existing?.reference ? <p className="mt-2 text-footnote text-ink-muted">Reference {existing.reference}</p> : null}
                   {editable ? (
                     <div className="mt-4 flex gap-2">
                       <Button block onClick={() => setAction({ kind: "declare", mode, existing })}>

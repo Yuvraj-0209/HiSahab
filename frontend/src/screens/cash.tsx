@@ -83,8 +83,8 @@ export function CashScreen() {
           {open ? (
             <div className="flex flex-col gap-3">
               <div>
-                <p className="text-[0.8125rem] font-medium text-ink-muted">Open shift</p>
-                <p className="text-[1.125rem] font-semibold tracking-[-0.015em] text-ink">
+                <p className="text-footnote font-medium text-ink-muted">Open shift</p>
+                <p className="text-subhead text-ink">
                   {businessDate(open.business_date)} · shift {open.sequence}
                 </p>
               </div>
@@ -92,7 +92,7 @@ export function CashScreen() {
               <Button block onClick={() => navigate(`/shifts/${open.id}/cash-position`)}>
                 Cash position
               </Button>
-              <p className="text-[0.8125rem] text-ink-muted">
+              <p className="text-footnote text-ink-muted">
                 Shows what this salesman should be holding and the gap. It is a report: nothing is written, and the day is reconciled once every shift on it is closed.
               </p>
               {satisfies(me.role, "admin") ? (
@@ -106,12 +106,12 @@ export function CashScreen() {
                   >
                     Void shift
                   </Button>
-                  <p className="text-[0.8125rem] text-ink-muted">Opened for the wrong day? An empty shift can be voided, and the day it was blocking can then be opened.</p>
+                  <p className="text-footnote text-ink-muted">Opened for the wrong day? An empty shift can be voided, and the day it was blocking can then be opened.</p>
                 </>
               ) : null}
             </div>
           ) : (
-            <p className="text-[0.875rem] text-ink-muted">No shift is currently open.</p>
+            <p className="text-callout text-ink-muted">No shift is currently open.</p>
           )}
         </Card>
 
@@ -158,7 +158,7 @@ export function CashScreen() {
                     onClick={() => navigate(`/salesmen/${row.salesman_id}/ledger`)}
                     className="pressable flex w-full items-center justify-between gap-3 border-b border-hairline py-3 text-left last:border-b-0"
                   >
-                    <span className="text-[0.9375rem] text-ink">{row.full_name}</span>
+                    <span className="text-body text-ink">{row.full_name}</span>
                     <span className="flex items-center gap-2 text-short">
                       <Amount value={row.outstanding} />
                       <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
@@ -167,7 +167,7 @@ export function CashScreen() {
                 ))}
               </Card>
               {/* §13.15, where somebody will see it. */}
-              <p className="mt-2 text-[0.8125rem] text-ink-muted">
+              <p className="mt-2 text-footnote text-ink-muted">
                 A shortfall can only be repaid in cash. V1 has no way to write one off, so a small figure nobody will chase stays here.
               </p>
             </>
@@ -213,7 +213,7 @@ function LookBack({ icon, label, onClick }: { icon: ReactNode; label: string; on
       className="pressable liftable flex items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
     >
       <span className="text-accent">{icon}</span>
-      <span className="grow text-[0.9375rem] text-ink">{label}</span>
+      <span className="grow text-body text-ink">{label}</span>
       <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
     </button>
   );

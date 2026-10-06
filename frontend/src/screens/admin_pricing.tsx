@@ -125,10 +125,10 @@ function PricingScreen({ kind }: { kind: Kind }) {
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
               {inForce.map((item) => (
                 <Card key={item.fuel_type_id}>
-                  <p className="text-[0.75rem] font-semibold tracking-[0.06em] text-ink-faint uppercase">{item.code}</p>
-                  <p className="tabular mt-1 text-[1.375rem] leading-tight font-semibold tracking-[-0.02em] text-ink">{format(item.amount)}</p>
+                  <p className="text-caption font-semibold tracking-[0.06em] text-ink-faint uppercase">{item.code}</p>
+                  <p className="tabular mt-1 text-amount text-ink">{format(item.amount)}</p>
                   {/* §4.5: per the fuel's own unit, never assumed litres. */}
-                  <p className="text-[0.8125rem] text-ink-muted">per {byId.get(item.fuel_type_id)?.unit_of_measure === "kilogram" ? "kg" : "litre"}</p>
+                  <p className="text-footnote text-ink-muted">per {byId.get(item.fuel_type_id)?.unit_of_measure === "kilogram" ? "kg" : "litre"}</p>
                 </Card>
               ))}
             </div>
@@ -149,13 +149,13 @@ function PricingScreen({ kind }: { kind: Kind }) {
                 </Pill>
               ))}
             </div>
-            <p className="mt-2 text-[0.8125rem] text-ink-muted">{kind.missing}</p>
+            <p className="mt-2 text-footnote text-ink-muted">{kind.missing}</p>
           </Card>
         ) : null}
 
         <section>
           <SectionLabel>History</SectionLabel>
-          <p className="mb-2 text-[0.8125rem] text-ink-muted">
+          <p className="mb-2 text-footnote text-ink-muted">
             Append-only. A correction is a new row with a later effective date; the old one stays, because it is what a closed shift was priced at.
           </p>
           {rows.length ? (
@@ -177,7 +177,7 @@ function PricingScreen({ kind }: { kind: Kind }) {
           ) : (
             <Empty>Nothing recorded yet.</Empty>
           )}
-          {history.data.next_cursor ? <p className="mt-2 text-[0.8125rem] text-ink-muted">Showing the latest 50.</p> : null}
+          {history.data.next_cursor ? <p className="mt-2 text-footnote text-ink-muted">Showing the latest 50.</p> : null}
         </section>
       </div>
     );
@@ -235,7 +235,7 @@ function EntryForm({ kind, fuelTypes, onDone }: { kind: Kind; fuelTypes: FuelTyp
         hint="Rates revise at 06:00 IST. This is the moment it became live, not the moment you are typing it."
       />
       {backdated ? (
-        <p role="status" className="rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-[0.8125rem] text-warning">
+        <p role="status" className="rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-footnote text-warning">
           This is in the past. A backdated entry can change what an already-closed shift was worth. It is allowed, and it is recorded against your name in the audit trail.
         </p>
       ) : null}

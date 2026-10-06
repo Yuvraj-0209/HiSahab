@@ -199,12 +199,12 @@ function ShiftHeader({ shift }: { shift: Shift }) {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <Pill kind={STATUS_PILL[shift.status] ?? "neutral"}>{shift.status}</Pill>
-              <span className="text-[0.8125rem] text-ink-muted">Shift {shift.sequence}</span>
+              <span className="text-footnote text-ink-muted">Shift {shift.sequence}</span>
             </div>
             <p className="mt-1.5 text-headline text-ink">
               {businessDateWeekday(shift.business_date)} {businessDate(shift.business_date)}
             </p>
-            <p className="mt-0.5 text-[0.875rem] text-ink-muted">
+            <p className="mt-0.5 text-callout text-ink-muted">
               {timeOnly(shift.started_at)}
               {shift.ended_at ? ` to ${timeOnly(shift.ended_at)}` : " onwards"}
             </p>
@@ -241,7 +241,7 @@ function ShiftHeader({ shift }: { shift: Shift }) {
           </div>
         ) : null}
       </div>
-      {reason ? <p className="mt-4 text-[0.8125rem] text-ink-muted">{reason}</p> : null}
+      {reason ? <p className="mt-4 text-footnote text-ink-muted">{reason}</p> : null}
 
       <Sheet open={reopening} onClose={() => setReopening(false)} title="Reopen shift" subtitle={shiftSubtitle(shift)}>
         <ReopenForm shift={shift} onDone={() => setReopening(false)} />
@@ -300,7 +300,7 @@ export function VoidShiftForm({ shift, onVoided }: { shift: Shift; onVoided: () 
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-[0.875rem] text-ink-muted">
+      <p className="text-callout text-ink-muted">
         Voiding removes this shift entirely. It is possible only while nothing has been recorded on it: no readings, cash, expenses or udhaar. The
         shift and your reason stay in the audit trail against your name.
       </p>
@@ -354,7 +354,7 @@ function ReopenForm({ shift, onDone }: { shift: Shift; onDone: () => void }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-[0.875rem] text-ink-muted">
+      <p className="text-callout text-ink-muted">
         Reopening moves this shift back to open. The reason is stored in the audit trail against your name.
       </p>
       <TextField form={form} name="reason" label="Why is this being reopened?" hint="3 to 500 characters." required />
@@ -499,7 +499,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
             ))}
           </div>
         ) : (
-          <p className="text-[0.875rem] text-ink-muted">Nozzle readings unavailable.</p>
+          <p className="text-callout text-ink-muted">Nozzle readings unavailable.</p>
         )}
       </Sheet>
       <Sheet open={open === "collections"} onClose={() => setOpen(null)} title="Collections" subtitle={shiftSubtitle(shift)}>
@@ -564,15 +564,15 @@ function DomainCard({
               <Icon size={20} />
             </span>
             <div className="min-w-0">
-              <h2 className="text-[0.9375rem] font-semibold text-ink">{title}</h2>
-              {caption ? <p className="truncate text-[0.8125rem] text-ink-muted">{caption}</p> : null}
+              <h2 className="text-body font-semibold text-ink">{title}</h2>
+              {caption ? <p className="truncate text-footnote text-ink-muted">{caption}</p> : null}
             </div>
           </div>
           {badge}
         </div>
         <div className="mt-5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <span className="text-title text-ink">{loading ? <span className="skeleton inline-block h-8 w-40 rounded-lg align-middle" /> : figure}</span>
-          {figureLabel && !loading ? <span className="text-[0.8125rem] text-ink-muted">{figureLabel}</span> : null}
+          {figureLabel && !loading ? <span className="text-footnote text-ink-muted">{figureLabel}</span> : null}
         </div>
         {shown.length ? (
           <div className="mt-3">
@@ -587,7 +587,7 @@ function DomainCard({
           <button
             type="button"
             onClick={onDetails}
-            className="pressable flex w-full items-center justify-between rounded-[var(--radius-control)] bg-surface-sunken px-3.5 py-2.5 text-[0.875rem] font-medium text-ink transition-colors hover:bg-accent-tint hover:text-accent"
+            className="pressable flex w-full items-center justify-between rounded-[var(--radius-control)] bg-surface-sunken px-3.5 py-2.5 text-callout font-medium text-ink transition-colors hover:bg-accent-tint hover:text-accent"
           >
             Details
             <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
@@ -604,7 +604,7 @@ function Lines({ lines }: { lines: Line[] }) {
     <div>
       {lines.map((line, index) =>
         "note" in line ? (
-          <p key={index} className="border-b border-hairline py-3 text-[0.8125rem] text-ink-muted last:border-b-0">
+          <p key={index} className="border-b border-hairline py-3 text-footnote text-ink-muted last:border-b-0">
             {line.note}
           </p>
         ) : (
@@ -775,8 +775,8 @@ function NoShift() {
       <ScreenTitle large title="Today" subtitle="No open shift" />
       <div className="flex flex-col gap-5">
         <Card>
-          <p className="text-[1.125rem] font-semibold tracking-[-0.015em] text-ink">No shift is open at this outlet.</p>
-          <p className="mt-1.5 max-w-[60ch] text-[0.875rem] text-ink-muted">
+          <p className="text-subhead text-ink">No shift is open at this outlet.</p>
+          <p className="mt-1.5 max-w-[60ch] text-callout text-ink-muted">
             Only one shift may be open at a time. That is what makes the carried-forward meter reading unambiguous.
           </p>
           <div className="mt-5">
@@ -798,10 +798,10 @@ function NoShift() {
                   className="pressable flex w-full items-center gap-3 border-b border-hairline py-3 text-left last:border-b-0"
                 >
                   <div className="min-w-0 grow">
-                    <p className="text-[0.9375rem] text-ink">
+                    <p className="text-body text-ink">
                       {businessDate(shift.business_date)} · shift {shift.sequence}
                     </p>
-                    <p className="text-[0.8125rem] text-ink-muted">
+                    <p className="text-footnote text-ink-muted">
                       {shift.status === "closed" ? "Closed, needs locking or review" : shift.status}
                     </p>
                   </div>

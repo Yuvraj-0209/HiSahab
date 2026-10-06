@@ -428,3 +428,26 @@ def test_the_front_door_never_links_to_a_hash() -> None:
         if re.search(r"""href=\{?["'`]#""", line)
     ]
     assert offenders == [], f"use a button and scrollIntoView, not a hash anchor: {offenders}"
+
+
+def test_text_sizes_come_from_the_type_scale() -> None:
+    """§14 (Phase 28): one type scale, named in styles.css's `@theme` -- micro, caption, footnote,
+    callout, body, lead, subhead, headline, amount, title, figure, display. Before it there were
+    about 390 one-off `text-[…rem]` sizes in five slightly different card-title styles, so two
+    screens could disagree about what a heading looks like and nothing noticed.
+
+    The rule covers the app (`screens/`, `ui/`, `app/`). The front door's fluid headline sizes are
+    `clamp()` expressions, which this does not match and does not need to. One exemption, by
+    content rather than by file: the **wordmark**, set in a serif with a single weight and sized by
+    eye, which a scale step carrying a font weight would render as a faux bold."""
+    pattern = re.compile(r"text-\[\d*\.?\d+(?:rem|px)\]")
+    roots = [_SRC / "screens", _SRC / "ui", _SRC / "app"]
+    offenders = [
+        f"{_name(path)}:{number}: {match}"
+        for path in _modules()
+        if any(root in path.parents for root in roots)
+        for number, line in _code_lines(path)
+        if "wordmark" not in line
+        for match in pattern.findall(line)
+    ]
+    assert offenders == [], "use a type-scale step (styles.css @theme --text-*):\n" + "\n".join(offenders)

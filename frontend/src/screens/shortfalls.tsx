@@ -66,24 +66,24 @@ export function ShortfallLedgerScreen() {
       <ScreenTitle title="Shortfall ledger" subtitle={row?.full_name} />
       <div className="flex flex-col gap-5">
         <Card>
-          <p className="text-[0.8125rem] font-medium text-ink-muted">Outstanding</p>
-          <p className="mt-1 text-[2.25rem] leading-none font-semibold tracking-[-0.03em] text-ink">
+          <p className="text-footnote font-medium text-ink-muted">Outstanding</p>
+          <p className="mt-1 text-figure text-ink">
             {/* No row in the outstanding report means nothing has ever been booked: a true zero. */}
             <Amount value={row?.outstanding ?? "0.00"} />
           </p>
-          <p className="mt-3 text-[0.875rem] text-ink-muted">Booked shortfalls less settlements, reversals included. Computed on every read, never stored.</p>
+          <p className="mt-3 text-callout text-ink-muted">Booked shortfalls less settlements, reversals included. Computed on every read, never stored.</p>
           <div className="mt-4">
             {open ? (
               <Button variant="primary" block onClick={() => setSettling(true)}>
                 Record a settlement
               </Button>
             ) : (
-              <p className="text-[0.8125rem] text-ink-muted">A settlement is filed against the shift the cash arrived in, so one has to be open.</p>
+              <p className="text-footnote text-ink-muted">A settlement is filed against the shift the cash arrived in, so one has to be open.</p>
             )}
           </div>
         </Card>
 
-        <p className="text-[0.8125rem] text-ink-muted">
+        <p className="text-footnote text-ink-muted">
           A shortfall can only be repaid in cash. V1 has no way to write one off, so a small figure nobody will chase stays on this balance and it only ever grows.
         </p>
 
@@ -142,7 +142,7 @@ function SettlementForm({ shiftId, salesmanId, onDone }: { shiftId: string; sale
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-[0.875rem] text-ink-muted">Cash handed back by the salesman. It increases the expected cash for the shift it arrives in.</p>
+      <p className="text-callout text-ink-muted">Cash handed back by the salesman. It increases the expected cash for the shift it arrives in.</p>
       <TextField
         form={form}
         name="amount"

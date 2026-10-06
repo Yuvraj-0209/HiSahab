@@ -75,7 +75,7 @@ const ARRIVE_AT = 0.56;
 
 /** The nav's quiet buttons: white on the photograph, a faint lift on hover. */
 const NAV_BUTTON =
-  "pressable h-10 items-center rounded-full px-3.5 text-[0.9375rem] font-medium text-on-photo transition-colors hover:bg-on-photo/12";
+  "pressable h-10 items-center rounded-full px-3.5 text-body font-medium text-on-photo transition-colors hover:bg-on-photo/12";
 
 /** An element's distance from the top of the document, in layout px (unaffected by transforms,
  * which matters once the story's smooth scrolling is moving the content by transform). */
@@ -258,7 +258,7 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
               {CONTACT ? (
                 <a
                   href={CONTACT}
-                  className="pressable ml-1 hidden h-10 items-center rounded-full bg-accent px-4 text-[0.9375rem] font-medium text-on-accent shadow-1 transition-colors hover:bg-accent-pressed lg:inline-flex"
+                  className="pressable ml-1 hidden h-10 items-center rounded-full bg-accent px-4 text-body font-medium text-on-accent shadow-1 transition-colors hover:bg-accent-pressed lg:inline-flex"
                 >
                   Talk to us
                 </a>
@@ -276,9 +276,9 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
               <Words
                 as="h1"
                 text="The day's cash, checked against the meters."
-                className="display block text-[clamp(2.25rem,9vw,3.25rem)] text-on-photo lg:text-[clamp(3.25rem,4.4vw,4.5rem)]"
+                className="serif block text-[clamp(2.25rem,9vw,3.25rem)] text-on-photo lg:text-[clamp(3.25rem,4.4vw,4.5rem)]"
               />
-              <p data-hero-sub className="mx-auto mt-3 max-w-[22rem] text-[1rem] leading-snug text-on-photo-muted lg:mx-0 lg:mt-5 lg:max-w-[30rem] lg:text-[1.125rem]">
+              <p data-hero-sub className="mx-auto mt-3 max-w-[22rem] text-base leading-snug text-on-photo-muted lg:mx-0 lg:mt-5 lg:max-w-[30rem] lg:text-lead">
                 {outletName ? `${outletName}: readings` : "Readings"}, collections, udhaar and the bank statement, reconciled every night.
               </p>
             </div>
@@ -293,7 +293,7 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
               <Button type="submit" variant="primary" block disabled={busy}>
                 {busy ? "Signing in…" : "Sign in"}
               </Button>
-              <p className="text-center text-[0.8125rem] text-ink-muted">Trouble signing in? Your outlet admin can check your account.</p>
+              <p className="text-center text-footnote text-ink-muted">Trouble signing in? Your outlet admin can check your account.</p>
             </form>
           </div>
 
@@ -310,7 +310,7 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
         {/* The walk in: a stretch of page with nothing on it but the forecourt moving beneath, and
          * one line that rises over the dispenser as you arrive. */}
         <section ref={travel} data-travel className="relative flex min-h-[120dvh] items-end justify-center px-6 pb-[14dvh] lg:min-h-[150dvh]">
-          <p data-travel-line className="display travel-line max-w-[20ch] text-center text-[clamp(2rem,6vw,3.75rem)] text-on-photo">
+          <p data-travel-line className="serif travel-line max-w-[20ch] text-center text-[clamp(2rem,6vw,3.75rem)] text-on-photo">
             Every night, somebody reads this meter.
           </p>
         </section>

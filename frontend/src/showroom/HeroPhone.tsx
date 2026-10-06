@@ -45,7 +45,7 @@ export function HeroPhone() {
           </PhoneFrame>
         </div>
       </div>
-      <p className="mt-4 text-[0.75rem] text-on-photo-muted">Sample figures</p>
+      <p className="mt-4 text-caption text-on-photo-muted">Sample figures</p>
     </div>
   );
 }

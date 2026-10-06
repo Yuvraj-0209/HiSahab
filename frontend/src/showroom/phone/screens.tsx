@@ -42,8 +42,8 @@ function CardHead({ Icon, title, caption, badge }: { Icon: ComponentType<IconPro
           <Icon size={20} />
         </span>
         <div className="min-w-0">
-          <p className="text-[0.9375rem] font-semibold text-ink">{title}</p>
-          <p className="truncate text-[0.8125rem] text-ink-muted">{caption}</p>
+          <p className="text-body font-semibold text-ink">{title}</p>
+          <p className="truncate text-footnote text-ink-muted">{caption}</p>
         </div>
       </div>
       {badge}
@@ -61,10 +61,10 @@ function ShiftBand({ status, hours }: { status: "open" | "closed"; hours: string
     <Card>
       <div className="flex items-center gap-2">
         <Pill kind={status === "open" ? "open" : "closed"}>{status}</Pill>
-        <span className="text-[0.8125rem] text-ink-muted">{DAY.shift}</span>
+        <span className="text-footnote text-ink-muted">{DAY.shift}</span>
       </div>
       <p className="mt-1.5 text-headline text-ink">{DAY.date}</p>
-      <p className="mt-0.5 text-[0.875rem] text-ink-muted">{hours}</p>
+      <p className="mt-0.5 text-callout text-ink-muted">{hours}</p>
     </Card>
   );
 }
@@ -121,20 +121,20 @@ function NozzleTile({ agrees }: { agrees: boolean }) {
   return (
     <div data-beat data-tile={agrees ? "agree" : "disagree"} className={`rounded-[var(--radius-card)] border bg-surface p-4 shadow-1 ${agrees ? "border-hairline" : "border-warning"}`}>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[0.9375rem] font-semibold text-ink">
+        <p className="text-body font-semibold text-ink">
           {METER.nozzle} <span className="font-normal text-ink-muted">· {METER.fuel}</span>
         </p>
         <span data-verdict>
           <Pill kind={agrees ? "open" : "review"}>{agrees ? "Confirmed" : "Needs review"}</Pill>
         </span>
       </div>
-      <dl className="tabular mt-3 grid grid-cols-[1fr_auto] gap-y-1.5 text-[0.9375rem]">
+      <dl className="tabular mt-3 grid grid-cols-[1fr_auto] gap-y-1.5 text-body">
         <dt className="text-ink-muted">Carried forward</dt>
         <dd className="text-right text-ink">{METER.carried}</dd>
         <dt className="text-ink-muted">The meter now</dt>
         <dd className={`text-right ${agrees ? "text-ink" : "font-semibold text-warning"}`}>{agrees ? METER.meterAgrees : METER.meterDisagrees}</dd>
       </dl>
-      <div className="mt-3 flex items-center gap-3 border-t border-hairline pt-3 text-[0.875rem]">
+      <div className="mt-3 flex items-center gap-3 border-t border-hairline pt-3 text-callout">
         {agrees ? (
           <>
             <Check />
@@ -166,7 +166,7 @@ export function CashFocus() {
     <Card>
       <CardHead Icon={VaultIcon} title="Collections" caption="How the money arrived" />
       <p className="tabular mt-4 text-title text-ink">{DAY.cashCounted}</p>
-      <p className="text-[0.8125rem] text-ink-muted">cash, counted into the locker</p>
+      <p className="text-footnote text-ink-muted">cash, counted into the locker</p>
       <div className="mt-2">
         <div data-beat>
           <ListRow label="Card" detail="One machine, one figure" value={DAY.cardTaken} />
@@ -196,7 +196,7 @@ export function UdhaarFocus() {
           className="aspect-[16/9] w-full object-cover"
         />
         <div className="flex items-center justify-between gap-3 px-4 py-3">
-          <p className="text-[0.9375rem] font-semibold text-ink">The slip, photographed</p>
+          <p className="text-body font-semibold text-ink">The slip, photographed</p>
           <Pill kind="open">Receipt attached</Pill>
         </div>
       </div>
@@ -222,7 +222,7 @@ export function GapFocus({ closed }: { closed: boolean }) {
     <Card>
       <div className="tabular">
         {GAP.rows.map((row) => (
-          <div data-beat key={row.label} className="flex items-baseline justify-between gap-4 border-b border-hairline py-2 text-[0.9375rem]">
+          <div data-beat key={row.label} className="flex items-baseline justify-between gap-4 border-b border-hairline py-2 text-body">
             <span className="text-ink-muted">
               <span className="inline-block w-4 text-ink-faint">{row.sign}</span>
               {row.label}
@@ -230,14 +230,14 @@ export function GapFocus({ closed }: { closed: boolean }) {
             <span className="text-ink">{row.value}</span>
           </div>
         ))}
-        <div data-beat className="flex items-baseline justify-between gap-4 border-b border-hairline-strong py-2 text-[0.9375rem] font-semibold">
+        <div data-beat className="flex items-baseline justify-between gap-4 border-b border-hairline-strong py-2 text-body font-semibold">
           <span className="text-ink">
             <span className="inline-block w-4" />
             He should be holding
           </span>
           <span className="text-ink">{GAP.accountable}</span>
         </div>
-        <div data-beat className="flex items-baseline justify-between gap-4 py-2 text-[0.9375rem]">
+        <div data-beat className="flex items-baseline justify-between gap-4 py-2 text-body">
           <span className="text-ink-muted">
             <span className="inline-block w-4" />
             He counted
@@ -267,12 +267,12 @@ export function BankFocus() {
       {BANK.map((line) => (
         <div data-beat key={line.narration} className="flex flex-col gap-2 border-b border-hairline py-3 last:border-b-0">
           <div className="flex items-baseline justify-between gap-3">
-            <p className="truncate font-mono text-[0.8125rem] text-ink">{line.narration}</p>
-            <p className="tabular shrink-0 text-[0.9375rem] font-semibold text-ink">{line.amount}</p>
+            <p className="truncate font-mono text-footnote text-ink">{line.narration}</p>
+            <p className="tabular shrink-0 text-body font-semibold text-ink">{line.amount}</p>
           </div>
           <div className="flex items-center gap-2.5">
             <Check tone={line.direction === "credit" ? "surplus" : "accent"} />
-            <span className="text-[0.8125rem] text-ink-muted">{line.verdict}</span>
+            <span className="text-footnote text-ink-muted">{line.verdict}</span>
           </div>
         </div>
       ))}

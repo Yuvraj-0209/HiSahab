@@ -23,7 +23,7 @@ function Tile({ title, body, className = "", children }: { title: string; body: 
       <article className="liftable flex h-full flex-col gap-5 rounded-[var(--radius-card)] border border-hairline bg-surface p-5 shadow-1 sm:p-6">
         <div>
           <h3 className="text-headline text-ink">{title}</h3>
-          <p className="mt-2 max-w-[38ch] text-[0.9375rem] leading-relaxed text-ink-muted">{body}</p>
+          <p className="mt-2 max-w-[38ch] text-body leading-relaxed text-ink-muted">{body}</p>
         </div>
         {children}
       </article>
@@ -51,18 +51,18 @@ export function Features() {
             <div>
               <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_13rem] md:items-end">
                 <div className="min-w-0">
-                  <p className="text-[0.8125rem] font-medium text-ink-muted">Sales, 1 to 10 September</p>
+                  <p className="text-footnote font-medium text-ink-muted">Sales, 1 to 10 September</p>
                   <p className="tabular mt-1 text-title text-ink">{MONTH.sales}</p>
                   <div className="mt-4">
                     <SalesBars days={DAYS} />
                   </div>
                 </div>
                 <div>
-                  <p className="text-[0.8125rem] font-medium text-ink-muted">Fuel mix</p>
+                  <p className="text-footnote font-medium text-ink-muted">Fuel mix</p>
                   <Donut slices={FUEL_MIX}>
-                    <span className="text-[0.75rem] text-ink-muted">3 fuels</span>
+                    <span className="text-caption text-ink-muted">3 fuels</span>
                   </Donut>
-                  <ul className="mt-2 flex flex-col gap-1 text-[0.8125rem]">
+                  <ul className="mt-2 flex flex-col gap-1 text-footnote">
                     {FUEL_MIX.map((fuel) => (
                       <li key={fuel.key} className="flex items-center justify-between gap-3">
                         <span className="flex items-center gap-2 text-ink">
@@ -75,7 +75,7 @@ export function Features() {
                   </ul>
                 </div>
               </div>
-              <p className="mt-4 border-t border-hairline pt-4 text-[0.875rem] text-ink-muted">
+              <p className="mt-4 border-t border-hairline pt-4 text-callout text-ink-muted">
                 Gross fuel margin <span className="tabular font-semibold text-ink">{MONTH.margin}</span>: the dealer's margin on litres and kilograms sold,
                 labelled for what it is. Not business profit, which also moves with stock held when prices change.
               </p>
@@ -106,9 +106,9 @@ export function Features() {
             <div className="mt-auto rounded-[var(--radius-control)] border border-hairline bg-surface-raised p-4">
               <div className="flex items-baseline justify-between gap-3 border-b border-hairline-strong pb-2.5">
                 <p className="wordmark text-[0.875rem] text-ink">HiSahab</p>
-                <p className="text-[0.75rem] text-ink-muted">{LEDGER.customer}</p>
+                <p className="text-caption text-ink-muted">{LEDGER.customer}</p>
               </div>
-              <dl className="tabular mt-2.5 grid grid-cols-[1fr_auto] gap-y-1.5 text-[0.875rem]">
+              <dl className="tabular mt-2.5 grid grid-cols-[1fr_auto] gap-y-1.5 text-callout">
                 <dt className="text-ink-muted">Owed before</dt>
                 <dd className="text-right text-ink">{LEDGER.bill.before}</dd>
                 <dt className="text-ink-muted">Udhaar</dt>
@@ -123,21 +123,21 @@ export function Features() {
 
           {/* §6.10: every money write carries an Idempotency-Key that belongs to the submission. */}
           <Tile title="Never recorded twice." body="On patchy 4G a save can time out and be sent again. Every save carries a key, so the second copy is recognised and nothing doubles.">
-            <div className="tabular mt-auto flex flex-col gap-2 text-[0.875rem]">
+            <div className="tabular mt-auto flex flex-col gap-2 text-callout">
               <div className="flex items-center justify-between gap-3 rounded-[var(--radius-control)] border border-hairline bg-surface-raised px-3.5 py-2.5">
                 <span className="text-ink">{TWICE.what}</span>
                 <span className="font-semibold text-ink">{TWICE.sum}</span>
               </div>
               <div className="flex items-center justify-between gap-3 rounded-[var(--radius-control)] border border-dashed border-hairline-strong px-3.5 py-2.5 text-ink-muted">
                 <span>Sent again, same key</span>
-                <span className="text-[0.75rem] font-medium tracking-[0.04em] uppercase">Not saved</span>
+                <span className="text-caption font-medium tracking-[0.04em] uppercase">Not saved</span>
               </div>
             </div>
           </Tile>
 
           {/* §5.3, §11 phase 11: append-only, admin-readable, outlet-scoped. */}
           <Tile className="lg:col-span-2" title="Who changed what, and what it was before." body="Every price, margin, customer limit and shift reopened is written to an audit trail nobody can edit, with the old value beside the new.">
-            <div className="tabular mt-auto grid grid-cols-1 gap-3 rounded-[var(--radius-control)] border border-hairline bg-surface-raised p-4 text-[0.875rem] sm:grid-cols-[1fr_auto_auto] sm:items-center">
+            <div className="tabular mt-auto grid grid-cols-1 gap-3 rounded-[var(--radius-control)] border border-hairline bg-surface-raised p-4 text-callout sm:grid-cols-[1fr_auto_auto] sm:items-center">
               <div>
                 <p className="font-semibold text-ink">{AUDIT.what}</p>
                 <p className="text-ink-muted">
@@ -153,7 +153,7 @@ export function Features() {
           <Tile title="Opens like an app." body="Add it to the home screen and it opens full-screen, without the browser around it. Nothing to install from a store.">
             <div className="mt-auto flex items-center gap-4">
               <img src="/icons/icon-192.png" alt="" width={56} height={56} loading="lazy" decoding="async" className="size-14 rounded-[14px] shadow-2" />
-              <p className="text-[0.875rem] text-ink-muted">HiSahab, on the home screen</p>
+              <p className="text-callout text-ink-muted">HiSahab, on the home screen</p>
             </div>
           </Tile>
         </div>

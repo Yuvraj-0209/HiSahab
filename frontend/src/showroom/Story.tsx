@@ -251,12 +251,12 @@ export function Story() {
                 <span className="story-dot absolute top-1 left-0 grid size-6 place-items-center rounded-full border bg-ground" aria-hidden="true">
                   <span className="size-2 rounded-full" />
                 </span>
-                <p className="tabular text-[0.8125rem] font-semibold tracking-[0.04em] text-accent">{step.when}</p>
-                <Words as="h3" text={step.title} className="display mt-2 block text-[clamp(2rem,4vw,3rem)] text-balance" />
-                <p className="story-body mt-4 max-w-[30rem] text-[1.0625rem] leading-relaxed">{step.body}</p>
+                <p className="tabular text-footnote font-semibold tracking-[0.04em] text-accent">{step.when}</p>
+                <Words as="h3" text={step.title} className="serif mt-2 block text-[clamp(2rem,4vw,3rem)] text-balance" />
+                <p className="story-body mt-4 max-w-[30rem] text-lead leading-relaxed">{step.body}</p>
                 {pinned ? null : (
                   <div data-screen className="mt-8 max-w-[26rem]">
-                    <p className="mb-3 text-[0.8125rem] text-ink-muted">
+                    <p className="mb-3 text-footnote text-ink-muted">
                       On the <span className="font-medium text-ink">{step.screen.title}</span> screen
                     </p>
                     <figure className="m-0">

@@ -73,7 +73,7 @@ export function Shell() {
           <button
             type="button"
             onClick={signOut}
-            className="pressable flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[0.8125rem] font-medium text-ink-muted hover:bg-surface-sunken"
+            className="pressable flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1.5 text-footnote font-medium text-ink-muted hover:bg-surface-sunken"
           >
             <SignOutIcon size={18} aria-hidden />
             <span className="hidden sm:inline">Log out</span>
@@ -142,7 +142,7 @@ function TabBar({
               type="button"
               aria-current={active ? "page" : undefined}
               onClick={() => onSelect(tab.route)}
-              className={`pressable relative flex h-12 flex-col items-center justify-center gap-0.5 rounded-full text-[0.6875rem] font-medium transition-colors lg:h-14 lg:text-[0.75rem] ${active ? "text-accent" : "text-ink-muted"}`}
+              className={`pressable relative flex h-12 flex-col items-center justify-center gap-0.5 rounded-full text-micro font-medium transition-colors lg:h-14 lg:text-caption ${active ? "text-accent" : "text-ink-muted"}`}
             >
               <tab.Icon size={22} weight={active ? "fill" : "regular"} aria-hidden />
               {tab.label}

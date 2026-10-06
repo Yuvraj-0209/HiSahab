@@ -204,9 +204,43 @@
   --radius-control: 12px;
   --radius-sheet: 26px;
 
-  /* The type ramp's top three steps (Phase 24 D6), as `text-display`, `text-title` and
-   * `text-headline`. Below these the screens keep their existing sizes; the ramp exists so the
-   * new large titles and hero figures share one scale instead of three guesses. */
+  /* The type scale (Phase 24 D6 began it with the top three steps; Phase 28 finished it). Every
+   * text size in the app is one of these -- a structural test refuses a one-off `text-[…rem]`
+   * in screens/, ui/ and app/ -- so two screens cannot disagree about what a card title is.
+   *
+   *   micro     .6875  tab labels, request ids
+   *   caption   .75    pills, labels over a figure
+   *   footnote  .8125  captions, hints, row details
+   *   callout   .875   secondary rows, small buttons
+   *   body      .9375  the reading size
+   *   lead      1.0625 compact chrome titles, emphasised figures in a row
+   *   subhead   1.125  card titles                                  (semibold)
+   *   headline  1.25   section figures, tile headings               (semibold)
+   *   amount    1.5    a secondary figure beside the hero one       (semibold)
+   *   title     1.875  large screen titles                          (semibold+)
+   *   figure    2.25   the one figure a card exists to show         (semibold)
+   *   display   2.75   the Summary's headline figure on a wide screen
+   *
+   * The five reading sizes carry no line-height of their own, so swapping a one-off size for one
+   * of them moved nothing: the line-height is still the one around it. */
+  --text-micro: 0.6875rem;
+  --text-caption: 0.75rem;
+  --text-footnote: 0.8125rem;
+  --text-callout: 0.875rem;
+  --text-body: 0.9375rem;
+  --text-lead: 1.0625rem;
+  --text-subhead: 1.125rem;
+  --text-subhead--line-height: 1.3;
+  --text-subhead--letter-spacing: -0.015em;
+  --text-subhead--font-weight: 600;
+  --text-amount: 1.5rem;
+  --text-amount--line-height: 1.15;
+  --text-amount--letter-spacing: -0.02em;
+  --text-amount--font-weight: 600;
+  --text-figure: 2.25rem;
+  --text-figure--line-height: 1;
+  --text-figure--letter-spacing: -0.03em;
+  --text-figure--font-weight: 600;
   --text-display: 2.75rem;
   --text-display--line-height: 1.05;
   --text-display--letter-spacing: -0.035em;
@@ -924,7 +958,9 @@ select.field-control {
   text-transform: uppercase;
 }
 
-.display {
+/* The serif voice of the front door's headlines (§13.28). Called `.serif` since Phase 28: as
+ * `.display` it read like the `text-display` size token, which is a different thing entirely. */
+.serif {
   font-family: var(--font-display);
   letter-spacing: -0.02em;
   line-height: 1.04;

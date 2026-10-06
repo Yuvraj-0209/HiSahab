@@ -161,13 +161,13 @@ function ToastCard({ entry }: { entry: ToastEntry }) {
     >
       <div className="flex items-start gap-3">
         <div className="min-w-0 grow">
-          <p className="text-[0.9375rem] leading-snug text-ink">{entry.message}</p>
-          {entry.detail ? <p className="mt-0.5 text-[0.8125rem] text-ink-muted">{entry.detail}</p> : null}
+          <p className="text-body leading-snug text-ink">{entry.message}</p>
+          {entry.detail ? <p className="mt-0.5 text-footnote text-ink-muted">{entry.detail}</p> : null}
         </div>
         {entry.action ? (
           <button
             type="button"
-            className="pressable shrink-0 rounded-lg px-2 py-1 text-[0.875rem] font-medium text-accent"
+            className="pressable shrink-0 rounded-lg px-2 py-1 text-callout font-medium text-accent"
             onClick={() => {
               dismiss(entry.id);
               entry.action?.onClick();
@@ -187,7 +187,7 @@ function ToastCard({ entry }: { entry: ToastEntry }) {
         )}
       </div>
       {entry.requestId ? (
-        <p className="mt-1.5 text-[0.6875rem] tracking-wide text-ink-faint select-all">Reference {entry.requestId}</p>
+        <p className="mt-1.5 text-micro tracking-wide text-ink-faint select-all">Reference {entry.requestId}</p>
       ) : null}
     </div>
   );

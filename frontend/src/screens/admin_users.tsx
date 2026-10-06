@@ -53,7 +53,7 @@ export function UsersScreen() {
       <AdminList title="Users" query={users}>
         {(rows) => (
           <div className="flex flex-col gap-3">
-            <p className="text-[0.8125rem] text-ink-muted">
+            <p className="text-footnote text-ink-muted">
               Email and password live in Supabase, not here. This app decides what somebody may do; it never stores how they prove who they are, so there is no password reset and no
               email change on this screen.
             </p>
@@ -162,7 +162,7 @@ function EditUserForm({ user, onDone }: { user: Schemas["UserResponse"]; onDone:
         label="Active"
         hint="Switching this off revokes their access at this outlet immediately. Nothing they recorded is removed. The last remaining admin cannot be switched off."
       />
-      <p className="text-[0.8125rem] text-ink-muted">
+      <p className="text-footnote text-ink-muted">
         Added {dateTime(user.created_at)}.
         {user.profile_is_active ? "" : " This account is deactivated across every outlet, which only the server command can undo."}
       </p>

@@ -49,7 +49,7 @@ export function LifecycleStrip({ state }: { state: Pick<DayState, "reached" | "l
           </span>
         ))}
       </div>
-      <span className="text-[0.8125rem] whitespace-nowrap text-ink-muted">{state.label}</span>
+      <span className="text-footnote whitespace-nowrap text-ink-muted">{state.label}</span>
     </div>
   );
 }

@@ -40,7 +40,7 @@ export function Button({
   type = "button",
   ...rest
 }: ButtonProps) {
-  const sizing = size === "sm" ? "h-9 px-3 text-[0.875rem]" : "h-11 px-4 text-[0.9375rem]";
+  const sizing = size === "sm" ? "h-9 px-3 text-callout" : "h-11 px-4 text-body";
   const button = (
     <button
       type={type}
@@ -55,7 +55,7 @@ export function Button({
     return (
       <div className={`flex flex-col gap-1 ${block ? "w-full" : ""}`}>
         {button}
-        <p className="text-[0.8125rem] leading-snug text-ink-faint">{reason}</p>
+        <p className="text-footnote leading-snug text-ink-faint">{reason}</p>
       </div>
     );
   }
@@ -89,7 +89,7 @@ export function Card({
  * the label's parent is the section it names -- sticky is bounded by the parent. */
 export function SectionLabel({ children, className = "", sticky = false }: { children: ReactNode; className?: string; sticky?: boolean }) {
   const label = (
-    <h3 className={`${sticky ? "section-sticky-label py-1.5" : "mb-2"} text-[0.75rem] font-semibold tracking-[0.06em] text-ink-faint uppercase ${className}`}>
+    <h3 className={`${sticky ? "section-sticky-label py-1.5" : "mb-2"} text-caption font-semibold tracking-[0.06em] text-ink-faint uppercase ${className}`}>
       {children}
     </h3>
   );
@@ -113,11 +113,11 @@ export function ListRow({
   return (
     <div className="flex items-baseline justify-between gap-4 border-b border-hairline py-3 last:border-b-0">
       <div className="min-w-0">
-        <div className={`text-[0.9375rem] ${strong ? "font-semibold text-ink" : "text-ink"}`}>{label}</div>
-        {detail ? <div className="mt-0.5 text-[0.8125rem] text-ink-muted">{detail}</div> : null}
+        <div className={`text-body ${strong ? "font-semibold text-ink" : "text-ink"}`}>{label}</div>
+        {detail ? <div className="mt-0.5 text-footnote text-ink-muted">{detail}</div> : null}
       </div>
       {value !== undefined ? (
-        <div className={`tabular shrink-0 text-right text-[0.9375rem] ${strong ? "font-semibold" : ""} ${valueClassName}`}>
+        <div className={`tabular shrink-0 text-right text-body ${strong ? "font-semibold" : ""} ${valueClassName}`}>
           {value}
         </div>
       ) : null}
@@ -155,7 +155,7 @@ export function Pill({ kind = "neutral", children }: { kind?: PillKind; children
     <span
       key={changed ? kind : "first"}
       data-changed={changed ? "" : undefined}
-      className={`pill inline-flex h-6 items-center rounded-full px-2.5 text-[0.75rem] font-medium whitespace-nowrap ${PILL[kind]}`}
+      className={`pill inline-flex h-6 items-center rounded-full px-2.5 text-caption font-medium whitespace-nowrap ${PILL[kind]}`}
     >
       {children}
     </span>
@@ -165,7 +165,7 @@ export function Pill({ kind = "neutral", children }: { kind?: PillKind; children
 /** Every list says what an empty one means, and how it gets filled. */
 export function Empty({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-[var(--radius-card)] border border-dashed border-hairline-strong px-5 py-8 text-center text-[0.9375rem] text-ink-muted">
+    <div className="rounded-[var(--radius-card)] border border-dashed border-hairline-strong px-5 py-8 text-center text-body text-ink-muted">
       {children}
     </div>
   );
@@ -175,7 +175,7 @@ export function Empty({ children }: { children: ReactNode }) {
  * exceptions). Showing a partial list silently is how a reader trusts a wrong total. */
 export function TruncationNotice({ count }: { count: number }) {
   return (
-    <p className="rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-[0.8125rem] text-warning">
+    <p className="rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-footnote text-warning">
       Showing the first {count}. There are more rows than this view lists.
     </p>
   );
@@ -186,9 +186,9 @@ export function ErrorCard({ error, onRetry }: { error: unknown; onRetry?: () => 
   return (
     <Card>
       <div className="flex flex-col gap-3">
-        <p className="text-[0.9375rem] text-ink">{explain(error)}</p>
+        <p className="text-body text-ink">{explain(error)}</p>
         {requestId ? (
-          <p className="text-[0.6875rem] tracking-wide text-ink-faint select-all">Reference {requestId}</p>
+          <p className="text-micro tracking-wide text-ink-faint select-all">Reference {requestId}</p>
         ) : null}
         {onRetry ? (
           <div>

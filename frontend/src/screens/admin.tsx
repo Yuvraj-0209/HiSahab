@@ -86,14 +86,14 @@ export function AdminHubScreen() {
               <Icon size={20} aria-hidden />
             </span>
             <span className="min-w-0 grow">
-              <span className="block text-[0.9375rem] font-medium text-ink">{label}</span>
-              <span className="block text-[0.8125rem] text-ink-muted">{hint}</span>
+              <span className="block text-body font-medium text-ink">{label}</span>
+              <span className="block text-footnote text-ink-muted">{hint}</span>
             </span>
             <CaretRightIcon size={16} className="shrink-0 text-ink-faint" aria-hidden />
           </button>
         ))}
       </div>
-      <p className="mt-4 text-[0.8125rem] text-ink-muted">
+      <p className="mt-4 text-footnote text-ink-muted">
         Nothing here can be deleted. A row no longer used is deactivated: it refuses new entries while everything historical keeps reading and reporting.
       </p>
     </>
@@ -162,8 +162,8 @@ export function AdminCard({
       <Card>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="truncate text-[1.0625rem] font-semibold text-ink">{title}</h2>
-            {caption ? <p className="text-[0.8125rem] text-ink-muted">{caption}</p> : null}
+            <h2 className="truncate text-lead font-semibold text-ink">{title}</h2>
+            {caption ? <p className="text-footnote text-ink-muted">{caption}</p> : null}
           </div>
           <div className="flex shrink-0 flex-wrap justify-end gap-1.5">{status}</div>
         </div>
@@ -236,7 +236,7 @@ export function FuelTypesScreen() {
       <AdminList title="Fuel types" query={types}>
         {(rows) => (
           <div className="flex flex-col gap-3">
-            <p className="text-[0.8125rem] text-ink-muted">A fuel's code and unit can never change: a fuel that is genuinely different is a new row. Everything else is editable.</p>
+            <p className="text-footnote text-ink-muted">A fuel's code and unit can never change: a fuel that is genuinely different is a new row. Everything else is editable.</p>
             {rows.length ? (
               <AdminGrid>
                 {rows.map((type) => (
@@ -357,7 +357,7 @@ export function NozzlesScreen() {
             ) : (
               <Empty>No nozzles yet. Readings cannot be recorded until at least one exists.</Empty>
             )}
-            <p className="text-[0.8125rem] text-ink-muted">A nozzle's fuel and rollover ceiling are fixed at creation: both are baked into every reading already recorded on it.</p>
+            <p className="text-footnote text-ink-muted">A nozzle's fuel and rollover ceiling are fixed at creation: both are baked into every reading already recorded on it.</p>
           </div>
         )}
       </AdminList>
@@ -454,7 +454,7 @@ export function CategoriesScreen() {
           <div className="flex flex-col gap-3">
             {/* §14, twice over. The enum that once made this impossible is gone, so the warning
              * lives where somebody would otherwise create the category. */}
-            <p className="rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-[0.8125rem] text-warning">
+            <p className="rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-footnote text-warning">
               Never create a category for a fuel restock, a tanker delivery, or an IOCL or PAD settlement. That money leaves the bank, not the drawer: filing it here makes the cash
               engine invent a daily shortage that never happened.
             </p>
@@ -557,7 +557,7 @@ export function ShiftTemplatesScreen() {
         {(rows) => (
           <div className="flex flex-col gap-3">
             {/* §5.1, §14: a default at creation, never consulted again. */}
-            <p className="text-[0.8125rem] text-ink-muted">
+            <p className="text-footnote text-ink-muted">
               These supply the default start and end when a shift is opened. Changing one never alters a shift that already exists: the times are copied onto the shift when it is created.
             </p>
             {rows.length ? (
@@ -634,7 +634,7 @@ function TemplateForm({ existing, onDone }: { existing: Template | null; onDone:
         <TextField form={form} name="starts_at_local" label="Starts" type="time" required />
         <TextField form={form} name="ends_at_local" label="Ends" type="time" required />
       </div>
-      <p className="-mt-2 text-[0.8125rem] text-ink-faint">An end earlier than the start means the shift crosses midnight.</p>
+      <p className="-mt-2 text-footnote text-ink-faint">An end earlier than the start means the shift crosses midnight.</p>
       {existing ? <CheckboxField form={form} name="is_active" label="Active" /> : null}
       <SaveButton busy={busy} creating={!existing} onClick={submit} />
     </Fields>

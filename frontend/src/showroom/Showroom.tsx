@@ -107,7 +107,7 @@ function Close({ outletName }: { outletName?: string | undefined }) {
         {CONTACT ? (
           <a
             href={CONTACT}
-            className="pressable inline-flex h-12 items-center justify-center rounded-[var(--radius-control)] bg-accent px-6 text-[1rem] font-medium text-on-accent shadow-2 hover:bg-accent-pressed"
+            className="pressable inline-flex h-12 items-center justify-center rounded-[var(--radius-control)] bg-accent px-6 text-base font-medium text-on-accent shadow-2 hover:bg-accent-pressed"
           >
             Talk to us
           </a>
@@ -116,7 +116,7 @@ function Close({ outletName }: { outletName?: string | undefined }) {
           Sign in
         </Button>
       </div>
-      <footer className="mt-24 flex flex-col items-center gap-2 text-[0.8125rem] text-ink-faint">
+      <footer className="mt-24 flex flex-col items-center gap-2 text-footnote text-ink-faint">
         <p className="wordmark text-[1rem] text-ink-muted">HiSahab</p>
         <p>{outletName ? `${outletName}, on HiSahab` : "Daily stock and cash flow, for the pump"}</p>
       </footer>

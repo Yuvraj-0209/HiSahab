@@ -86,10 +86,10 @@ export function CashPositionScreen() {
            * comparison above explains it, and nothing on the screen should outrank it. Its words
            * ("short", "surplus", "not declared") come from gapLabel, never from a colour alone. */}
           <div className="mt-4 flex flex-col gap-1 border-t border-hairline pt-4">
-            <span className="text-[0.8125rem] font-medium text-ink-muted">Gap</span>
+            <span className="text-footnote font-medium text-ink-muted">Gap</span>
             <span className={`tabular text-title break-words ${gap.className}`}>{gap.text}</span>
           </div>
-          <p className="mt-2 text-[0.8125rem] text-ink-muted">
+          <p className="mt-2 text-footnote text-ink-muted">
             {p.declared_cash === null
               ? "Nobody has declared cash for this shift, so there is nothing to compare against. That is not the same as a gap of zero."
               : "Positive means short, negative means a surplus. Nothing here is written: a gap becomes a debt only when a manager books it."}
@@ -99,7 +99,7 @@ export function CashPositionScreen() {
         {p.incomplete ? (
           <Card className="lg:col-span-2">
             <Pill kind="review">incomplete</Pill>
-            <p className="mt-2 text-[0.8125rem] text-ink-muted">
+            <p className="mt-2 text-footnote text-ink-muted">
               Some nozzles have no closing reading yet, so the accountable figure is partial.
             </p>
           </Card>
@@ -123,7 +123,7 @@ export function CashPositionScreen() {
           <div className="mt-1 border-t-2 border-hairline-strong">
             <ListRow label="Accountable cash" value={<Amount value={p.accountable_cash} />} strong />
           </div>
-          <p className="mt-2 text-[0.8125rem] text-ink-muted">
+          <p className="mt-2 text-footnote text-ink-muted">
             What his sales should have put in his hands. Expenses are not subtracted here: the pump's bills come out of the locker, not out of what one salesman is accountable for.
           </p>
         </Card>
@@ -134,7 +134,7 @@ export function CashPositionScreen() {
           <Card>
             <SectionLabel>Paid out during this shift</SectionLabel>
             <ListRow label="Cash expenses" value={<Amount value={p.cash_expenses} />} />
-            <p className="mt-2 text-[0.8125rem] text-ink-muted">
+            <p className="mt-2 text-footnote text-ink-muted">
               Not part of the figure above. If he paid these from the cash in his hand, expect the gap to be about this much. The locker is lighter by it either way, and the day's expected closing subtracts it in full.
             </p>
           </Card>
@@ -143,7 +143,7 @@ export function CashPositionScreen() {
         <Card>
           <SectionLabel>Booked against this shift</SectionLabel>
           <ListRow label="Shortfalls booked" value={<Amount value={p.shortfalls_booked} />} />
-          <p className="mt-2 text-[0.8125rem] text-ink-muted">
+          <p className="mt-2 text-footnote text-ink-muted">
             Subtracted from the day's expected closing, so the same money is not counted both as a debt and as cash in the locker.
           </p>
           <div className="mt-4">
@@ -162,9 +162,9 @@ export function CashPositionScreen() {
 function Figure({ label, caption, value }: { label: string; caption: string; value: ReactNode }) {
   return (
     <div className="rounded-[var(--radius-control)] bg-surface-sunken px-4 py-3">
-      <p className="text-[0.8125rem] font-medium text-ink-muted">{label}</p>
-      <p className="mt-1 text-[1.5rem] leading-tight font-semibold tracking-[-0.02em] text-ink">{value}</p>
-      <p className="mt-0.5 text-[0.75rem] text-ink-muted">{caption}</p>
+      <p className="text-footnote font-medium text-ink-muted">{label}</p>
+      <p className="mt-1 text-amount text-ink">{value}</p>
+      <p className="mt-0.5 text-caption text-ink-muted">{caption}</p>
     </div>
   );
 }
@@ -186,22 +186,22 @@ function Term({ label, value, subtracted = false }: { label: string; value: stri
 }
 
 function Divider({ children }: { children: ReactNode }) {
-  return <p className="pt-3 pb-1 text-[0.75rem] font-semibold tracking-[0.06em] text-ink-faint uppercase">{children}</p>;
+  return <p className="pt-3 pb-1 text-caption font-semibold tracking-[0.06em] text-ink-faint uppercase">{children}</p>;
 }
 
 function BookingControl({ position, onBook }: { position: Position; onBook: () => void }) {
   if (position.gap === null) {
     return (
-      <p className="text-[0.8125rem] text-ink-muted">
+      <p className="text-footnote text-ink-muted">
         Booking a shortfall needs a declared cash figure first. There is no gap to book against a blank.
       </p>
     );
   }
-  if (isZero(position.gap)) return <p className="text-[0.8125rem] text-ink-muted">The drawer balances. Nothing to book.</p>;
+  if (isZero(position.gap)) return <p className="text-footnote text-ink-muted">The drawer balances. Nothing to book.</p>;
   // A surplus is not a shortfall, and V1 has no record type for one.
   if (isNegative(position.gap)) {
     return (
-      <p className="text-[0.8125rem] text-ink-muted">
+      <p className="text-footnote text-ink-muted">
         This shift shows a surplus rather than a shortfall. V1 has no record type for a surplus: it stays visible here and in the day's variance.
       </p>
     );
@@ -241,7 +241,7 @@ function BookingForm({ shiftId, position, onDone }: { shiftId: string; position:
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2 rounded-[var(--radius-control)] bg-warning-tint px-4 py-3 text-[0.8125rem] text-ink">
+      <div className="flex flex-col gap-2 rounded-[var(--radius-control)] bg-warning-tint px-4 py-3 text-footnote text-ink">
         <p>This records a debt against the salesman who carried this shift's drawer. It is repaid in cash.</p>
         <p>A gap is more often a mistyped reading, a forgotten UPI figure or an unrecorded udhaar slip than it is theft. Check those first.</p>
       </div>

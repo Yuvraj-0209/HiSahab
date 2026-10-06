@@ -113,17 +113,17 @@ interface FieldFrameProps {
 function FieldFrame({ id, label, hint, error, children }: FieldFrameProps) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-[0.8125rem] font-medium text-ink-muted">
+      <label htmlFor={id} className="text-footnote font-medium text-ink-muted">
         {label}
       </label>
       {children}
       {hint ? (
-        <p id={`${id}-hint`} className="text-[0.8125rem] leading-snug text-ink-faint">
+        <p id={`${id}-hint`} className="text-footnote leading-snug text-ink-faint">
           {hint}
         </p>
       ) : null}
       {error ? (
-        <p id={`${id}-error`} role="alert" className="text-[0.8125rem] leading-snug text-short">
+        <p id={`${id}-error`} role="alert" className="text-footnote leading-snug text-short">
           {error}
         </p>
       ) : null}
@@ -263,16 +263,16 @@ export function CheckboxField<T extends FormValues>({ form, name, label, hint, d
           aria-describedby={describedBy(id, hint, error)}
         />
         <span className="min-w-0 grow">
-          <span className="block text-[0.9375rem] text-ink">{label}</span>
+          <span className="block text-body text-ink">{label}</span>
           {hint ? (
-            <span id={`${id}-hint`} className="mt-0.5 block text-[0.8125rem] text-ink-faint">
+            <span id={`${id}-hint`} className="mt-0.5 block text-footnote text-ink-faint">
               {hint}
             </span>
           ) : null}
         </span>
       </label>
       {error ? (
-        <p id={`${id}-error`} role="alert" className="text-[0.8125rem] text-short">
+        <p id={`${id}-error`} role="alert" className="text-footnote text-short">
           {error}
         </p>
       ) : null}

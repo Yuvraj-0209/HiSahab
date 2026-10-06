@@ -3905,10 +3905,11 @@ to occur on this specific project.
 - **Bring back ScrollSmoother, or any smooth-scroll wrapper.** It moved the sign-in form, which
   the guardrail above forbids, and it breaks `position: sticky`. Native scroll and a numeric
   `scrub` give the story its smoothness (Phase 28)
-- **Write a one-off text size (`text-[0.8125rem]`).** Use the type scale's named steps (`body`,
-  `callout`, `footnote`, `caption`, `micro`, `figure`, and the headline/title/display trio). A
-  structural test refuses new arbitrary sizes in `screens/`, `ui/` and `app/`, with an exemption
-  list that gives a reason for each entry (Phase 28)
+- **Write a one-off text size (`text-[0.8125rem]`).** Use the type scale's named steps: `micro`,
+  `caption`, `footnote`, `callout`, `body`, `lead`, `subhead`, `headline`, `amount`, `title`,
+  `figure` and `display` (styles.css `@theme`). A structural test refuses a new arbitrary size in
+  `screens/`, `ui/` and `app/`. Its one exemption is the wordmark, a single-weight serif that a
+  weighted step would fake-bold (Phase 28)
 - **Install a 21st.dev component or the Motion package to get an effect.** Port it: the
   component's dependencies are a second animation engine, an icon set and a headless-UI library
   this codebase does not use, each one third-party code with the session token in reach (§13.19,

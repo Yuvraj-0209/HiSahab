@@ -129,7 +129,7 @@ function SummaryBody({ report }: { report: Report }) {
         ) : (
           <Empty>No days in this window.</Empty>
         )}
-        <p className="mt-2 text-[0.8125rem] text-ink-muted">Bar height is relative to the tallest day in the window.</p>
+        <p className="mt-2 text-footnote text-ink-muted">Bar height is relative to the tallest day in the window.</p>
       </Card>
       <FuelCard report={report} />
       <ExpensesCard report={report} />
@@ -144,9 +144,9 @@ function SummaryBody({ report }: { report: Report }) {
 function Stat({ label, children, note }: { label: string; children: ReactNode; note?: ReactNode }) {
   return (
     <div className="min-w-0">
-      <p className="text-[0.8125rem] font-medium text-ink-muted">{label}</p>
-      <p className="tabular mt-0.5 truncate text-[1.25rem] font-semibold tracking-[-0.02em] text-ink sm:text-[1.375rem]">{children}</p>
-      {note ? <p className="mt-0.5 text-[0.75rem] text-ink-faint">{note}</p> : null}
+      <p className="text-footnote font-medium text-ink-muted">{label}</p>
+      <p className="tabular mt-0.5 truncate text-headline text-ink sm:text-amount">{children}</p>
+      {note ? <p className="mt-0.5 text-caption text-ink-faint">{note}</p> : null}
     </div>
   );
 }
@@ -165,11 +165,11 @@ function Headline({ report }: { report: Report }) {
     <Card>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:gap-10">
         <div className="flex flex-col justify-center">
-          <p className="text-[0.8125rem] font-medium text-ink-muted">Total sales</p>
-          <p className="tabular mt-1 text-[2.25rem] leading-none font-semibold tracking-[-0.03em] text-ink sm:text-[2.75rem]">
+          <p className="text-footnote font-medium text-ink-muted">Total sales</p>
+          <p className="tabular mt-1 text-figure text-ink sm:text-display">
             <Amount value={report.total_sales} />
           </p>
-          <p className="mt-2 text-[0.8125rem] text-ink-muted">
+          <p className="mt-2 text-footnote text-ink-muted">
             Fuel and non-fuel, across {report.trading_days} trading day
             {report.trading_days === 1 ? "" : "s"}.
           </p>
@@ -194,7 +194,7 @@ function Headline({ report }: { report: Report }) {
           ))}
         </div>
       </div>
-      <p className="mt-5 border-t border-hairline pt-4 text-[0.8125rem] text-ink-muted">
+      <p className="mt-5 border-t border-hairline pt-4 text-footnote text-ink-muted">
         {missing.length
           ? `Gross margin is withheld because no dealer commission has been entered for ${missing.join(", ")}. A partial total presented as a total would be worse than none. Enter it under Admin, Margins.`
           : // §13.7 requires this label wherever the figure is shown.
@@ -203,7 +203,7 @@ function Headline({ report }: { report: Report }) {
         Litres and kilograms are different measures, so they are never added together.
       </p>
       {report.partial ? (
-        <p className="mt-3 rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-[0.8125rem] text-warning">
+        <p className="mt-3 rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-footnote text-warning">
           At least one day in this window could not be fully calculated, from a missing reading or price. These totals are a floor, not a complete
           figure.
         </p>
@@ -239,18 +239,18 @@ function FuelCard({ report }: { report: Report }) {
             {/* The centre swaps between the server's strings; nothing is counted or tweened. */}
             {focus ? (
               <>
-                <span className="text-[0.8125rem] font-medium text-ink-muted">{focus.display_name}</span>
-                <span className="tabular text-[1.125rem] font-semibold tracking-[-0.02em] text-ink sm:text-[1.25rem]">
+                <span className="text-footnote font-medium text-ink-muted">{focus.display_name}</span>
+                <span className="tabular text-subhead text-ink sm:text-headline">
                   {format(focus.sale_value)}
                 </span>
-                {focus.share_pct ? <span className="tabular text-[0.8125rem] text-ink-muted">{focus.share_pct} of fuel</span> : null}
+                {focus.share_pct ? <span className="tabular text-footnote text-ink-muted">{focus.share_pct} of fuel</span> : null}
               </>
             ) : (
               <>
-                <span className="tabular text-[1.125rem] font-semibold tracking-[-0.02em] text-ink sm:text-[1.25rem]">
+                <span className="tabular text-subhead text-ink sm:text-headline">
                   {format(report.fuel_sales_total, { absent: "not known" })}
                 </span>
-                <span className="text-[0.8125rem] text-ink-muted">all fuel</span>
+                <span className="text-footnote text-ink-muted">all fuel</span>
               </>
             )}
           </Donut>
@@ -305,29 +305,29 @@ function FuelRow({
       <span className="flex items-baseline justify-between gap-3">
         <span className="flex min-w-0 items-center gap-2.5">
           <Swatch colour={colour} />
-          <span className="truncate text-[1.0625rem] font-semibold text-ink">{line.display_name}</span>
-          {line.share_pct ? <span className="tabular text-[0.8125rem] text-ink-muted">{line.share_pct}</span> : null}
+          <span className="truncate text-lead font-semibold text-ink">{line.display_name}</span>
+          {line.share_pct ? <span className="tabular text-footnote text-ink-muted">{line.share_pct}</span> : null}
         </span>
-        <span className="tabular shrink-0 text-[1.125rem] font-semibold text-ink">{format(line.sale_value)}</span>
+        <span className="tabular shrink-0 text-subhead text-ink">{format(line.sale_value)}</span>
       </span>
       <span className="mt-2 grid max-w-xl grid-cols-2 gap-x-4 gap-y-1 pl-5 sm:grid-cols-3">
         <span className="flex flex-col">
-          <span className="text-[0.75rem] text-ink-faint">Sold</span>
+          <span className="text-caption text-ink-faint">Sold</span>
           {/* §4.5: the unit is read from the fuel, never assumed to be litres. */}
-          <span className="tabular text-[1rem] text-ink">{quantity(line.quantity, line.unit_of_measure)}</span>
+          <span className="tabular text-base text-ink">{quantity(line.quantity, line.unit_of_measure)}</span>
         </span>
         <span className="flex flex-col">
-          <span className="text-[0.75rem] text-ink-faint">Gross margin</span>
+          <span className="text-caption text-ink-faint">Gross margin</span>
           {line.gross_fuel_margin === null ? (
-            <span className="t-absent text-[1rem]">margin not entered</span>
+            <span className="t-absent text-base">margin not entered</span>
           ) : (
-            <span className="tabular text-[1rem] text-ink">{format(line.gross_fuel_margin)}</span>
+            <span className="tabular text-base text-ink">{format(line.gross_fuel_margin)}</span>
           )}
         </span>
         {line.margin_per_unit !== null ? (
           <span className="flex flex-col">
-            <span className="text-[0.75rem] text-ink-faint">Commission</span>
-            <span className="tabular text-[1rem] text-ink">
+            <span className="text-caption text-ink-faint">Commission</span>
+            <span className="tabular text-base text-ink">
               {format(line.margin_per_unit)} / {unit}
             </span>
           </span>
@@ -390,7 +390,7 @@ function ExpensesCard({ report }: { report: Report }) {
     <Card>
       <div className="mb-3 flex items-baseline justify-between gap-3">
         <SectionLabel className="mb-0!">Expenses by category</SectionLabel>
-        <span className="tabular text-[0.9375rem] font-semibold text-ink">{format(report.expenses_total)}</span>
+        <span className="tabular text-body font-semibold text-ink">{format(report.expenses_total)}</span>
       </div>
       {rows.length && selected ? (
         <div className="grid gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-6">
@@ -412,7 +412,7 @@ function ExpensesCard({ report }: { report: Report }) {
               onPoint={point}
               onUnpoint={unpoint}
             />
-            <p className="mt-2 px-3 text-[0.8125rem] text-ink-muted">
+            <p className="mt-2 px-3 text-footnote text-ink-muted">
               {canHover ? "Point at a category, or choose it, to see where the money went." : "Tap a category to see where the money went."}
             </p>
           </div>
@@ -470,13 +470,13 @@ function ExpenseLedger({ from, to, code, share }: { from: string; to: string; co
           <div data-ledger-body className="flex flex-col">
             <div className="flex items-start justify-between gap-3 px-1 pb-3">
               <div className="min-w-0">
-                <p className="truncate text-[1.0625rem] font-semibold text-ink">{data.display_name}</p>
-                <p className="text-[0.8125rem] text-ink-muted">
+                <p className="truncate text-lead font-semibold text-ink">{data.display_name}</p>
+                <p className="text-footnote text-ink-muted">
                   {data.row_count} {data.row_count === 1 ? "entry" : "entries"}
                   {share ? ` · ${share} of all expenses` : ""}
                 </p>
               </div>
-              <span className="tabular shrink-0 text-[1.25rem] font-semibold tracking-[-0.02em] text-ink">{format(data.total)}</span>
+              <span className="tabular shrink-0 text-headline text-ink">{format(data.total)}</span>
             </div>
             {data.truncated ? (
               <div className="mb-2">
@@ -492,11 +492,11 @@ function ExpenseLedger({ from, to, code, share }: { from: string; to: string; co
                       onClick={() => navigate(`/days/${day.business_date}`)}
                       className="flex w-full items-center justify-between gap-3 border-b border-hairline px-3.5 py-2 text-left hover:bg-surface-raised"
                     >
-                      <span className="flex items-center gap-1.5 text-[0.8125rem] font-medium text-ink-muted">
+                      <span className="flex items-center gap-1.5 text-footnote font-medium text-ink-muted">
                         {businessDateWeekday(day.business_date)}, {businessDate(day.business_date)}
                         <CaretRightIcon size={12} weight="bold" aria-hidden />
                       </span>
-                      <span className="tabular text-[0.875rem] font-semibold text-ink">{format(day.total)}</span>
+                      <span className="tabular text-callout font-semibold text-ink">{format(day.total)}</span>
                     </button>
                     <ul>
                       {day.items.map((item) => (
@@ -505,17 +505,17 @@ function ExpenseLedger({ from, to, code, share }: { from: string; to: string; co
                           className="flex items-baseline justify-between gap-3 border-b border-hairline px-3.5 py-2.5 last:border-b-0"
                         >
                           <div className="min-w-0">
-                            <p className={`text-[0.9375rem] ${item.is_reversed ? "text-ink-faint line-through" : "text-ink"}`}>
+                            <p className={`text-body ${item.is_reversed ? "text-ink-faint line-through" : "text-ink"}`}>
                               {item.is_reversal ? `Cancelled: ${item.reversal_reason ?? "no reason given"}` : item.description}
                             </p>
-                            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.75rem] text-ink-muted">
+                            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-ink-muted">
                               <span>{[MODE_LABEL[item.mode] ?? item.mode, item.paid_to].filter(Boolean).join(" · ")}</span>
                               {item.is_reversed ? <Pill kind="neutral">Reversed</Pill> : null}
                               {item.is_reversal ? <Pill kind="neutral">Reversal</Pill> : null}
                             </p>
                           </div>
                           <span
-                            className={`tabular shrink-0 text-[0.9375rem] ${item.is_reversed || item.is_reversal ? "text-ink-muted" : "text-ink"}`}
+                            className={`tabular shrink-0 text-body ${item.is_reversed || item.is_reversal ? "text-ink-muted" : "text-ink"}`}
                           >
                             {format(item.amount)}
                           </span>
@@ -561,14 +561,14 @@ function CreditCard({ report }: { report: Report }) {
           <Bridge
             rows={[row("start", "Owed at start"), row("given", "+ Given"), row("collected", "− Collected"), row("end", "= Owed at end", true)]}
           />
-          <p className="mt-3 text-[0.8125rem] text-ink-muted">
+          <p className="mt-3 text-footnote text-ink-muted">
             {credit.customers_owing} customer
             {credit.customers_owing === 1 ? "" : "s"} owed money at the end of this window. Today they owe{" "}
             <span className="tabular font-medium text-ink">{format(credit.owes_today)}</span>.
           </p>
         </div>
         <div className="flex flex-col">
-          <p className="mb-1 text-[0.8125rem] font-medium text-ink-muted">Owe the most at the window's end</p>
+          <p className="mb-1 text-footnote font-medium text-ink-muted">Owe the most at the window's end</p>
           {credit.top_owing.length ? (
             <ul className="flex flex-col">
               {credit.top_owing.map((customer) => (
@@ -578,9 +578,9 @@ function CreditCard({ report }: { report: Report }) {
                     onClick={() => navigate(`/credit/customers/${customer.customer_id}`)}
                     className="flex w-full items-center justify-between gap-3 border-b border-hairline py-2.5 text-left last:border-b-0 hover:text-accent"
                   >
-                    <span className="truncate text-[0.9375rem] text-ink">{customer.name}</span>
+                    <span className="truncate text-body text-ink">{customer.name}</span>
                     <span className="flex shrink-0 items-center gap-1.5">
-                      <span className="tabular text-[0.9375rem] text-ink">{format(customer.owed_at_end)}</span>
+                      <span className="tabular text-body text-ink">{format(customer.owed_at_end)}</span>
                       <CaretRightIcon size={14} className="text-ink-faint" aria-hidden />
                     </span>
                   </button>
@@ -588,7 +588,7 @@ function CreditCard({ report }: { report: Report }) {
               ))}
             </ul>
           ) : (
-            <p className="py-2 text-[0.9375rem] text-ink-muted">Nobody owed anything at the end of this window.</p>
+            <p className="py-2 text-body text-ink-muted">Nobody owed anything at the end of this window.</p>
           )}
           <div className="mt-4">
             <Button
@@ -602,7 +602,7 @@ function CreditCard({ report }: { report: Report }) {
         </div>
       </div>
       {/* §6.6's Phase 26 note, where somebody comparing with the old card would look. */}
-      <p className="mt-4 border-t border-hairline pt-3 text-[0.8125rem] text-ink-muted">
+      <p className="mt-4 border-t border-hairline pt-3 text-footnote text-ink-muted">
         The billing statement's figures for the same dates. Collected counts every repayment, in cash, on the card machine, by UPI or by bank
         transfer.
       </p>
@@ -632,11 +632,11 @@ function Provenance({ report }: { report: Report }) {
         {n("no_trading") ? <Pill kind={SOURCE_PILL.no_trading}>{n("no_trading")} no trading</Pill> : null}
         {n("unavailable") ? <Pill kind={SOURCE_PILL.unavailable}>{n("unavailable")} unavailable</Pill> : null}
       </div>
-      <p className="mt-2.5 text-[0.875rem] text-ink">
+      <p className="mt-2.5 text-callout text-ink">
         {report.trading_days} trading day{report.trading_days === 1 ? "" : "s"}
         {parts.length ? `: ${parts.join(", ")}.` : "."}
       </p>
-      <p className="mt-1 text-[0.8125rem] text-ink-muted">{report.window_basis}</p>
+      <p className="mt-1 text-footnote text-ink-muted">{report.window_basis}</p>
     </Card>
   );
 }
@@ -704,7 +704,7 @@ function RangeForm({ current, onApply }: { current: Range | null; onApply: (rang
                 form.set("from", range.from);
                 form.set("to", range.to);
               }}
-              className="pressable h-11 rounded-[var(--radius-control)] border border-hairline bg-surface text-[0.875rem] font-medium text-ink aria-pressed:border-accent aria-pressed:bg-accent-tint aria-pressed:text-accent"
+              className="pressable h-11 rounded-[var(--radius-control)] border border-hairline bg-surface text-callout font-medium text-ink aria-pressed:border-accent aria-pressed:bg-accent-tint aria-pressed:text-accent"
             >
               {preset.label}
             </button>

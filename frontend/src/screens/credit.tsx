@@ -84,7 +84,7 @@ export function CreditHubScreen() {
         {unanchored ? (
           <Card className="border-warning">
             <SectionLabel>Before you trust these figures</SectionLabel>
-            <p className="text-[0.9375rem] text-ink">
+            <p className="text-body text-ink">
               {unanchored} of {rows.length} customers {unanchored === 1 ? "has" : "have"} no opening balance entered. Their ledger starts at zero here, which is almost never what they actually owed.
             </p>
             <div className="mt-4">
@@ -93,7 +93,7 @@ export function CreditHubScreen() {
                   Set opening balances
                 </Button>
               ) : (
-                <p className="text-[0.8125rem] text-ink-muted">An admin can enter them.</p>
+                <p className="text-footnote text-ink-muted">An admin can enter them.</p>
               )}
             </div>
           </Card>
@@ -111,16 +111,16 @@ export function CreditHubScreen() {
               >
                 <span className="min-w-0 grow">
                   <span className="flex items-center gap-2">
-                    <span data-shared-source className="truncate text-[0.9375rem] font-semibold text-ink">
+                    <span data-shared-source className="truncate text-body font-semibold text-ink">
                       {entry.name}
                     </span>
                     {entry.is_active ? null : <Pill kind="neutral">inactive</Pill>}
                   </span>
-                  <span className={`block text-[0.8125rem] ${entry.opening_balance === null ? "t-absent" : "text-ink-muted"}`}>
+                  <span className={`block text-footnote ${entry.opening_balance === null ? "t-absent" : "text-ink-muted"}`}>
                     {standing(entry)}
                   </span>
                 </span>
-                <span className="shrink-0 text-[1.125rem] font-semibold tracking-[-0.015em] text-ink">
+                <span className="shrink-0 text-subhead text-ink">
                   <Amount value={entry.outstanding} />
                 </span>
                 <CaretRightIcon size={16} className="shrink-0 text-ink-faint" aria-hidden />
@@ -143,7 +143,7 @@ function HubLink({ icon, label, onClick }: { icon: ReactNode; label: string; onC
       className="pressable liftable flex items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3 text-left shadow-1"
     >
       <span className="text-accent">{icon}</span>
-      <span className="grow text-[0.9375rem] text-ink">{label}</span>
+      <span className="grow text-body text-ink">{label}</span>
       <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
     </button>
   );
@@ -189,8 +189,8 @@ export function CustomerLedgerScreen() {
       </ScreenActions>
       <div className="flex flex-col gap-5">
         <Card>
-          <p className="text-[0.8125rem] font-medium text-ink-muted">Outstanding</p>
-          <p className="mt-1 text-[2.25rem] leading-none font-semibold tracking-[-0.03em] text-ink">
+          <p className="text-footnote font-medium text-ink-muted">Outstanding</p>
+          <p className="mt-1 text-figure text-ink">
             <Amount value={l.outstanding} />
           </p>
           <div className="mt-3">
@@ -199,7 +199,7 @@ export function CustomerLedgerScreen() {
             <ListRow label="Credit limit" value={<Amount value={c.credit_limit} absent="no limit" />} />
             <ListRow label="Phone" value={c.phone} />
           </div>
-          <p className="mt-2 text-[0.8125rem] text-ink-muted">
+          <p className="mt-2 text-footnote text-ink-muted">
             {l.opening_balance === null
               ? "No opening balance has been entered, so this account starts from zero here, not from what they actually owed."
               : "Computed from the opening balance plus every sale and repayment, reversals included. Never stored, so it cannot drift."}
@@ -212,19 +212,19 @@ export function CustomerLedgerScreen() {
               {l.items.map((entry) => (
                 <div key={entry.id} data-arrive className="flex items-center gap-3 border-b border-hairline py-3 last:border-b-0">
                   <div className="min-w-0 grow">
-                    <p className="text-[0.9375rem] text-ink">{KIND_LABELS[entry.kind] ?? entry.kind}</p>
-                    <p className="text-[0.8125rem] text-ink-muted">
+                    <p className="text-body text-ink">{KIND_LABELS[entry.kind] ?? entry.kind}</p>
+                    <p className="text-footnote text-ink-muted">
                       {businessDate(entry.business_date)}
                       {entry.shift_id === null && entry.kind === "repayment" ? " · to the bank" : ""}
                     </p>
                   </div>
                   {entry.is_reversal ? <Pill kind="neutral">reversal</Pill> : null}
                   <div className="flex shrink-0 flex-col items-end">
-                    <span className="text-[0.9375rem] text-ink">
+                    <span className="text-body text-ink">
                       <Amount value={entry.balance_delta} sign />
                     </span>
                     {/* The running balance: the column this screen exists for. Server-computed. */}
-                    <span className="tabular text-[0.75rem] text-ink-muted">{format(entry.balance_after)}</span>
+                    <span className="tabular text-caption text-ink-muted">{format(entry.balance_after)}</span>
                   </div>
                 </div>
               ))}
@@ -236,7 +236,7 @@ export function CustomerLedgerScreen() {
 
         {l.truncated ? <TruncationNotice count={l.items.length} /> : null}
         {l.truncated ? (
-          <p className="text-[0.8125rem] text-ink-muted">Older entries are not listed. The balances shown are still exact: each one is worked back from today.</p>
+          <p className="text-footnote text-ink-muted">Older entries are not listed. The balances shown are still exact: each one is worked back from today.</p>
         ) : null}
       </div>
     </>

@@ -55,11 +55,11 @@ export function ReceiptButton({ attachmentId, label = "View receipt" }: { attach
               className="h-auto w-full rounded-[var(--radius-control)] bg-surface-sunken"
             />
             {failed ? (
-              <p className="text-[0.8125rem] text-short">
+              <p className="text-footnote text-short">
                 The image could not be loaded. The signed link may have expired: close this and try again.
               </p>
             ) : null}
-            <p className="text-[0.8125rem] text-ink-muted">
+            <p className="text-footnote text-ink-muted">
               This link is private and expires in about {Math.round(shown.expires / 60)} minutes.
             </p>
           </div>

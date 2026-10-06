@@ -106,7 +106,7 @@ export function ExpensesScreen() {
           <Card>
             <div className="flex items-baseline justify-between gap-3">
               <SectionLabel className="mb-0">By category</SectionLabel>
-              <span className="text-[1.25rem] font-semibold tracking-[-0.02em] text-ink">
+              <span className="text-headline text-ink">
                 <Amount value={data.total} />
               </span>
             </div>
@@ -115,7 +115,7 @@ export function ExpensesScreen() {
                 <ListRow key={code} label={code} value={<Amount value={amount as string} />} />
               ))}
             </div>
-            <p className="mt-2 text-[0.8125rem] text-ink-muted">
+            <p className="mt-2 text-footnote text-ink-muted">
               Every mode, not just cash. Only cash expenses reduce what the drawer should be holding.
             </p>
           </Card>
@@ -188,13 +188,13 @@ function ExpenseCard({
     <Card className={unreviewed ? "border-warning" : ""}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-[0.9375rem] font-semibold text-ink">{expense.description}</h2>
-          <p className="text-[0.8125rem] text-ink-muted">
+          <h2 className="text-body font-semibold text-ink">{expense.description}</h2>
+          <p className="text-footnote text-ink-muted">
             {expense.category_code} · {expense.mode.replace("_", " ")}
             {expense.paid_to ? ` · ${expense.paid_to}` : ""}
           </p>
         </div>
-        <span className="shrink-0 text-[1.125rem] font-semibold tracking-[-0.015em] text-ink">
+        <span className="shrink-0 text-subhead text-ink">
           <Amount value={expense.amount} />
         </span>
       </div>
@@ -207,10 +207,10 @@ function ExpenseCard({
         {expense.requires_review ? <Pill kind={expense.reviewed_at ? "neutral" : "review"}>{expense.reviewed_at ? "reviewed" : "needs review"}</Pill> : null}
       </div>
       {unreviewed ? (
-        <p className="mt-2 text-[0.8125rem] text-ink-muted">Flagged for a manager's eyes. A shift cannot be locked while this is unreviewed.</p>
+        <p className="mt-2 text-footnote text-ink-muted">Flagged for a manager's eyes. A shift cannot be locked while this is unreviewed.</p>
       ) : null}
-      {expense.review_note ? <p className="mt-2 text-[0.8125rem] text-ink-muted">Review: {expense.review_note}</p> : null}
-      {expense.reversal_reason ? <p className="mt-2 text-[0.8125rem] text-ink-muted">Reason: {expense.reversal_reason}</p> : null}
+      {expense.review_note ? <p className="mt-2 text-footnote text-ink-muted">Review: {expense.review_note}</p> : null}
+      {expense.reversal_reason ? <p className="mt-2 text-footnote text-ink-muted">Reason: {expense.reversal_reason}</p> : null}
 
       <div className="mt-4 flex flex-wrap gap-2">
         {/* A reversal row is itself a correction and cannot be edited or re-reversed. */}
@@ -313,8 +313,8 @@ function ExpenseForm({
     <div className="flex flex-col gap-4">
       {existing ? (
         <div className="flex flex-col gap-1">
-          <span className="text-[0.8125rem] font-medium text-ink-muted">Category</span>
-          <p className="text-[0.9375rem] text-ink">{existing.category_code}</p>
+          <span className="text-footnote font-medium text-ink-muted">Category</span>
+          <p className="text-body text-ink">{existing.category_code}</p>
         </div>
       ) : (
         <SelectField
@@ -341,7 +341,7 @@ function ExpenseForm({
         locked={Boolean(existing?.attachment_id)}
         onUploaded={(id) => setAttachmentId(id)}
       />
-      <p className={`text-[0.8125rem] ${required && !attachmentId ? "text-short" : "text-ink-muted"}`}>
+      <p className={`text-footnote ${required && !attachmentId ? "text-short" : "text-ink-muted"}`}>
         {required
           ? attachmentId
             ? "A receipt is required for this expense, and one is attached."
@@ -378,12 +378,12 @@ function ReviewForm({ shiftId, expense, onDone }: { shiftId: string; expense: Ex
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-[var(--radius-control)] bg-surface-sunken px-4 py-3">
-        <p className="tabular text-[1.5rem] font-semibold tracking-[-0.02em] text-ink">
+        <p className="tabular text-amount text-ink">
           <Amount value={expense.amount} />
         </p>
-        <p className="text-[0.8125rem] text-ink-muted">{expense.description}</p>
+        <p className="text-footnote text-ink-muted">{expense.description}</p>
       </div>
-      <p className="text-[0.8125rem] text-ink-muted">
+      <p className="text-footnote text-ink-muted">
         Flags are never cleared automatically, not even when a reversal drops the day's total back under the threshold.
       </p>
       <TextField

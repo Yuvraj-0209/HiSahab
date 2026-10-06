@@ -113,10 +113,10 @@ export function CreditSalesScreen() {
                   {sale.limit_override_reason ? (
                     <div className="mt-2 flex flex-col items-start gap-1">
                       <Pill kind="review">limit overridden</Pill>
-                      <p className="text-[0.8125rem] text-ink-muted">{sale.limit_override_reason}</p>
+                      <p className="text-footnote text-ink-muted">{sale.limit_override_reason}</p>
                     </div>
                   ) : null}
-                  {sale.reversal_reason ? <p className="mt-2 text-[0.8125rem] text-ink-muted">Reason: {sale.reversal_reason}</p> : null}
+                  {sale.reversal_reason ? <p className="mt-2 text-footnote text-ink-muted">Reason: {sale.reversal_reason}</p> : null}
                 </>
               }
               actions={
@@ -250,7 +250,7 @@ function SaleForm({
   return (
     <div className="flex flex-col gap-4">
       {existing ? (
-        <p className="text-[0.9375rem] text-ink">
+        <p className="text-body text-ink">
           {customers.find((customer) => customer.id === existing.credit_customer_id)?.name ?? "Unknown customer"}
         </p>
       ) : (
@@ -295,7 +295,7 @@ function SaleForm({
         />
       ) : null}
       {existing ? (
-        <p className="text-[0.8125rem] text-ink-muted">The receipt cannot be changed. Correct this sale with a reversal instead.</p>
+        <p className="text-footnote text-ink-muted">The receipt cannot be changed. Correct this sale with a reversal instead.</p>
       ) : (
         <ReceiptUpload shiftId={shiftId} attachmentId={attachmentId} label="Receipt (required)" onUploaded={setAttachmentId} />
       )}

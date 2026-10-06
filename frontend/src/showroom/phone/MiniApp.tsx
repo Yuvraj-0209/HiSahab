@@ -12,7 +12,7 @@ import { TABS, type TabId } from "../../app/tabs";
 export function MiniApp({ title, subtitle, tab, children }: { title: string; subtitle: string; tab: TabId; children: ReactNode }) {
   return (
     <div className="flex h-full flex-col bg-ground">
-      <div className="flex h-12 shrink-0 items-end justify-between px-7 pb-1 text-[0.8125rem] font-semibold text-ink">
+      <div className="flex h-12 shrink-0 items-end justify-between px-7 pb-1 text-footnote font-semibold text-ink">
         <span className="tabular">10:14</span>
         <span className="flex items-center gap-1" aria-hidden="true">
           <span className="h-2.5 w-1 rounded-full bg-ink" />
@@ -25,15 +25,15 @@ export function MiniApp({ title, subtitle, tab, children }: { title: string; sub
       </div>
 
       <div className="shrink-0 px-4 pt-3 pb-3">
-        <p className="text-[1.0625rem] font-semibold text-ink">{title}</p>
-        <p className="text-[0.8125rem] text-ink-muted">{subtitle}</p>
+        <p className="text-lead font-semibold text-ink">{title}</p>
+        <p className="text-footnote text-ink-muted">{subtitle}</p>
       </div>
 
       <div className="flex min-h-0 grow flex-col gap-3 overflow-hidden px-4">{children}</div>
 
       <div className="grid shrink-0 grid-cols-6 border-t border-hairline bg-ground px-1 pt-1.5 pb-6">
         {TABS.map(({ id, label, Icon }) => (
-          <span key={id} className={`flex h-12 flex-col items-center justify-center gap-0.5 text-[0.6875rem] ${id === tab ? "text-accent" : "text-ink-muted"}`}>
+          <span key={id} className={`flex h-12 flex-col items-center justify-center gap-0.5 text-micro ${id === tab ? "text-accent" : "text-ink-muted"}`}>
             <span className={`grid h-7 w-12 place-items-center rounded-full ${id === tab ? "tab-pill" : ""}`}>
               <Icon size={20} weight={id === tab ? "fill" : "regular"} />
             </span>

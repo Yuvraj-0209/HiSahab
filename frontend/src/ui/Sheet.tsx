@@ -283,8 +283,8 @@ function SheetFrame({ open, onClose, onExited, title, subtitle, children, footer
         )}
         <div className="flex items-start gap-3 px-5 pt-1 pb-3">
           <div className="min-w-0 grow">
-            <h2 className="truncate text-[1.1875rem] font-semibold tracking-[-0.015em] text-ink">{title}</h2>
-            {subtitle ? <p className="mt-0.5 truncate text-[0.8125rem] text-ink-muted">{subtitle}</p> : null}
+            <h2 className="truncate text-subhead text-ink">{title}</h2>
+            {subtitle ? <p className="mt-0.5 truncate text-footnote text-ink-muted">{subtitle}</p> : null}
           </div>
           <button
             type="button"

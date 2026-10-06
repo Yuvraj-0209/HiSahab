@@ -39,11 +39,11 @@ export function ScreenTitle({ title, subtitle, large = false }: { title: string;
   const compact = slot
     ? createPortal(
         <div className={`compact-title min-w-0 ${large ? "is-collapsible" : ""}`}>
-          <h1 className="truncate text-[1.0625rem] leading-tight font-semibold tracking-[-0.015em] text-ink">{title}</h1>
+          <h1 className="truncate text-lead leading-tight font-semibold tracking-[-0.015em] text-ink">{title}</h1>
           {/* The landing place for a shared-element transition (navigation.ts): a day row's date
            * flies in here as the day screen's subtitle. Named only for the length of one transition. */}
           {subtitle ? (
-            <p data-shared-target className="truncate text-[0.8125rem] leading-tight text-ink-muted">
+            <p data-shared-target className="truncate text-footnote leading-tight text-ink-muted">
               {subtitle}
             </p>
           ) : null}
@@ -58,7 +58,7 @@ export function ScreenTitle({ title, subtitle, large = false }: { title: string;
       <div className="large-title mb-5" aria-hidden="true">
         <p className="text-title text-ink">{title}</p>
         {/* Always a line, so a subtitle arriving with the data does not push the screen down. */}
-        <p className="mt-0.5 min-h-[1.375rem] truncate text-[0.9375rem] text-ink-muted">{subtitle ?? ""}</p>
+        <p className="mt-0.5 min-h-[1.375rem] truncate text-body text-ink-muted">{subtitle ?? ""}</p>
       </div>
     </>
   );

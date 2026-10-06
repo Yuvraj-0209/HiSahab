@@ -71,7 +71,7 @@ export function NonFuelSalesScreen() {
             title={sale.description ?? "Non-fuel sale"}
             amount={sale.amount}
             badges={<ReversalBadge row={sale} />}
-            notes={sale.reversal_reason ? <p className="mt-2 text-[0.8125rem] text-ink-muted">Reason: {sale.reversal_reason}</p> : null}
+            notes={sale.reversal_reason ? <p className="mt-2 text-footnote text-ink-muted">Reason: {sale.reversal_reason}</p> : null}
             actions={
               isLive(sale) ? (
                 <>

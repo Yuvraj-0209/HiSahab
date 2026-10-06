@@ -31,8 +31,8 @@ export function ReceiptUpload({ shiftId, attachmentId, onUploaded, locked = fals
   if (locked) {
     return (
       <div className="flex flex-col gap-1.5">
-        <span className="text-[0.8125rem] font-medium text-ink-muted">{label}</span>
-        <p className="text-[0.8125rem] text-ink-muted">
+        <span className="text-footnote font-medium text-ink-muted">{label}</span>
+        <p className="text-footnote text-ink-muted">
           A receipt is already attached and cannot be swapped. Correct the row with a reversal instead.
         </p>
       </div>
@@ -54,7 +54,7 @@ export function ReceiptUpload({ shiftId, attachmentId, onUploaded, locked = fals
 
   return (
     <div className="flex flex-col gap-1.5">
-      <span className="text-[0.8125rem] font-medium text-ink-muted">{label}</span>
+      <span className="text-footnote font-medium text-ink-muted">{label}</span>
       <label
         htmlFor={id}
         className={`pressable flex cursor-pointer items-center gap-3 rounded-[var(--radius-control)] border border-dashed px-3.5 py-3 ${
@@ -66,7 +66,7 @@ export function ReceiptUpload({ shiftId, attachmentId, onUploaded, locked = fals
         ) : (
           <CameraIcon size={22} className="text-ink-muted" aria-hidden />
         )}
-        <span className="text-[0.9375rem] text-ink">
+        <span className="text-body text-ink">
           {busy ? "Uploading…" : attachmentId ? "Receipt uploaded. Tap to replace it." : "Take or choose a photo"}
         </span>
         <input
