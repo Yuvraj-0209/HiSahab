@@ -869,6 +869,42 @@ select.field-control {
   }
 }
 
+/* "A day at the pump" (Phase 28 D5, showroom/Story.tsx). The step the phone is showing reads at
+ * full strength and the rest recede -- by colour, not opacity, so a receded step still passes
+ * contrast (axe reads every step, on screen or not). CSS owns this; GSAP never moves the copy. */
+.story-step h3 {
+  color: var(--ink);
+  transition: color var(--dur-medium) var(--ease-enter);
+}
+
+.story-step .story-body {
+  color: var(--ink-muted);
+  transition: color var(--dur-medium) var(--ease-enter);
+}
+
+.story-dot {
+  border-color: var(--accent);
+  transition: border-color var(--dur-medium) var(--ease-enter);
+}
+
+.story-dot > span {
+  background: var(--accent);
+  transition: background-color var(--dur-medium) var(--ease-enter);
+}
+
+.story-step[data-active="false"] h3,
+.story-step[data-active="false"] .story-body {
+  color: var(--ink-faint);
+}
+
+.story-step[data-active="false"] .story-dot {
+  border-color: var(--hairline-strong);
+}
+
+.story-step[data-active="false"] .story-dot > span {
+  background: transparent;
+}
+
 /* On a wide screen the words sit on the left of the photograph rather than at the bottom of it
  * (Phase 28 D3), so the wash that seats them turns sideways: a dark scrim behind the headline and
  * the form, the photograph clear on the right where the phone stands. Still a gradient, never a

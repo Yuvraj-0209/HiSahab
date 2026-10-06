@@ -96,7 +96,7 @@ test("front door: under reduced motion every section is simply there, without sc
   await page.emulateMedia({ reducedMotion: "reduce" });
   const problems = await watch(page);
   await frontDoor(page);
-  await expect(page.locator("[data-section]")).toHaveCount(7);
+  await expect(page.locator("[data-section]")).toHaveCount(4);
   const hidden = await page.evaluate(() =>
     Array.from(document.querySelectorAll<HTMLElement>("[data-section] *")).filter((node) => getComputedStyle(node).opacity !== "1").length,
   );
@@ -144,6 +144,18 @@ test("front door: scrolling walks into the station (Phase 25 D1)", async ({ page
   expect(problems).toEqual([]);
 });
 
+test("front door: on a phone each step of the day carries its own screen, inline (Phase 28 D3)", async ({ page }) => {
+  const problems = await watch(page);
+  await frontDoor(page);
+  // No pinned phone here: a phone inside a phone is too small to read.
+  await expect(page.locator("[data-story-step] [data-screen]")).toHaveCount(6);
+  await expect(page.locator(".phone-story")).toHaveCount(0);
+  const last = page.locator('[data-story-step="bank"] [data-screen]');
+  await last.scrollIntoViewIfNeeded();
+  await expect(last.getByText("Sample figures")).toBeVisible();
+  expect(problems).toEqual([]);
+});
+
 test("front door: 'How it works' scrolls down the page without leaving it (Phase 28 D3)", async ({ page }) => {
   const problems = await watch(page);
   await frontDoor(page);
@@ -179,7 +191,7 @@ test.describe("front door on a desktop", () => {
   test("the whole story scrolls through under the production CSP, with nothing in the console", async ({ page }) => {
     const problems = await watch(page);
     await frontDoor(page);
-    await expect(page.locator("[data-section]")).toHaveCount(7);
+    await expect(page.locator("[data-section]")).toHaveCount(4);
     for (let step = 0; step < 60; step += 1) {
       await page.mouse.wheel(0, 400);
       await page.waitForTimeout(40);
@@ -194,10 +206,38 @@ test.describe("front door on a desktop", () => {
     const problems = await watch(page);
     await frontDoor(page);
     // The phone arrives with the story, once the page is idle; it is a picture, named by its caption.
-    await expect(page.getByRole("figure", { name: /^The Today screen/ })).toBeInViewport();
+    await expect(page.getByRole("figure", { name: /^The Today screen on/ })).toBeInViewport();
     await page.getByRole("navigation", { name: "Front door" }).getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByLabel("Email")).toBeFocused();
     expect(problems).toEqual([]);
+  });
+
+  test("one phone stays put and changes screen as each step of the day reaches the middle (Phase 28 D5)", async ({ page }) => {
+    const problems = await watch(page);
+    await frontDoor(page);
+    const step = page.locator('[data-story-step="cash"]');
+    await expect(step).toBeAttached();
+    await step.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      window.scrollBy(0, box.top + box.height / 2 - window.innerHeight / 2);
+    });
+    // Fade through, not cross-fade: the step's screen is shown and the one before it is gone.
+    await expect(page.locator('[data-screen="cash"]')).toHaveCSS("opacity", "1");
+    await expect(page.locator('[data-screen="udhaar"]')).toHaveCSS("opacity", "0");
+    await expect(step).toHaveAttribute("data-active", "true");
+    await expect(page.locator('[data-story-step="meter"]')).toHaveAttribute("data-active", "false");
+    // The phone is held in the window, not left behind with the step above it.
+    await expect(page.locator(".phone-story")).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole("figure", { name: /collections: cash counted/ })).toBeAttached();
+    expect(problems).toEqual([]);
+  });
+
+  test("under reduced motion every step's screen is simply there, even on a wide screen (Phase 28 D3)", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await frontDoor(page);
+    // A screen that swaps by itself is motion by another name: each step shows its own instead.
+    await expect(page.locator("[data-story-step] [data-screen]")).toHaveCount(6);
+    await expect(page.locator("[data-story-step][data-active='false']")).toHaveCount(0);
   });
 
   test("a headline below the fold waits lowered, then rises as it arrives (Phase 28 B1)", async ({ page }) => {
@@ -217,7 +257,7 @@ test.describe("front door on a desktop", () => {
     await expect(page.getByRole("heading", { name: "Bring HiSahab to your pump." })).toBeAttached();
     const labels = page.getByText("Sample figures");
     const count = await labels.count();
-    expect(count).toBeGreaterThanOrEqual(5);
+    expect(count).toBeGreaterThanOrEqual(3);
     // Visible, not merely present: a label hidden at this width labels nothing.
     for (let index = 0; index < count; index += 1) await expect(labels.nth(index)).toBeVisible();
   });
