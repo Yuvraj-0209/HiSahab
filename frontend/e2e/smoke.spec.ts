@@ -144,6 +144,16 @@ test("front door: scrolling walks into the station (Phase 25 D1)", async ({ page
   expect(problems).toEqual([]);
 });
 
+test("front door: the photograph's slow drift stops once the walk in starts (Phase 28 B3)", async ({ page }) => {
+  await frontDoor(page);
+  const drift = () => page.evaluate(() => getComputedStyle(document.querySelector(".login-drift")!).animationPlayState);
+  expect(await drift()).toBe("running");
+  // Two transforms on one photograph -- the breathing drift and the scrubbed push-in -- stack
+  // into a zoom nobody asked for. Phase 25 D1 promised the drift would stop; it never did.
+  await page.mouse.wheel(0, 600);
+  await expect.poll(drift).toBe("paused");
+});
+
 test("front door: under reduced motion the photograph does not move when scrolled", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await frontDoor(page);
@@ -159,8 +169,6 @@ test.describe("front door on a desktop", () => {
     const problems = await watch(page);
     await frontDoor(page);
     await expect(page.locator("[data-section]")).toHaveCount(7);
-    // Smooth scrolling is on: the wrapper is fixed and the content is moved by transform.
-    await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector("#smooth-wrapper")!).position)).toBe("fixed");
     for (let step = 0; step < 60; step += 1) {
       await page.mouse.wheel(0, 400);
       await page.waitForTimeout(40);
@@ -169,6 +177,43 @@ test.describe("front door on a desktop", () => {
     await expect(page.getByRole("heading", { name: "Bring HiSahab to your pump." })).toBeInViewport();
     expect(problems).toEqual([]);
     await expectAccessible(page);
+  });
+
+  test("a headline below the fold waits lowered, then rises as it arrives (Phase 28 B1)", async ({ page }) => {
+    await frontDoor(page);
+    const last = page.getByRole("heading", { name: "Bring HiSahab to your pump." });
+    await expect(last).toBeAttached();
+    // Each word sits inside a clipping box; until its headline arrives it is lowered out of view.
+    // The story queried an attribute nothing set, so every headline was simply there, static.
+    const lowered = () => last.locator("[data-word]").first().evaluate((word) => new DOMMatrixReadOnly(getComputedStyle(word).transform).f);
+    await expect.poll(lowered).toBeGreaterThan(0);
+    await last.scrollIntoViewIfNeeded();
+    await expect.poll(lowered).toBe(0);
+  });
+
+  test("every sample figure says so on a wide screen too (Phase 28 B2, §14)", async ({ page }) => {
+    await frontDoor(page);
+    await expect(page.getByRole("heading", { name: "Bring HiSahab to your pump." })).toBeAttached();
+    const labels = page.getByText("Sample figures");
+    const count = await labels.count();
+    expect(count).toBeGreaterThanOrEqual(5);
+    // Visible, not merely present: a label hidden at this width labels nothing.
+    for (let index = 0; index < count; index += 1) await expect(labels.nth(index)).toBeVisible();
+  });
+
+  test("nothing but the page's own scroll moves the sign-in form (Phase 28 B4, §14)", async ({ page }) => {
+    await frontDoor(page);
+    await expect(page.getByRole("heading", { name: "Bring HiSahab to your pump." })).toBeAttached();
+    await page.mouse.wheel(0, 300);
+    await page.waitForTimeout(400);
+    const moved = await page.locator("form").evaluate((form) => {
+      const transformed: string[] = [];
+      for (let node = form.parentElement; node; node = node.parentElement) {
+        if (getComputedStyle(node).transform !== "none") transformed.push(node.id || node.className);
+      }
+      return transformed;
+    });
+    expect(moved).toEqual([]);
   });
 });
 

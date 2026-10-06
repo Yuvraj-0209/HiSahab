@@ -1,5 +1,5 @@
-/* The front door's scroll story (Phase 24 D7). §14: pins, scrubbed timelines and smooth scrolling
- * live here and in src/showroom/ only -- the front door has no data on it, and a salesman's data
+/* The front door's scroll story (Phase 24 D7). §14: pins and scrubbed timelines live here and in
+ * src/showroom/ only -- the front door has no data on it, and a salesman's data
  * screens never wait for a story.
  *
  * `useStory` is `useMotion` with a second question: is this a desktop with a fine pointer? Pins
@@ -7,20 +7,20 @@
  * thumb flick overshoots a scrub. Phones get the same beats as one-shot reveals. Under reduced
  * motion neither runs, and every section is simply there.
  *
- * ScrollSmoother is created here, on desktop only, before any story trigger, so pins land in the
- * smoothed content. It is not used anywhere inside the app (D10).
+ * There is no ScrollSmoother (Phase 28 D2). It moved the sign-in form, which §14 forbids, and it
+ * breaks `position: sticky`, which the story's pinned phone is built on. Scrolling is the
+ * browser's own; a numeric `scrub` gives a scrubbed timeline its ease.
  */
 
 import { type RefObject } from "react";
 import { useGSAP } from "@gsap/react";
-import { ScrollSmoother } from "gsap/ScrollSmoother";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { gsap } from "./gsap";
 import { NO_PREFERENCE } from "./preference";
 
-gsap.registerPlugin(ScrollTrigger, ScrollSmoother);
+gsap.registerPlugin(ScrollTrigger);
 
-export { ScrollSmoother, ScrollTrigger };
+export { ScrollTrigger };
 
 export const DESKTOP = "(min-width: 1024px) and (pointer: fine)";
 

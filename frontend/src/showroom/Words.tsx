@@ -5,6 +5,11 @@
  * `innerHTML` -- inside DOM that React believes it owns. Here React renders the spans itself:
  * each word sits in a clipping box, and the story slides the inner span up into it. Nothing is
  * measured, nothing is re-parsed, and the full sentence is one text node for a screen reader.
+ *
+ * `data-headline` is set here rather than by each caller (Phase 28 B1): the story reveals every
+ * `[data-headline]` inside its own scope, and for two phases it queried an attribute that no
+ * headline carried, so every section headline sat still. The hero's h1 also renders through this
+ * component, but it lives outside the story's GSAP scope, so it is never animated twice.
  */
 
 import type { ElementType } from "react";
@@ -12,7 +17,7 @@ import type { ElementType } from "react";
 export function Words({ text, as: Tag = "span", className = "" }: { text: string; as?: ElementType; className?: string }) {
   const words = text.split(" ");
   return (
-    <Tag className={className}>
+    <Tag data-headline className={className}>
       <span className="sr-only-text">{text}</span>
       <span aria-hidden="true">
         {words.map((word, index) => (

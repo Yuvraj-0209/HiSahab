@@ -33,9 +33,11 @@
  * Nothing is redrawn to move (§13.29), no filter sits on anything that moves, and under reduced
  * motion the photograph holds still and every word is simply there.
  *
- * `#smooth-wrapper` / `#smooth-content` are where the story's ScrollSmoother attaches on
- * desktop; until then (and on a phone, always) they are plain blocks. The backdrop stays outside
- * them, because a fixed element inside smoothed content would scroll with it.
+ * The drift stops once the walk begins (Phase 28 B3): two transforms breathing and pushing on one
+ * photograph stack into a zoom nobody asked for. It resumes at the very top, where the photograph
+ * is at rest again. The drift belongs to CSS; the walk only flips an attribute that pauses it.
+ *
+ * Nothing smooths the scroll (Phase 28 D2): ScrollSmoother moved this form, which §14 forbids.
  */
 
 import { type FormEvent, lazy, Suspense, useEffect, useRef, useState } from "react";
@@ -110,6 +112,7 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
   const story = useWhenIdle();
 
   const scope = useRef<HTMLDivElement>(null);
+  const drift = useRef<HTMLDivElement>(null);
   const far = useRef<HTMLDivElement>(null);
   const near = useRef<HTMLDivElement>(null);
   const wash = useRef<HTMLDivElement>(null);
@@ -137,6 +140,11 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
             end: () => (travel.current ? documentTop(travel.current) + travel.current.offsetHeight - window.innerHeight : window.innerHeight),
             scrub: 0.5,
             invalidateOnRefresh: true,
+            // An attribute, written only when it changes: CSS owns the drift's transform.
+            onUpdate: (self) => {
+              const walking = self.progress > 0 ? "true" : "false";
+              if (drift.current && drift.current.dataset.walking !== walking) drift.current.dataset.walking = walking;
+            },
           },
         });
         walk
@@ -187,7 +195,7 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
   return (
     <div ref={scope}>
       <div className="login-backdrop" aria-hidden="true">
-        <div className="login-drift">
+        <div ref={drift} className="login-drift">
           <div ref={far} className="login-layer" style={{ backgroundImage: `url("${LQIP}")` }}>
             <img
               src="/img/forecourt-1280.webp"
@@ -220,48 +228,46 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
         <div ref={wash} className="login-wash" />
       </div>
 
-      <div id="smooth-wrapper">
-        <div id="smooth-content" className="relative z-10">
-          {/* Absolute, not fixed: the wordmark is white on the photograph and belongs to it. Fixed,
-           * it would ghost across the paper of the story below in the light palette. */}
-          <header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center pt-[calc(env(safe-area-inset-top)+1.25rem)]">
-            <p className="wordmark text-[1.375rem] text-on-photo">HiSahab</p>
-          </header>
+      <div className="relative z-10">
+        {/* Absolute, not fixed: the wordmark is white on the photograph and belongs to it. Fixed,
+         * it would ghost across the paper of the story below in the light palette. */}
+        <header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center pt-[calc(env(safe-area-inset-top)+1.25rem)]">
+          <p className="wordmark text-[1.375rem] text-on-photo">HiSahab</p>
+        </header>
 
-          <section className="mx-auto flex min-h-[100dvh] max-w-md flex-col justify-end gap-5 px-4 pt-24 pb-8">
-            <div data-hero className="text-center">
-              <Words as="h1" text="The day's cash, checked against the meters." className="display block text-[clamp(2.25rem,9vw,3.25rem)] text-on-photo" />
-              <p data-hero-sub className="mx-auto mt-3 max-w-[22rem] text-[1rem] leading-snug text-on-photo-muted">
-                {outletName ? `${outletName}: readings` : "Readings"}, collections, udhaar and the bank statement, reconciled every night.
-              </p>
-            </div>
-            <form
-              onSubmit={submit}
-              noValidate
-              className="flex flex-col gap-4 rounded-[var(--radius-sheet)] border border-hairline bg-surface-raised p-5 shadow-3 sm:p-6"
-            >
-              <TextField form={form} name="email" label="Email" type="email" inputMode="email" autoComplete="username" required />
-              <TextField form={form} name="password" label="Password" type="password" autoComplete="current-password" required />
-              <Button type="submit" variant="primary" block disabled={busy}>
-                {busy ? "Signing in…" : "Sign in"}
-              </Button>
-            </form>
-          </section>
-
-          {/* The walk in: a stretch of page with nothing on it but the forecourt moving beneath, and
-           * one line that rises over the dispenser as you arrive. */}
-          <section ref={travel} data-travel className="relative flex min-h-[120dvh] items-end justify-center px-6 pb-[14dvh] lg:min-h-[150dvh]">
-            <p data-travel-line className="display travel-line max-w-[20ch] text-center text-[clamp(2rem,6vw,3.75rem)] text-on-photo">
-              Every night, somebody reads this meter.
+        <section className="mx-auto flex min-h-[100dvh] max-w-md flex-col justify-end gap-5 px-4 pt-24 pb-8">
+          <div data-hero className="text-center">
+            <Words as="h1" text="The day's cash, checked against the meters." className="display block text-[clamp(2.25rem,9vw,3.25rem)] text-on-photo" />
+            <p data-hero-sub className="mx-auto mt-3 max-w-[22rem] text-[1rem] leading-snug text-on-photo-muted">
+              {outletName ? `${outletName}: readings` : "Readings"}, collections, udhaar and the bank statement, reconciled every night.
             </p>
-          </section>
+          </div>
+          <form
+            onSubmit={submit}
+            noValidate
+            className="flex flex-col gap-4 rounded-[var(--radius-sheet)] border border-hairline bg-surface-raised p-5 shadow-3 sm:p-6"
+          >
+            <TextField form={form} name="email" label="Email" type="email" inputMode="email" autoComplete="username" required />
+            <TextField form={form} name="password" label="Password" type="password" autoComplete="current-password" required />
+            <Button type="submit" variant="primary" block disabled={busy}>
+              {busy ? "Signing in…" : "Sign in"}
+            </Button>
+          </form>
+        </section>
 
-          {story ? (
-            <Suspense fallback={null}>
-              <Showroom outletName={outletName} />
-            </Suspense>
-          ) : null}
-        </div>
+        {/* The walk in: a stretch of page with nothing on it but the forecourt moving beneath, and
+         * one line that rises over the dispenser as you arrive. */}
+        <section ref={travel} data-travel className="relative flex min-h-[120dvh] items-end justify-center px-6 pb-[14dvh] lg:min-h-[150dvh]">
+          <p data-travel-line className="display travel-line max-w-[20ch] text-center text-[clamp(2rem,6vw,3.75rem)] text-on-photo">
+            Every night, somebody reads this meter.
+          </p>
+        </section>
+
+        {story ? (
+          <Suspense fallback={null}>
+            <Showroom outletName={outletName} />
+          </Suspense>
+        ) : null}
       </div>
     </div>
   );

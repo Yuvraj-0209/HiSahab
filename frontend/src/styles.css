@@ -745,6 +745,12 @@ select.field-control {
   opacity: 1;
 }
 
+.login-drift[data-walking="true"] {
+  /* Paused, not removed: removing the animation would snap the photograph back to its first
+   * frame mid-walk (Phase 28 B3). */
+  animation-play-state: paused;
+}
+
 @keyframes ken-burns {
   from {
     transform: scale(1.06) translate3d(0, 0, 0);

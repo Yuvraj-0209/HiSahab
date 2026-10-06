@@ -12,8 +12,8 @@
  *
  * ## Motion
  *
- * Desktop (a fine pointer, 1024px and up) gets the full story: smooth scrolling, pinned sections,
- * timelines scrubbed by the scroll. A phone gets the same beats as one-shot reveals, because
+ * Desktop (a fine pointer, 1024px and up) gets the full story: pinned sections and timelines
+ * scrubbed by the scroll. Scrolling itself is the browser's own (Phase 28 D2). A phone gets the same beats as one-shot reveals, because
  * pinning fights a collapsing address bar. Reduced motion gets every section, still. Everything
  * moves by transform and opacity; no text is ever rewritten to animate it (§14), so a beat that
  * "changes" a figure is two figures, one replacing the other.
@@ -22,7 +22,7 @@
 import { type ReactNode, useRef } from "react";
 import { DURATION, EASE, gsap } from "../motion/gsap";
 import "../motion/draw";
-import { ScrollSmoother, ScrollTrigger, useStory } from "../motion/story";
+import { ScrollTrigger, useStory } from "../motion/story";
 import { Donut, SalesBars, ShareBars } from "../ui/chart";
 import { Pill } from "../ui/primitives";
 import { BANK, DAYS, FUEL_MIX, GAP, LEDGER, METER, MONTH, PAYMENT_MIX } from "./samples";
@@ -37,24 +37,14 @@ export default function Showroom({ outletName }: { outletName?: string | undefin
   const root = useRef<HTMLDivElement>(null);
 
   useStory(root, (desktop) => {
-    if (desktop) {
-      // Created before any trigger below, so pins land inside the smoothed content. Elements, not
-      // selector strings: inside useGSAP a selector is resolved within this component, and the
-      // wrapper belongs to the sign-in page around it.
-      ScrollSmoother.create({
-        wrapper: document.getElementById("smooth-wrapper"),
-        content: document.getElementById("smooth-content"),
-        smooth: 1.1,
-        smoothTouch: false,
-      });
-    }
     revealHeadlines();
     meter(desktop);
     gap(desktop);
     udhaar(desktop);
     bank(desktop);
     compare(desktop);
-    // The page just grew by several screens; the hero's parallax measured the old height.
+    // The page just grew by several screens; the walk-in on the sign-in page measured the old
+    // height.
     ScrollTrigger.refresh();
   });
 
@@ -292,7 +282,7 @@ function GapSection() {
             </span>
             <span className="text-ink">{GAP.declared}</span>
           </div>
-          <div data-gap className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-card)] bg-short-tint px-5 py-4">
+          <div data-gap className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-card)] border border-hairline-strong bg-surface px-5 py-4">
             <span className="font-semibold text-short">Gap</span>
             <span className="flex items-center gap-3">
               <span className="text-title text-short">{GAP.gap}</span>
@@ -376,7 +366,7 @@ function UdhaarSection() {
 /* §5.3a, §11 phase 20: the statement verifies the books; nothing is written until a person ticks. */
 function BankSection() {
   return (
-    <section data-section="bank" className="overflow-hidden py-24 lg:flex lg:min-h-[100dvh] lg:items-center lg:py-0">
+    <section data-section="bank" className="relative overflow-hidden py-24 lg:flex lg:min-h-[100dvh] lg:items-center lg:py-0">
       {/* On a phone this row scrolls sideways, so it takes keyboard focus and has a name (axe:
        * a scrollable region nobody can reach by keyboard is a region they cannot read). */}
       <div
@@ -408,7 +398,7 @@ function BankSection() {
         ))}
         <div className="w-6 shrink-0 lg:w-[10vw]" aria-hidden="true" />
       </div>
-      <div className="px-6 lg:hidden">
+      <div className="px-6 lg:absolute lg:bottom-10 lg:left-6">
         <SampleNote />
       </div>
     </section>
