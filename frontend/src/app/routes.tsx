@@ -40,7 +40,7 @@ function NotFound() {
       <ScreenTitle title="Not found" />
       <Card>
         <div className="flex flex-col items-start gap-4">
-          <p className="text-[0.9375rem] text-ink">There is no screen at {location.pathname}.</p>
+          <p className="text-body text-ink">There is no screen at {location.pathname}.</p>
           <Button variant="primary" onClick={() => (window.location.hash = "#/today")}>
             Go to Today
           </Button>

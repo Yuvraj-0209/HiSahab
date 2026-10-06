@@ -70,7 +70,7 @@ test("login renders with no console errors", async ({ page }) => {
     route.fulfill({ json: { supabase_url: "https://e2e-test.supabase.co", supabase_anon_key: "e2e-anon" } }),
   );
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await expect(page.locator("form").getByRole("button", { name: "Sign in" })).toBeVisible();
   await expectAccessible(page);
   expect(problems).toEqual([]);
 });
@@ -82,12 +82,12 @@ async function frontDoor(page: Page) {
     route.fulfill({ json: { supabase_url: "https://e2e-test.supabase.co", supabase_anon_key: "e2e-anon" } }),
   );
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await expect(page.locator("form").getByRole("button", { name: "Sign in" })).toBeVisible();
 }
 
 test("front door: the sign-in button is inside the first screen of a phone (§14)", async ({ page }) => {
   await frontDoor(page);
-  const box = await page.getByRole("button", { name: "Sign in" }).boundingBox();
+  const box = await page.locator("form").getByRole("button", { name: "Sign in" }).boundingBox();
   const viewport = page.viewportSize();
   expect(box && viewport && box.y + box.height <= viewport.height).toBe(true);
 });
@@ -96,7 +96,7 @@ test("front door: under reduced motion every section is simply there, without sc
   await page.emulateMedia({ reducedMotion: "reduce" });
   const problems = await watch(page);
   await frontDoor(page);
-  await expect(page.locator("[data-section]")).toHaveCount(7);
+  await expect(page.locator("[data-section]")).toHaveCount(3);
   const hidden = await page.evaluate(() =>
     Array.from(document.querySelectorAll<HTMLElement>("[data-section] *")).filter((node) => getComputedStyle(node).opacity !== "1").length,
   );
@@ -144,6 +144,51 @@ test("front door: scrolling walks into the station (Phase 25 D1)", async ({ page
   expect(problems).toEqual([]);
 });
 
+test("front door: on a phone each step of the day carries its own screen, inline (Phase 28 D3)", async ({ page }) => {
+  const problems = await watch(page);
+  await frontDoor(page);
+  // No pinned phone here: a phone inside a phone is too small to read.
+  await expect(page.locator("[data-story-step] [data-screen]")).toHaveCount(6);
+  await expect(page.locator(".phone-story")).toHaveCount(0);
+  const last = page.locator('[data-story-step="bank"] [data-screen]');
+  await last.scrollIntoViewIfNeeded();
+  await expect(last.getByText("Sample figures")).toBeVisible();
+  expect(problems).toEqual([]);
+});
+
+test("front door: the page never ends without a way in -- Sign in goes back to the form (Phase 28 D3)", async ({ page }) => {
+  const problems = await watch(page);
+  await frontDoor(page);
+  const close = page.locator('[data-section="close"]');
+  await close.scrollIntoViewIfNeeded();
+  // Present whether or not the owner has set a contact for "Talk to us".
+  await close.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByLabel("Email")).toBeFocused();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(10);
+  expect(problems).toEqual([]);
+});
+
+test("front door: 'How it works' scrolls down the page without leaving it (Phase 28 D3)", async ({ page }) => {
+  const problems = await watch(page);
+  await frontDoor(page);
+  const route = await page.evaluate(() => location.hash);
+  // A button, not an "#how" anchor: the app is hash-routed, so a hash is a route (§14).
+  await page.getByRole("button", { name: "How it works" }).click();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(400);
+  expect(await page.evaluate(() => location.hash)).toBe(route);
+  expect(problems).toEqual([]);
+});
+
+test("front door: the photograph's slow drift stops once the walk in starts (Phase 28 B3)", async ({ page }) => {
+  await frontDoor(page);
+  const drift = () => page.evaluate(() => getComputedStyle(document.querySelector(".login-drift")!).animationPlayState);
+  expect(await drift()).toBe("running");
+  // Two transforms on one photograph -- the breathing drift and the scrubbed push-in -- stack
+  // into a zoom nobody asked for. Phase 25 D1 promised the drift would stop; it never did.
+  await page.mouse.wheel(0, 600);
+  await expect.poll(drift).toBe("paused");
+});
+
 test("front door: under reduced motion the photograph does not move when scrolled", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await frontDoor(page);
@@ -158,9 +203,7 @@ test.describe("front door on a desktop", () => {
   test("the whole story scrolls through under the production CSP, with nothing in the console", async ({ page }) => {
     const problems = await watch(page);
     await frontDoor(page);
-    await expect(page.locator("[data-section]")).toHaveCount(7);
-    // Smooth scrolling is on: the wrapper is fixed and the content is moved by transform.
-    await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector("#smooth-wrapper")!).position)).toBe("fixed");
+    await expect(page.locator("[data-section]")).toHaveCount(3);
     for (let step = 0; step < 60; step += 1) {
       await page.mouse.wheel(0, 400);
       await page.waitForTimeout(40);
@@ -169,6 +212,81 @@ test.describe("front door on a desktop", () => {
     await expect(page.getByRole("heading", { name: "Bring HiSahab to your pump." })).toBeInViewport();
     expect(problems).toEqual([]);
     await expectAccessible(page);
+  });
+
+  test("the hero shows the product beside the form, and the nav's Sign in puts the cursor in it (Phase 28 D3)", async ({ page }) => {
+    const problems = await watch(page);
+    await frontDoor(page);
+    // The phone arrives with the story, once the page is idle; it is a picture, named by its caption.
+    await expect(page.getByRole("figure", { name: /^The Today screen on/ })).toBeInViewport();
+    await page.getByRole("navigation", { name: "Front door" }).getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByLabel("Email")).toBeFocused();
+    expect(problems).toEqual([]);
+  });
+
+  test("one phone stays put and changes screen as each step of the day reaches the middle (Phase 28 D5)", async ({ page }) => {
+    const problems = await watch(page);
+    await frontDoor(page);
+    const step = page.locator('[data-story-step="cash"]');
+    await expect(step).toBeAttached();
+    await step.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      window.scrollBy(0, box.top + box.height / 2 - window.innerHeight / 2);
+    });
+    // Fade through, not cross-fade: the step's screen is shown and the one before it is gone.
+    await expect(page.locator('[data-screen="cash"]')).toHaveCSS("opacity", "1");
+    await expect(page.locator('[data-screen="udhaar"]')).toHaveCSS("opacity", "0");
+    await expect(step).toHaveAttribute("data-active", "true");
+    await expect(page.locator('[data-story-step="meter"]')).toHaveAttribute("data-active", "false");
+    // The phone is held in the window, not left behind with the step above it.
+    await expect(page.locator(".phone-story")).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole("figure", { name: /collections: cash counted/ })).toBeAttached();
+    expect(problems).toEqual([]);
+  });
+
+  test("under reduced motion every step's screen is simply there, even on a wide screen (Phase 28 D3)", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await frontDoor(page);
+    // A screen that swaps by itself is motion by another name: each step shows its own instead.
+    await expect(page.locator("[data-story-step] [data-screen]")).toHaveCount(6);
+    await expect(page.locator("[data-story-step][data-active='false']")).toHaveCount(0);
+  });
+
+  test("a headline below the fold waits lowered, then rises as it arrives (Phase 28 B1)", async ({ page }) => {
+    await frontDoor(page);
+    const last = page.getByRole("heading", { name: "Bring HiSahab to your pump." });
+    await expect(last).toBeAttached();
+    // Each word sits inside a clipping box; until its headline arrives it is lowered out of view.
+    // The story queried an attribute nothing set, so every headline was simply there, static.
+    const lowered = () => last.locator("[data-word]").first().evaluate((word) => new DOMMatrixReadOnly(getComputedStyle(word).transform).f);
+    await expect.poll(lowered).toBeGreaterThan(0);
+    await last.scrollIntoViewIfNeeded();
+    await expect.poll(lowered).toBe(0);
+  });
+
+  test("every sample figure says so on a wide screen too (Phase 28 B2, §14)", async ({ page }) => {
+    await frontDoor(page);
+    await expect(page.getByRole("heading", { name: "Bring HiSahab to your pump." })).toBeAttached();
+    const labels = page.getByText("Sample figures");
+    const count = await labels.count();
+    expect(count).toBeGreaterThanOrEqual(3);
+    // Visible, not merely present: a label hidden at this width labels nothing.
+    for (let index = 0; index < count; index += 1) await expect(labels.nth(index)).toBeVisible();
+  });
+
+  test("nothing but the page's own scroll moves the sign-in form (Phase 28 B4, §14)", async ({ page }) => {
+    await frontDoor(page);
+    await expect(page.getByRole("heading", { name: "Bring HiSahab to your pump." })).toBeAttached();
+    await page.mouse.wheel(0, 300);
+    await page.waitForTimeout(400);
+    const moved = await page.locator("form").evaluate((form) => {
+      const transformed: string[] = [];
+      for (let node = form.parentElement; node; node = node.parentElement) {
+        if (getComputedStyle(node).transform !== "none") transformed.push(node.id || node.className);
+      }
+      return transformed;
+    });
+    expect(moved).toEqual([]);
   });
 });
 
@@ -182,6 +300,56 @@ test("today: an open shift, as a manager", async ({ page }, info) => {
   await page.screenshot({ path: info.outputPath("today.png"), fullPage: true });
   await expectAccessible(page);
   expect(problems).toEqual([]);
+});
+
+test("today: a card whose figures failed to load says so, never '…' and never 'not declared' (Phase 28 B5)", async ({ page }) => {
+  const failed = new Failure(500, "INTERNAL_ERROR");
+  await signedIn(page, {
+    role: "admin",
+    responses: {
+      ...todayResponses("open"),
+      [`GET /shifts/${SHIFT_ID}/collections`]: failed,
+      [`GET /shifts/${SHIFT_ID}/expenses`]: failed,
+      [`GET /shifts/${SHIFT_ID}/credit-sales`]: failed,
+      [`GET /shifts/${SHIFT_ID}/bank-deposits`]: failed,
+    },
+  });
+  await page.goto("/#/today");
+  await expect(page.getByText("₹3,02,827.45").first()).toBeVisible();
+  // A failed read is not an answer. "not declared" would claim nobody counted the cash; "…"
+  // would claim it is still coming, forever (§6.8: zero as an answer, never as an omission).
+  for (const title of ["Collections", "Expenses", "Credit", "Bank deposits"]) {
+    const card = page.getByRole("heading", { name: title, exact: true }).locator("xpath=ancestor::section[1]");
+    await expect(card.getByText("not loaded"), title).toBeVisible({ timeout: 10_000 });
+    await expect(card.getByText("…"), title).toHaveCount(0);
+  }
+  await expect(page.getByText("not declared")).toHaveCount(0);
+});
+
+test("today: a card opens its details from anywhere on it, not from a button at its foot (Phase 28 D6)", async ({ page }) => {
+  const problems = await watch(page);
+  await signedIn(page, { role: "admin", responses: todayResponses("open") });
+  await page.goto("/#/today");
+  const card = page.getByRole("heading", { name: "Collections", exact: true }).locator("xpath=ancestor::section[1]");
+  await expect(card.getByRole("button", { name: "Details" })).toHaveCount(0);
+  // Pressed where a row's label is drawn, well away from the title that carries the button. A
+  // click at a position, as a thumb makes one: the stretched button lies over the whole card, so
+  // the row underneath is not itself a target and Playwright would refuse to click it directly.
+  await card.evaluate((element) => element.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(300);
+  const box = (await card.getByText("Card", { exact: true }).boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.getByRole("dialog", { name: "Collections" })).toBeVisible();
+  expect(problems).toEqual([]);
+});
+
+test("a shift opened by its id is titled as that shift, not as Today (Phase 28 B6)", async ({ page }) => {
+  await signedIn(page, { role: "admin", responses: todayResponses("closed") });
+  await page.goto(`/#/shifts/${SHIFT_ID}`);
+  await expect(page.getByRole("button", { name: "Lock shift" })).toBeVisible();
+  // A closed shift from last week is not "Today", and the tab title is what a reader sees first.
+  await expect(page).toHaveTitle(/^Shift 1 · HiSahab$/);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(/^Shift 1/);
 });
 
 test("today: no open shift", async ({ page }) => {

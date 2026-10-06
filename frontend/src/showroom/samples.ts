@@ -12,7 +12,34 @@
  *                28,010.00 declared as 27,510.00 is 500.00 short
  *   the ledger   12,400.00 + 3,200.00 = 15,600.00; − 10,000.00 = 5,600.00
  *   the bank     yesterday's card 38,210.00 + UPI 51,940.00 = 90,150.00 from Paytm
+ *   the day      (Phase 28) the phone's sample day IS the gap's day: metered 1,24,560.00, card
+ *                38,210.00, UPI 51,940.00 and cash counted 27,510.00 are the gap's own figures,
+ *                and the two udhaar slips, 4,150.00 + 2,250.00, are its 6,400.00. It is also
+ *                the ninth bar of the sales chart below.
+ *
+ * Key names are deliberately unique across the file: the pytest that checks the arithmetic finds
+ * each figure by its key (`udhaar:`, `sales:`, `balance:`), so a second key of the same name
+ * would be read in place of the first.
  */
+
+/** The day the phone shows, step by step (Phase 28 D4). Shift times are labels, never instants. */
+export const DAY = {
+  date: "Wed 9 Sep 2026",
+  shift: "Shift 1",
+  opened: "06:00 am onwards",
+  closed: "06:00 am to 10:00 pm",
+  metered: "₹1,24,560.00",
+  cardTaken: "₹38,210.00",
+  upiTaken: "₹51,940.00",
+  cashCounted: "₹27,510.00",
+  udhaarIssued: "₹6,400.00",
+};
+
+/** The day's two udhaar slips, each photographed before it could be saved (§6.6). */
+export const SLIPS = [
+  { customer: "Singh Roadways", vehicle: "PB-08 CX 2041", fuel: "Diesel", slip: "₹4,150.00" },
+  { customer: "Bansal Agro", vehicle: "PB-10 HK 7712", fuel: "Diesel", slip: "₹2,250.00" },
+];
 
 export const METER = {
   nozzle: "DU-1 / N-2",
@@ -78,11 +105,12 @@ export const FUEL_MIX = [
   { key: "CBG", share_pct: "12.3%", colour: 3, value: "₹1,52,110.00" },
 ];
 
-export const PAYMENT_MIX = [
-  { key: "upi", label: "UPI", value: "₹5,02,860.00", share_pct: "40.7%", colour: 1 },
-  { key: "card", label: "Card", value: "₹3,71,480.00", share_pct: "30.0%", colour: 2 },
-  { key: "cash", label: "Cash", value: "₹2,99,120.00", share_pct: "24.2%", colour: 3 },
-  { key: "udhaar", label: "Udhaar", value: "₹63,195.00", share_pct: "5.1%", colour: 5 },
-];
 
 export const MONTH = { sales: "₹12,36,655.00", margin: "₹41,382.50" };
+
+/** §6.10: the save that was sent twice and recorded once. */
+export const TWICE = { what: "Electricity bill", sum: "₹5,000.00" };
+
+/** §5.3: one line of the audit log. `was` and `now`, never `before`: the pytest reads the bill's
+ * `before` by its key, and a second one would be read in its place. */
+export const AUDIT = { what: "Fuel price · Petrol", was: "₹94.72 / L", now: "₹95.13 / L", who: "Admin", when: "9 Sep, 06:00" };

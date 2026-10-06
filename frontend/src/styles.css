@@ -91,6 +91,9 @@
    * the one token that does not change with the phone's setting. */
   --on-photo: #f4f5f8;
   --on-photo-muted: rgb(244 245 248 / 0.78);
+
+  /* The bezel of the front door's phone (Phase 28): dark in both palettes, as a phone is. */
+  --device: #16181c;
 }
 
 /* Motion tokens (Phase 24 D2): the CSS copy of src/motion/gsap.ts's DURATION and EASE, for the
@@ -105,6 +108,14 @@
   --ease-exit: cubic-bezier(0.55, 0.085, 0.68, 0.53);
   --ease-move: cubic-bezier(0.645, 0.045, 0.355, 1);
   --ease-settle: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* The gesture spring (src/motion/spring.ts PRESETS), sampled into CSS by src/motion/cssSpring.ts
+   * (Phase 28 D8), so a transition CSS runs moves with the same physics as a sheet under a finger.
+   * Generated, never tuned by hand: cssSpring.test.ts fails if these drift from the presets. */
+  --spring-ui: linear(0, 0.102, 0.268, 0.437, 0.581, 0.696, 0.782, 0.846, 0.891, 0.924, 0.947, 0.963, 0.974, 0.982, 0.988, 0.991, 0.994, 0.996, 0.997, 0.998, 0.999, 0.999, 0.999, 1, 1);
+  --spring-ui-duration: 633ms;
+  --spring-snap: linear(0, 0.124, 0.312, 0.489, 0.632, 0.74, 0.819, 0.875, 0.914, 0.941, 0.96, 0.972, 0.981, 0.987, 0.991, 0.994, 0.996, 0.997, 0.998, 0.999, 0.999, 0.999, 1, 1, 1);
+  --spring-snap-duration: 433ms;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -150,6 +161,9 @@
 
     --chrome: rgb(12 13 15 / 0.86);
     --scrim: rgb(0 0 0 / 0.55);
+
+    /* Lifted off the graphite ground, so the phone's edge still reads at night. */
+    --device: #2c2e34;
   }
 }
 
@@ -185,6 +199,7 @@
   --color-cat-6: var(--cat-6);
   --color-on-photo: var(--on-photo);
   --color-on-photo-muted: var(--on-photo-muted);
+  --color-device: var(--device);
 
   --shadow-1: var(--shadow-1);
   --shadow-2: var(--shadow-2);
@@ -197,9 +212,43 @@
   --radius-control: 12px;
   --radius-sheet: 26px;
 
-  /* The type ramp's top three steps (Phase 24 D6), as `text-display`, `text-title` and
-   * `text-headline`. Below these the screens keep their existing sizes; the ramp exists so the
-   * new large titles and hero figures share one scale instead of three guesses. */
+  /* The type scale (Phase 24 D6 began it with the top three steps; Phase 28 finished it). Every
+   * text size in the app is one of these -- a structural test refuses a one-off `text-[…rem]`
+   * in screens/, ui/ and app/ -- so two screens cannot disagree about what a card title is.
+   *
+   *   micro     .6875  tab labels, request ids
+   *   caption   .75    pills, labels over a figure
+   *   footnote  .8125  captions, hints, row details
+   *   callout   .875   secondary rows, small buttons
+   *   body      .9375  the reading size
+   *   lead      1.0625 compact chrome titles, emphasised figures in a row
+   *   subhead   1.125  card titles                                  (semibold)
+   *   headline  1.25   section figures, tile headings               (semibold)
+   *   amount    1.5    a secondary figure beside the hero one       (semibold)
+   *   title     1.875  large screen titles                          (semibold+)
+   *   figure    2.25   the one figure a card exists to show         (semibold)
+   *   display   2.75   the Summary's headline figure on a wide screen
+   *
+   * The five reading sizes carry no line-height of their own, so swapping a one-off size for one
+   * of them moved nothing: the line-height is still the one around it. */
+  --text-micro: 0.6875rem;
+  --text-caption: 0.75rem;
+  --text-footnote: 0.8125rem;
+  --text-callout: 0.875rem;
+  --text-body: 0.9375rem;
+  --text-lead: 1.0625rem;
+  --text-subhead: 1.125rem;
+  --text-subhead--line-height: 1.3;
+  --text-subhead--letter-spacing: -0.015em;
+  --text-subhead--font-weight: 600;
+  --text-amount: 1.5rem;
+  --text-amount--line-height: 1.15;
+  --text-amount--letter-spacing: -0.02em;
+  --text-amount--font-weight: 600;
+  --text-figure: 2.25rem;
+  --text-figure--line-height: 1;
+  --text-figure--letter-spacing: -0.03em;
+  --text-figure--font-weight: 600;
   --text-display: 2.75rem;
   --text-display--line-height: 1.05;
   --text-display--letter-spacing: -0.035em;
@@ -303,7 +352,8 @@
 /* Press feedback belongs on pointer-DOWN (:active), not on release: waiting for `click` is a
  * ~100ms lie that reads as lag. Transform only, so it never re-lays the page out. */
 @utility pressable {
-  transition: transform var(--dur-tap) var(--ease-enter);
+  /* The snap spring (Phase 28 D8): pressed and released with the physics of a dragged sheet. */
+  transition: transform var(--spring-snap-duration) var(--spring-snap);
   &:active:not(:disabled) {
     transform: scale(0.98);
   }
@@ -380,8 +430,9 @@
 }
 
 .tab-indicator[data-placed="true"] {
+  /* The ui spring (Phase 28 D8): the pill slides to its tab with the physics a sheet uses. */
   transition:
-    transform var(--dur-medium) var(--ease-enter),
+    transform var(--spring-ui-duration) var(--spring-ui),
     opacity var(--dur-small) ease;
 }
 
@@ -745,6 +796,12 @@ select.field-control {
   opacity: 1;
 }
 
+.login-drift[data-walking="true"] {
+  /* Paused, not removed: removing the animation would snap the photograph back to its first
+   * frame mid-walk (Phase 28 B3). */
+  animation-play-state: paused;
+}
+
 @keyframes ken-burns {
   from {
     transform: scale(1.06) translate3d(0, 0, 0);
@@ -793,13 +850,158 @@ select.field-control {
   );
 }
 
+/* The front door's phone (Phase 28 D4; showroom/phone/PhoneFrame.tsx).
+ *
+ * The screen is laid out at 390 px, a real phone's width, and drawn smaller with `zoom`. Zoom
+ * re-lays the text out at the smaller size rather than scaling a bitmap of it, so it stays sharp,
+ * and it leaves `transform` free for the story to animate. The zoom shrinks on a short window so
+ * the pinned phone always fits between the top and bottom of the screen. */
+.phone {
+  width: fit-content;
+  margin: 0;
+}
+
+.phone-bezel {
+  position: relative;
+  overflow: hidden;
+  border: 8px solid var(--device);
+  border-radius: 3rem;
+  background: var(--ground);
+  box-shadow:
+    var(--shadow-3),
+    0 0 0 1px var(--hairline-strong);
+}
+
+.phone-island {
+  position: absolute;
+  top: 9px;
+  right: 0;
+  left: 0;
+  z-index: 1;
+  width: 5.5rem;
+  height: 1.5rem;
+  margin-inline: auto;
+  border-radius: 999px;
+  background: var(--device);
+}
+
+.phone-screen {
+  width: 390px;
+  height: 844px;
+  overflow: hidden;
+  zoom: var(--phone-zoom);
+}
+
+.phone-hero {
+  --phone-zoom: 0.72;
+}
+
+.phone-story {
+  --phone-zoom: 0.76;
+}
+
+@media (max-height: 820px) {
+  .phone-hero,
+  .phone-story {
+    --phone-zoom: 0.66;
+  }
+}
+
+@media (max-height: 720px) {
+  .phone-hero,
+  .phone-story {
+    --phone-zoom: 0.58;
+  }
+}
+
+/* A tile or row that opens somewhere (ui/primitives.tsx LinkTile, RowLink, Phase 28 D6): where
+ * there is a mouse, the caret leans 2px the way the tap would go. CSS alone, on the caret alone. */
+.link-caret {
+  transition: transform var(--dur-small) var(--ease-enter);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .link-row:hover .link-caret {
+    transform: translateX(2px);
+  }
+}
+
+/* Today's domain card (screens/today.tsx DomainCard, Phase 28 D6): the title is the button, and its
+ * hit area is stretched over the whole card, so a thumb can press anywhere on it while a screen
+ * reader still meets a heading. The focus ring goes around the card, where the target is. */
+.domain-card-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-card);
+}
+
+.domain-card-open:focus-visible {
+  outline: none;
+}
+
+.domain-card:has(.domain-card-open:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* "A day at the pump" (Phase 28 D5, showroom/Story.tsx). The step the phone is showing reads at
+ * full strength and the rest recede -- by colour, not opacity, so a receded step still passes
+ * contrast (axe reads every step, on screen or not). CSS owns this; GSAP never moves the copy. */
+.story-step h3 {
+  color: var(--ink);
+  transition: color var(--dur-medium) var(--ease-enter);
+}
+
+.story-step .story-body {
+  color: var(--ink-muted);
+  transition: color var(--dur-medium) var(--ease-enter);
+}
+
+.story-dot {
+  border-color: var(--accent);
+  transition: border-color var(--dur-medium) var(--ease-enter);
+}
+
+.story-dot > span {
+  background: var(--accent);
+  transition: background-color var(--dur-medium) var(--ease-enter);
+}
+
+.story-step[data-active="false"] h3,
+.story-step[data-active="false"] .story-body {
+  color: var(--ink-faint);
+}
+
+.story-step[data-active="false"] .story-dot {
+  border-color: var(--hairline-strong);
+}
+
+.story-step[data-active="false"] .story-dot > span {
+  background: transparent;
+}
+
+/* On a wide screen the words sit on the left of the photograph rather than at the bottom of it
+ * (Phase 28 D3), so the wash that seats them turns sideways: a dark scrim behind the headline and
+ * the form, the photograph clear on the right where the phone stands. Still a gradient, never a
+ * filter (§13.29), and the walk-in lifts it exactly as before. */
+@media (min-width: 1024px) {
+  .login-wash {
+    background:
+      linear-gradient(to right, rgb(5 5 8 / 0.72) 0%, rgb(5 5 8 / 0.5) 38%, rgb(5 5 8 / 0) 66%),
+      linear-gradient(to bottom, transparent 70%, color-mix(in srgb, var(--ground) 55%, transparent) 100%);
+  }
+}
+
 .wordmark {
   font-family: var(--font-display);
   letter-spacing: 0.2em;
   text-transform: uppercase;
 }
 
-.display {
+/* The serif voice of the front door's headlines (§13.28). Called `.serif` since Phase 28: as
+ * `.display` it read like the `text-display` size token, which is a different thing entirely. */
+.serif {
   font-family: var(--font-display);
   letter-spacing: -0.02em;
   line-height: 1.04;

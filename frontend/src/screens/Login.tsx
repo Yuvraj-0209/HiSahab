@@ -33,15 +33,18 @@
  * Nothing is redrawn to move (§13.29), no filter sits on anything that moves, and under reduced
  * motion the photograph holds still and every word is simply there.
  *
- * `#smooth-wrapper` / `#smooth-content` are where the story's ScrollSmoother attaches on
- * desktop; until then (and on a phone, always) they are plain blocks. The backdrop stays outside
- * them, because a fixed element inside smoothed content would scroll with it.
+ * The drift stops once the walk begins (Phase 28 B3): two transforms breathing and pushing on one
+ * photograph stack into a zoom nobody asked for. It resumes at the very top, where the photograph
+ * is at rest again. The drift belongs to CSS; the walk only flips an attribute that pauses it.
+ *
+ * Nothing smooths the scroll (Phase 28 D2): ScrollSmoother moved this form, which §14 forbids.
  */
 
 import { type FormEvent, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { SignInError, signIn } from "../auth/auth";
 import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
 import "../motion/scroll";
+import { CONTACT, goToStory } from "../showroom/doors";
 import { coverFocus } from "../showroom/focus";
 import { Words } from "../showroom/Words";
 import { useForm, TextField } from "../ui/form";
@@ -49,6 +52,8 @@ import { Button } from "../ui/primitives";
 import { notify } from "../ui/toast";
 
 const Showroom = lazy(() => import("../showroom/Showroom"));
+// The same module, so the same request: the hero's phone arrives with the story (Phase 28 D4).
+const HeroPhone = lazy(() => import("../showroom/Showroom").then((module) => ({ default: module.HeroPhone })));
 
 /* A 20px copy of the photograph, so the first paint is a soft suggestion of the image rather
  * than a black rectangle. Smaller than the request it saves; the CSP allows `img-src data:`.
@@ -67,6 +72,10 @@ const FAR_SCALE = 2.3;
 const NEAR_SCALE = 3.4;
 /** Where the dispenser ends up on screen, as a fraction of the window's height. */
 const ARRIVE_AT = 0.56;
+
+/** The nav's quiet buttons: white on the photograph, a faint lift on hover. */
+const NAV_BUTTON =
+  "pressable h-10 items-center rounded-full px-3.5 text-body font-medium text-on-photo transition-colors hover:bg-on-photo/12";
 
 /** An element's distance from the top of the document, in layout px (unaffected by transforms,
  * which matters once the story's smooth scrolling is moving the content by transform). */
@@ -110,6 +119,8 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
   const story = useWhenIdle();
 
   const scope = useRef<HTMLDivElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const drift = useRef<HTMLDivElement>(null);
   const far = useRef<HTMLDivElement>(null);
   const near = useRef<HTMLDivElement>(null);
   const wash = useRef<HTMLDivElement>(null);
@@ -137,6 +148,11 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
             end: () => (travel.current ? documentTop(travel.current) + travel.current.offsetHeight - window.innerHeight : window.innerHeight),
             scrub: 0.5,
             invalidateOnRefresh: true,
+            // An attribute, written only when it changes: CSS owns the drift's transform.
+            onUpdate: (self) => {
+              const walking = self.progress > 0 ? "true" : "false";
+              if (drift.current && drift.current.dataset.walking !== walking) drift.current.dataset.walking = walking;
+            },
           },
         });
         walk
@@ -152,6 +168,11 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
       }),
     { scope },
   );
+
+  /** The nav's "Sign in": the form is already on screen, so it only needs the cursor. */
+  function focusEmail() {
+    formRef.current?.querySelector<HTMLInputElement>("input")?.focus();
+  }
 
   async function submit(event: FormEvent) {
     // Every form is submitted by fetch; the CSP's `form-action 'none'` makes a real form POST a
@@ -187,7 +208,7 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
   return (
     <div ref={scope}>
       <div className="login-backdrop" aria-hidden="true">
-        <div className="login-drift">
+        <div ref={drift} className="login-drift">
           <div ref={far} className="login-layer" style={{ backgroundImage: `url("${LQIP}")` }}>
             <img
               src="/img/forecourt-1280.webp"
@@ -220,48 +241,85 @@ export function Login({ outletName, onSignedIn }: { outletName?: string | undefi
         <div ref={wash} className="login-wash" />
       </div>
 
-      <div id="smooth-wrapper">
-        <div id="smooth-content" className="relative z-10">
-          {/* Absolute, not fixed: the wordmark is white on the photograph and belongs to it. Fixed,
-           * it would ghost across the paper of the story below in the light palette. */}
-          <header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center pt-[calc(env(safe-area-inset-top)+1.25rem)]">
-            <p className="wordmark text-[1.375rem] text-on-photo">HiSahab</p>
-          </header>
+      <div className="relative z-10">
+        {/* Absolute, not fixed: the nav is white on the photograph and belongs to it. Fixed, it
+         * would ghost across the paper of the story below in the light palette, and a blurred bar
+         * over the moving photograph is §13.29's failure. Buttons, not "#" anchors (doors.ts). */}
+        <nav aria-label="Front door" className="absolute inset-x-0 top-0 z-20 pt-[calc(env(safe-area-inset-top)+0.875rem)]">
+          <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
+            <p className="wordmark text-[1.25rem] text-on-photo">HiSahab</p>
+            <div className="flex items-center gap-1">
+              <button type="button" onClick={goToStory} className={`${NAV_BUTTON} inline-flex`}>
+                How it works
+              </button>
+              <button type="button" onClick={focusEmail} className={`${NAV_BUTTON} hidden lg:inline-flex`}>
+                Sign in
+              </button>
+              {CONTACT ? (
+                <a
+                  href={CONTACT}
+                  className="pressable ml-1 hidden h-10 items-center rounded-full bg-accent px-4 text-body font-medium text-on-accent shadow-1 transition-colors hover:bg-accent-pressed lg:inline-flex"
+                >
+                  Talk to us
+                </a>
+              ) : null}
+            </div>
+          </div>
+        </nav>
 
-          <section className="mx-auto flex min-h-[100dvh] max-w-md flex-col justify-end gap-5 px-4 pt-24 pb-8">
-            <div data-hero className="text-center">
-              <Words as="h1" text="The day's cash, checked against the meters." className="display block text-[clamp(2.25rem,9vw,3.25rem)] text-on-photo" />
-              <p data-hero-sub className="mx-auto mt-3 max-w-[22rem] text-[1rem] leading-snug text-on-photo-muted">
+        {/* One column on a phone, the form at the bottom of the first screen under the thumb (§14,
+         * asserted). Two on a wide screen (Phase 28 D3): the words and the form on the left, the
+         * product itself on the right. */}
+        <section className="mx-auto grid min-h-[100dvh] max-w-7xl grid-cols-1 items-end gap-12 px-4 pt-24 pb-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:gap-16 lg:pt-28 lg:pb-14">
+          <div className="mx-auto flex w-full max-w-md flex-col gap-5 lg:mx-0 lg:max-w-xl">
+            <div data-hero className="text-center lg:text-left">
+              <Words
+                as="h1"
+                text="The day's cash, checked against the meters."
+                className="serif block text-[clamp(2.25rem,9vw,3.25rem)] text-on-photo lg:text-[clamp(3.25rem,4.4vw,4.5rem)]"
+              />
+              <p data-hero-sub className="mx-auto mt-3 max-w-[22rem] text-base leading-snug text-on-photo-muted lg:mx-0 lg:mt-5 lg:max-w-[30rem] lg:text-lead">
                 {outletName ? `${outletName}: readings` : "Readings"}, collections, udhaar and the bank statement, reconciled every night.
               </p>
             </div>
             <form
+              ref={formRef}
               onSubmit={submit}
               noValidate
-              className="flex flex-col gap-4 rounded-[var(--radius-sheet)] border border-hairline bg-surface-raised p-5 shadow-3 sm:p-6"
+              className="flex flex-col gap-4 rounded-[var(--radius-sheet)] border border-hairline bg-surface-raised p-5 shadow-3 sm:p-6 lg:max-w-md"
             >
               <TextField form={form} name="email" label="Email" type="email" inputMode="email" autoComplete="username" required />
               <TextField form={form} name="password" label="Password" type="password" autoComplete="current-password" required />
               <Button type="submit" variant="primary" block disabled={busy}>
                 {busy ? "Signing in…" : "Sign in"}
               </Button>
+              <p className="text-center text-footnote text-ink-muted">Trouble signing in? Your outlet admin can check your account.</p>
             </form>
-          </section>
+          </div>
 
-          {/* The walk in: a stretch of page with nothing on it but the forecourt moving beneath, and
-           * one line that rises over the dispenser as you arrive. */}
-          <section ref={travel} data-travel className="relative flex min-h-[120dvh] items-end justify-center px-6 pb-[14dvh] lg:min-h-[150dvh]">
-            <p data-travel-line className="display travel-line max-w-[20ch] text-center text-[clamp(2rem,6vw,3.75rem)] text-on-photo">
-              Every night, somebody reads this meter.
-            </p>
-          </section>
+          {/* Reserved at its full size before the phone arrives, so nothing shifts when it does. */}
+          <div className="hidden min-h-[37rem] lg:block">
+            {story ? (
+              <Suspense fallback={null}>
+                <HeroPhone />
+              </Suspense>
+            ) : null}
+          </div>
+        </section>
 
-          {story ? (
-            <Suspense fallback={null}>
-              <Showroom outletName={outletName} />
-            </Suspense>
-          ) : null}
-        </div>
+        {/* The walk in: a stretch of page with nothing on it but the forecourt moving beneath, and
+         * one line that rises over the dispenser as you arrive. */}
+        <section ref={travel} data-travel className="relative flex min-h-[120dvh] items-end justify-center px-6 pb-[14dvh] lg:min-h-[150dvh]">
+          <p data-travel-line className="serif travel-line max-w-[20ch] text-center text-[clamp(2rem,6vw,3.75rem)] text-on-photo">
+            Every night, somebody reads this meter.
+          </p>
+        </section>
+
+        {story ? (
+          <Suspense fallback={null}>
+            <Showroom outletName={outletName} />
+          </Suspense>
+        ) : null}
       </div>
     </div>
   );

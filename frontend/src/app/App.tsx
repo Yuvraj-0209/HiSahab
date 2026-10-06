@@ -141,8 +141,8 @@ function Splash() {
 function Fatal({ title, detail }: { title: string; detail: string }) {
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-4 px-6">
-      <h1 className="text-[1.375rem] font-semibold tracking-[-0.02em] text-ink">{title}</h1>
-      <p className="text-[0.9375rem] text-ink-muted">{detail}</p>
+      <h1 className="text-amount text-ink">{title}</h1>
+      <p className="text-body text-ink-muted">{detail}</p>
       <div>
         <Button variant="primary" onClick={() => window.location.reload()}>
           Try again

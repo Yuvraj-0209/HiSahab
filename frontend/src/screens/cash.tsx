@@ -13,8 +13,8 @@
  * shift opened for the wrong day is noticed, because it blocks the day the worklist is asking for.
  */
 
-import { type ReactNode, useRef, useState } from "react";
-import { BellIcon, CaretRightIcon, ChartBarIcon, FlagIcon } from "@phosphor-icons/react";
+import { useRef, useState } from "react";
+import { BellIcon, ChartBarIcon, FlagIcon } from "@phosphor-icons/react";
 import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenTitle } from "../app/chrome";
@@ -26,7 +26,7 @@ import { satisfies } from "../lib/roles";
 import { businessDate } from "../lib/time";
 import { Amount } from "../ui/Amount";
 import { useArrival } from "../ui/motion";
-import { Button, Card, Empty, ErrorCard, SectionLabel, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, LinkTile, ListCard, RowLink, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { DayRow, useDays, useReconcile, WorklistCard } from "./days";
 import { useForgetShift, VoidShiftForm } from "./today";
@@ -52,7 +52,7 @@ export function CashScreen() {
     return (
       <>
         <ScreenTitle large title="Cash" />
-        <Skeleton rows={4} />
+        <Skeleton shape="cards" rows={3} />
       </>
     );
   }
@@ -81,37 +81,50 @@ export function CashScreen() {
       <div className="flex flex-col gap-6">
         <Card>
           {open ? (
-            <div className="flex flex-col gap-3">
-              <div>
-                <p className="text-[0.8125rem] font-medium text-ink-muted">Open shift</p>
-                <p className="text-[1.125rem] font-semibold tracking-[-0.015em] text-ink">
-                  {businessDate(open.business_date)} · shift {open.sequence}
-                </p>
-              </div>
-              {/* Named for what it shows, never for what a reader might wish it did (§14). */}
-              <Button block onClick={() => navigate(`/shifts/${open.id}/cash-position`)}>
-                Cash position
-              </Button>
-              <p className="text-[0.8125rem] text-ink-muted">
-                Shows what this salesman should be holding and the gap. It is a report: nothing is written, and the day is reconciled once every shift on it is closed.
-              </p>
-              {satisfies(me.role, "admin") ? (
-                <>
-                  <Button
-                    block
-                    onClick={() => {
-                      setVoidTarget(open);
-                      setVoiding(true);
-                    }}
-                  >
-                    Void shift
+            // The band Today uses (Phase 25 D3): the shift on the left, its acts on the right on a
+            // wide screen and full width under the thumb on a phone (Phase 28 D6). Each act's
+            // explanation stays beneath it, in the order the buttons read.
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-footnote font-medium text-ink-muted">Open shift</p>
+                  <p className="text-subhead text-ink">
+                    {businessDate(open.business_date)} · shift {open.sequence}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row md:shrink-0">
+                  {/* Named for what it shows, never for what a reader might wish it did (§14). */}
+                  <Button className="w-full md:w-auto md:min-w-[10rem]" onClick={() => navigate(`/shifts/${open.id}/cash-position`)}>
+                    Cash position
                   </Button>
-                  <p className="text-[0.8125rem] text-ink-muted">Opened for the wrong day? An empty shift can be voided, and the day it was blocking can then be opened.</p>
-                </>
-              ) : null}
+                  {satisfies(me.role, "admin") ? (
+                    <Button
+                      className="w-full md:w-auto md:min-w-[10rem]"
+                      onClick={() => {
+                        setVoidTarget(open);
+                        setVoiding(true);
+                      }}
+                    >
+                      Void shift
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5 border-t border-hairline pt-3 text-footnote text-ink-muted">
+                <p>
+                  <span className="font-medium text-ink">Cash position</span> shows what this salesman should be holding and the gap. It is a report: nothing
+                  is written, and the day is reconciled once every shift on it is closed.
+                </p>
+                {satisfies(me.role, "admin") ? (
+                  <p>
+                    <span className="font-medium text-ink">Void shift</span> is for a shift opened for the wrong day: an empty one can be voided, and the day it
+                    was blocking can then be opened.
+                  </p>
+                ) : null}
+              </div>
             </div>
           ) : (
-            <p className="text-[0.875rem] text-ink-muted">No shift is currently open.</p>
+            <p className="text-callout text-ink-muted">No shift is currently open.</p>
           )}
         </Card>
 
@@ -131,11 +144,11 @@ export function CashScreen() {
         <section>
           <SectionLabel sticky>Trading days</SectionLabel>
           {days.length ? (
-            <Card className="py-1 sm:py-1">
+            <ListCard>
               {days.slice(0, RECENT).map((day) => (
                 <DayRow key={day.business_date} day={day} unblocked={unblocked} />
               ))}
-            </Card>
+            </ListCard>
           ) : (
             <Empty>No trading day has been entered yet.</Empty>
           )}
@@ -150,24 +163,18 @@ export function CashScreen() {
           <SectionLabel sticky>Salesman balances</SectionLabel>
           {owed.length ? (
             <>
-              <Card className="py-1 sm:py-1">
+              <ListCard>
                 {owed.map((row) => (
-                  <button
-                    key={row.salesman_id}
-                    type="button"
-                    onClick={() => navigate(`/salesmen/${row.salesman_id}/ledger`)}
-                    className="pressable flex w-full items-center justify-between gap-3 border-b border-hairline py-3 text-left last:border-b-0"
-                  >
-                    <span className="text-[0.9375rem] text-ink">{row.full_name}</span>
-                    <span className="flex items-center gap-2 text-short">
+                  <RowLink key={row.salesman_id} onClick={() => navigate(`/salesmen/${row.salesman_id}/ledger`)}>
+                    <span className="grow text-body text-ink">{row.full_name}</span>
+                    <span className="text-short">
                       <Amount value={row.outstanding} />
-                      <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
                     </span>
-                  </button>
+                  </RowLink>
                 ))}
-              </Card>
+              </ListCard>
               {/* §13.15, where somebody will see it. */}
-              <p className="mt-2 text-[0.8125rem] text-ink-muted">
+              <p className="mt-2 text-footnote text-ink-muted">
                 A shortfall can only be repaid in cash. V1 has no way to write one off, so a small figure nobody will chase stays here.
               </p>
             </>
@@ -180,9 +187,9 @@ export function CashScreen() {
         <section>
           <SectionLabel sticky>Look back</SectionLabel>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <LookBack icon={<FlagIcon size={20} aria-hidden />} label="Flagged expenses" onClick={() => navigate("/expenses/flagged")} />
-            <LookBack icon={<ChartBarIcon size={20} aria-hidden />} label="The latest trading week" onClick={() => navigate("/reports")} />
-            <LookBack icon={<BellIcon size={20} aria-hidden />} label="Alerts" onClick={() => navigate("/reports/alerts")} />
+            <LinkTile Icon={FlagIcon} label="Flagged expenses" onClick={() => navigate("/expenses/flagged")} />
+            <LinkTile Icon={ChartBarIcon} label="The latest trading week" onClick={() => navigate("/reports")} />
+            <LinkTile Icon={BellIcon} label="Alerts" onClick={() => navigate("/reports/alerts")} />
           </div>
         </section>
       </div>
@@ -205,16 +212,3 @@ export function CashScreen() {
   );
 }
 
-function LookBack({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="pressable liftable flex items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
-    >
-      <span className="text-accent">{icon}</span>
-      <span className="grow text-[0.9375rem] text-ink">{label}</span>
-      <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
-    </button>
-  );
-}

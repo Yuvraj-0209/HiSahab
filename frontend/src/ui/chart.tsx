@@ -151,8 +151,8 @@ export function SalesBars<Day extends BarDay>({ days, onSelect, perPage = 10 }: 
                       />
                     </div>
                     <span className="flex flex-col items-center leading-none">
-                      <span className="tabular text-[0.75rem] text-ink">{label.day}</span>
-                      <span className="text-[0.625rem] text-ink-faint uppercase">{label.month}</span>
+                      <span className="tabular text-caption text-ink">{label.day}</span>
+                      <span className="text-micro text-ink-faint uppercase">{label.month}</span>
                     </span>
                   </button>
                 );
@@ -171,7 +171,7 @@ export function SalesBars<Day extends BarDay>({ days, onSelect, perPage = 10 }: 
           <button type="button" aria-label="Previous days" onClick={() => turn(-1)} className="pressable rounded-full bg-surface-sunken p-2 text-ink">
             <CaretLeftIcon size={16} weight="bold" aria-hidden />
           </button>
-          <span className="tabular text-[0.75rem] text-ink-muted">
+          <span className="tabular text-caption text-ink-muted">
             {first} to {last} of {days.length}
           </span>
           <button type="button" aria-label="Next days" onClick={() => turn(1)} className="pressable rounded-full bg-surface-sunken p-2 text-ink">
@@ -187,24 +187,24 @@ export function SalesBars<Day extends BarDay>({ days, onSelect, perPage = 10 }: 
 
 /** The panel under the bars. It teaches the interaction while empty: a phone has no hover. */
 function DayDetail<Day extends BarDay>({ day, onSelect }: { day: Day | null; onSelect?: ((day: Day) => void) | undefined }) {
-  if (!day) return <p className="text-[0.8125rem] text-ink-muted">Tap a bar for that day's figures.</p>;
+  if (!day) return <p className="text-footnote text-ink-muted">Tap a bar for that day's figures.</p>;
   const variance = day.variance === undefined ? null : varianceLabel(day.variance);
   return (
     <div className="flex items-start justify-between gap-3 rounded-[var(--radius-control)] bg-surface-sunken px-3.5 py-3">
       <div className="min-w-0">
-        <p className="text-[0.9375rem] text-ink">
+        <p className="text-body text-ink">
           {businessDateWeekday(day.business_date)}, {businessDate(day.business_date)}
         </p>
-        <p className="text-[0.8125rem] text-ink-muted">{describeSource(day.source)}</p>
+        <p className="text-footnote text-ink-muted">{describeSource(day.source)}</p>
         {onSelect ? (
-          <button type="button" onClick={() => onSelect(day)} className="mt-1 text-[0.8125rem] font-medium text-accent">
+          <button type="button" onClick={() => onSelect(day)} className="mt-1 text-footnote font-medium text-accent">
             Open this day
           </button>
         ) : null}
       </div>
       <div className="flex shrink-0 flex-col items-end">
-        <span className="tabular text-[0.9375rem] text-ink">{format(day.total_sales, { absent: "not known" })}</span>
-        {variance ? <span className={`tabular text-[0.8125rem] ${variance.className}`}>{variance.text}</span> : null}
+        <span className="tabular text-body text-ink">{format(day.total_sales, { absent: "not known" })}</span>
+        {variance ? <span className={`tabular text-footnote ${variance.className}`}>{variance.text}</span> : null}
       </div>
     </div>
   );
@@ -456,8 +456,8 @@ export function CategoryBars({
             }`}
           >
             <span className="flex items-baseline justify-between gap-3">
-              <span className={`truncate text-[0.9375rem] ${isSelected ? "font-semibold text-ink" : "text-ink"}`}>{row.label}</span>
-              <span className="tabular shrink-0 text-[0.9375rem] font-medium text-ink">{row.value}</span>
+              <span className={`truncate text-body ${isSelected ? "font-semibold text-ink" : "text-ink"}`}>{row.label}</span>
+              <span className="tabular shrink-0 text-body font-medium text-ink">{row.value}</span>
             </span>
             <span className="mt-2 flex items-center gap-2.5">
               <span className="h-2.5 grow overflow-hidden rounded-full bg-surface-sunken">
@@ -468,7 +468,7 @@ export function CategoryBars({
                   style={{ width: row.bar_pct }}
                 />
               </span>
-              <span className={`tabular w-14 shrink-0 text-right text-[0.75rem] ${row.share_pct === null ? "t-absent" : "text-ink-muted"}`}>
+              <span className={`tabular w-14 shrink-0 text-right text-caption ${row.share_pct === null ? "t-absent" : "text-ink-muted"}`}>
                 {row.share_pct ?? "unknown"}
               </span>
             </span>
@@ -543,8 +543,8 @@ export function Bridge({ rows }: { rows: BridgeRow[] }) {
       {rows.map((row) => (
         <div key={row.key} className={`py-2.5 ${row.emphasis ? "mt-1 border-t border-hairline-strong pt-3.5" : ""}`}>
           <div className="flex items-baseline justify-between gap-3">
-            <span className={`text-[0.9375rem] ${row.emphasis ? "font-semibold text-ink" : "text-ink-muted"}`}>{row.label}</span>
-            <span className={`tabular text-right ${row.emphasis ? "text-[1.25rem] font-semibold tracking-[-0.02em] text-ink" : "text-[1.0625rem] text-ink"}`}>
+            <span className={`text-body ${row.emphasis ? "font-semibold text-ink" : "text-ink-muted"}`}>{row.label}</span>
+            <span className={`tabular text-right ${row.emphasis ? "text-headline text-ink" : "text-lead text-ink"}`}>
               {row.value}
             </span>
           </div>
@@ -606,9 +606,9 @@ export function ShareBars({ rows }: { rows: ShareRow[] }) {
           <div className="flex items-baseline justify-between gap-3">
             <span className="flex min-w-0 items-center gap-2">
               <Swatch colour={row.colour} />
-              <span className="truncate text-[0.875rem] text-ink">{row.label}</span>
+              <span className="truncate text-callout text-ink">{row.label}</span>
             </span>
-            <span className="tabular shrink-0 text-[0.875rem] text-ink">{row.value}</span>
+            <span className="tabular shrink-0 text-callout text-ink">{row.value}</span>
           </div>
           <div className="mt-1.5 flex items-center gap-2.5">
             <div className="h-2 grow overflow-hidden rounded-full bg-surface-sunken">
@@ -618,7 +618,7 @@ export function ShareBars({ rows }: { rows: ShareRow[] }) {
             </div>
             {/* An unknowable share says so, rather than rendering an empty bar that reads as
              * zero (§6.8). */}
-            <span className={`tabular w-14 shrink-0 text-right text-[0.75rem] ${row.share_pct === null ? "t-absent" : "text-ink-muted"}`}>
+            <span className={`tabular w-14 shrink-0 text-right text-caption ${row.share_pct === null ? "t-absent" : "text-ink-muted"}`}>
               {row.share_pct ?? "unknown"}
             </span>
           </div>

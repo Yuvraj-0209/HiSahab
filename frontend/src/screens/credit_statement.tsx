@@ -21,14 +21,14 @@ import { CaretDownIcon, PrinterIcon } from "@phosphor-icons/react";
 import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
-import { useGo } from "../app/navigation";
+import { sharedSource, useGo } from "../app/navigation";
 import { lastCompletedHalf } from "../lib/billing";
 import { format, isZero } from "../lib/money";
 import { businessDate, businessDateRange, todayAtOutlet } from "../lib/time";
 import { Amount } from "../ui/Amount";
 import { TextField, useForm } from "../ui/form";
 import { useArrival } from "../ui/motion";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, ListRow, Notice, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
 import { notify } from "../ui/toast";
 
 type Row = Schemas["StatementRowResponse"];
@@ -113,8 +113,8 @@ export function CreditStatementScreen() {
 
         {/* Only on paper: the screen's own title bar is hidden when printing. */}
         <div className="print-only">
-          <p className="text-[1.375rem] font-semibold">Udhaar statement</p>
-          <p className="text-[0.9375rem]">
+          <p className="text-amount">Udhaar statement</p>
+          <p className="text-body">
             {period} · printed {businessDate(s.today)}
           </p>
         </div>
@@ -133,7 +133,7 @@ export function CreditStatementScreen() {
           <Notice>This period has more entries than the lists can show. Every figure is still exact; choose a shorter period to see every line.</Notice>
         ) : null}
 
-        <p className="no-print text-[0.8125rem] text-ink-muted">
+        <p className="no-print text-footnote text-ink-muted">
           Bill = owed before + udhaar − repaid, inside the dates. Paid since is every payment after the end date; it is not matched to any particular bill.
         </p>
 
@@ -165,9 +165,6 @@ export function CreditStatementScreen() {
   );
 }
 
-function Notice({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <p className={`rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-[0.8125rem] text-warning ${className}`}>{children}</p>;
-}
 
 function DateForm({ from, to }: { from: string; to: string }) {
   const navigate = useGo();
@@ -190,7 +187,7 @@ function DateForm({ from, to }: { from: string; to: string }) {
           <TextField form={form} name="from" label="From" type="date" required />
           <TextField form={form} name="to" label="To" type="date" max={todayAtOutlet()} required />
         </div>
-        <p className="mt-2 text-[0.8125rem] text-ink-muted">Both dates are included. Up to 366 days.</p>
+        <p className="mt-2 text-footnote text-ink-muted">Both dates are included. Up to 366 days.</p>
         <div className="mt-3">
           <Button type="submit" variant="primary">
             Show statement
@@ -213,19 +210,21 @@ function CustomerCard({ entry, to }: { entry: Row; to: string }) {
   const owedBefore = !entry.opening_balance_entered && isZero(entry.owed_before) ? null : entry.owed_before;
 
   return (
-    <div ref={card} data-arrive className="statement-customer">
+    <div ref={card} data-arrive data-shared-scope className="statement-customer">
       <Card>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h2 className="truncate text-[0.9375rem] font-semibold text-ink">{entry.name}</h2>
+              <h2 data-shared-source className="truncate text-body font-semibold text-ink">
+                {entry.name}
+              </h2>
               {entry.is_active ? null : <Pill kind="neutral">inactive</Pill>}
             </div>
-            <p className="text-[0.8125rem] text-ink-muted">{entry.phone}</p>
+            <p className="text-footnote text-ink-muted">{entry.phone}</p>
           </div>
           <div className="text-right">
-            <p className="text-[0.75rem] text-ink-muted">Bill</p>
-            <p className="text-[1.375rem] leading-none font-semibold tracking-[-0.02em] text-ink">
+            <p className="text-caption text-ink-muted">Bill</p>
+            <p className="text-amount text-ink">
               <Amount value={entry.billed} />
             </p>
           </div>
@@ -245,7 +244,7 @@ function CustomerCard({ entry, to }: { entry: Row; to: string }) {
           type="button"
           aria-expanded={open}
           onClick={() => setOpen((value) => !value)}
-          className="no-print pressable mt-4 flex items-center gap-1.5 text-[0.875rem] font-medium text-accent"
+          className="no-print pressable mt-4 flex items-center gap-1.5 text-callout font-medium text-accent"
         >
           {open ? "Hide entries" : `Show entries (${entry.lines.length})`}
           <CaretDownIcon size={14} className={`transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
@@ -253,19 +252,20 @@ function CustomerCard({ entry, to }: { entry: Row; to: string }) {
 
         <div className="statement-detail mt-3" data-collapsed={open ? "false" : "true"}>
           <SectionLabel>In the period</SectionLabel>
-          {inRange.length ? inRange.map((line) => <LineRow key={line.id} line={line} />) : <p className="text-[0.8125rem] text-ink-muted">No udhaar or payments inside these dates.</p>}
+          {inRange.length ? inRange.map((line) => <LineRow key={line.id} line={line} />) : <p className="text-footnote text-ink-muted">No udhaar or payments inside these dates.</p>}
           <SectionLabel className="mt-4">Since {businessDate(to)}</SectionLabel>
           <ListRow label="Udhaar since" value={<Amount value={entry.udhaar_since} />} />
           {isZero(entry.opening_since) ? null : <ListRow label="Opening balance dated after the period" value={<Amount value={entry.opening_since} />} />}
           {since.map((line) => (
             <LineRow key={line.id} line={line} />
           ))}
-          <p className="mt-2 text-[0.8125rem] text-ink-muted">Owes today = bill + udhaar since − paid since.</p>
+          <p className="mt-2 text-footnote text-ink-muted">Owes today = bill + udhaar since − paid since.</p>
           <div className="no-print mt-3 flex flex-wrap gap-2">
             <Button size="sm" icon={<PrinterIcon size={16} aria-hidden />} onClick={() => printStatement(card.current)}>
               Print this customer
             </Button>
-            <Button size="sm" variant="plain" onClick={() => navigate(`/credit/customers/${entry.customer_id}`)}>
+            {/* The customer's name flies into the ledger's title, as from the Credit hub. */}
+            <Button size="sm" variant="plain" onClick={(event) => navigate(`/credit/customers/${entry.customer_id}`, { shared: sharedSource(event) })}>
               Open the ledger
             </Button>
           </div>
@@ -278,8 +278,8 @@ function CustomerCard({ entry, to }: { entry: Row; to: string }) {
 function Figure({ label, value, strong = false }: { label: string; value: ReactNode; strong?: boolean }) {
   return (
     <div className="min-w-0">
-      <p className="text-[0.75rem] text-ink-muted">{label}</p>
-      <p className={`truncate ${strong ? "text-[0.9375rem] font-semibold text-ink" : "text-[0.875rem] text-ink"}`}>{value}</p>
+      <p className="text-caption text-ink-muted">{label}</p>
+      <p className={`truncate ${strong ? "text-body font-semibold text-ink" : "text-callout text-ink"}`}>{value}</p>
     </div>
   );
 }

@@ -56,5 +56,8 @@ export default defineConfig(({ mode }) => ({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
+    // CSS is stubbed to an empty string in tests by default; the spring test reads the stylesheet's
+    // text (motion/cssSpring.test.ts), so this one file comes through as itself.
+    css: { include: [/styles\.css/] },
   },
 }));

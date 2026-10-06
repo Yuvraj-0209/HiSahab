@@ -9,7 +9,6 @@
 import { type ComponentType, useRef } from "react";
 import {
   BankIcon,
-  CaretRightIcon,
   DropIcon,
   GaugeIcon,
   HandCoinsIcon,
@@ -26,7 +25,7 @@ import { useSession } from "../app/session";
 import { satisfies, type Role } from "../lib/roles";
 import { businessDate } from "../lib/time";
 import { useArrival } from "../ui/motion";
-import { Button, Card, ErrorCard, Skeleton } from "../ui/primitives";
+import { Button, Card, ErrorCard, LinkTile, Skeleton } from "../ui/primitives";
 
 interface EntryLine {
   label: string;
@@ -75,7 +74,7 @@ export function EntryScreen() {
       <>
         <ScreenTitle large title="Entry" subtitle="No open shift" />
         <Card>
-          <p className="text-[0.9375rem] text-ink">There is no open shift to type into.</p>
+          <p className="text-body text-ink">There is no open shift to type into.</p>
           <div className="mt-4">
             <Button variant="primary" onClick={() => navigate("/today")}>
               Go to Today
@@ -93,22 +92,7 @@ export function EntryScreen() {
       <ScreenTitle large title="Entry" subtitle={`${businessDate(shift.business_date)} · shift ${shift.sequence}`} />
       <div ref={list} className="flex flex-col gap-2.5">
         {lines.map((line) => (
-          <button
-            key={line.path}
-            type="button"
-            data-arrive
-            onClick={() => navigate(`/shifts/${shift.id}/${line.path}`)}
-            className="pressable liftable flex w-full items-center gap-4 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
-          >
-            <span className="grid size-11 shrink-0 place-items-center rounded-[var(--radius-control)] bg-accent-tint text-accent">
-              <line.Icon size={22} aria-hidden />
-            </span>
-            <span className="min-w-0 grow">
-              <span className="block text-[0.9375rem] font-medium text-ink">{line.label}</span>
-              <span className="block text-[0.8125rem] text-ink-muted">{line.hint}</span>
-            </span>
-            <CaretRightIcon size={18} className="shrink-0 text-ink-faint" aria-hidden />
-          </button>
+          <LinkTile key={line.path} arrive Icon={line.Icon} label={line.label} hint={line.hint} onClick={() => navigate(`/shifts/${shift.id}/${line.path}`)} />
         ))}
       </div>
     </>

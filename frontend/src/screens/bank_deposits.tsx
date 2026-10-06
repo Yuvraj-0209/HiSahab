@@ -70,7 +70,7 @@ export function BankDepositsScreen() {
             caption={deposit.bank_reference ? `Reference ${deposit.bank_reference}` : undefined}
             amount={deposit.amount}
             badges={<ReversalBadge row={deposit} />}
-            notes={deposit.reversal_reason ? <p className="mt-2 text-[0.8125rem] text-ink-muted">Reason: {deposit.reversal_reason}</p> : null}
+            notes={deposit.reversal_reason ? <p className="mt-2 text-footnote text-ink-muted">Reason: {deposit.reversal_reason}</p> : null}
             actions={
               <>
                 <ReceiptButton attachmentId={deposit.attachment_id} label="View slip" />
@@ -147,11 +147,11 @@ function DepositForm({ shiftId, existing, onDone }: { shiftId: string; existing:
       <TextField form={form} name="amount" label="Amount deposited" inputMode="decimal" required />
       <TextField form={form} name="bank_reference" label="Bank reference (optional)" />
       {existing ? (
-        <p className="text-[0.8125rem] text-ink-muted">The deposit slip cannot be changed once a deposit is recorded.</p>
+        <p className="text-footnote text-ink-muted">The deposit slip cannot be changed once a deposit is recorded.</p>
       ) : (
         <ReceiptUpload shiftId={shiftId} attachmentId={attachmentId} label="Deposit slip (optional)" onUploaded={setAttachmentId} />
       )}
-      <p className="text-[0.8125rem] text-ink-muted">The business date comes from the shift. It is never typed, so the two cannot drift.</p>
+      <p className="text-footnote text-ink-muted">The business date comes from the shift. It is never typed, so the two cannot drift.</p>
       <Button variant="primary" block disabled={busy} onClick={() => void submit()}>
         {busy ? "Saving…" : existing ? "Save" : "Record deposit"}
       </Button>

@@ -2779,6 +2779,37 @@ ahead — no empty modules for later phases.
     by hand, which is the reason the route was built rather than the row deleted.
 
     See `docs/phase-27-plan.md`.
+28. **The front door shows the product; the app gets one finish** — no migration, no table, no
+    endpoint, no business rule, and **no new npm dependency**. The owner asked for the Motion and
+    21st.dev skills to be used to make the interface better. Both were used as *sources*, not
+    installed: §14 already forbids a second animation engine beside GSAP, and nearly every 21st
+    component is built on framer-motion. Their effects and layouts are rebuilt on our tokens,
+    primitives and GSAP.
+
+    **(a) The front door leads with the product, not with a login.** A two-column hero puts a
+    phone showing the Today screen beside the sign-in card. Then one pinned phone walks through a
+    trading day while its screen changes step by step: open, confirm the meter, declare the cash,
+    udhaar with its receipt, the gap, the bank tick. A feature grid and a closing section follow,
+    and the closing section always offers Sign in. On a phone, and under reduced motion, each
+    step's screen sits inline under its copy. The phone's screens are drawn from the app's own
+    primitives with sample figures (§13.46).
+
+    **(b) ScrollSmoother is removed.** On desktop it moved the sign-in form, which §14 forbids,
+    and nobody had recorded that. It also breaks `position: sticky`, which the pinned phone needs.
+
+    **(c) Inside the app: one type scale and one shape per pattern.** About 390 one-off text sizes
+    become twelve named steps. Link tiles, clickable rows, hero figures and warning notices each had
+    up to five hand-made copies; each now has one primitive.
+
+    **(d) The audit found six bugs**, each fixed test-first:
+    - the front door's section headlines never animated;
+    - a desktop figure carried no "Sample figures" label;
+    - the photograph's drift never paused;
+    - the sign-in form sat inside the smooth-scroll wrapper;
+    - three Today cards showed "…" forever when their query failed;
+    - an old shift was titled "Today".
+
+    See `docs/phase-28-plan.md`.
 
 ---
 
@@ -3452,6 +3483,20 @@ future reader must be able to tell the difference.
     `next_sequence` is the maximum plus one. A gap is a label, not money: no chain reads through
     a shift that recorded no reading. §4.7, §6.8
 
+46. **The front door's phone screens are replicas, not the real screens.** Phase 28. Each one is
+    composed from the same primitives the app uses (`Card`, `Pill`, `ListRow`, `Amount`, the
+    lifecycle strip), filled with the literal strings in `showroom/samples.ts`.
+
+    Rendering the real screens was rejected for two reasons. First, they are bound to live
+    queries, and §14 forbids a fetched or computed figure on the front door. Second, the
+    front-door chunk has a 70 KB budget that one real screen would spend on its own.
+
+    The consequence: a redesign of Today or Readings does not update the phone. It goes on showing
+    the shape the screen had when the replica was drawn, with no test to notice. Screenshots were
+    the alternative, and they carry the same staleness while also smuggling unlabelled figures
+    past the samples test. Revisit if the drift starts to look like a different product. §13.28,
+    §14
+
 ---
 
 ## 14. Guardrails for Claude Code
@@ -3853,6 +3898,22 @@ to occur on this specific project.
 - **Fix a lifecycle mistake by editing the production database.** If the rules leave no way
   out, a route is missing; Phase 27 is the precedent. A hand edit writes no audit row and skips
   every check the route would make (§5.3, §6.8)
+- **Put an `href="#…"` anchor on the front door.** The app is hash-routed (§2), so "#how" is a
+  route, not a scroll target. It sends the visitor to the router's not-found handling instead of
+  down the page. Scroll with a button and `scrollIntoView`; a structural test refuses the anchor
+  (Phase 28)
+- **Bring back ScrollSmoother, or any smooth-scroll wrapper.** It moved the sign-in form, which
+  the guardrail above forbids, and it breaks `position: sticky`. Native scroll and a numeric
+  `scrub` give the story its smoothness (Phase 28)
+- **Write a one-off text size (`text-[0.8125rem]`).** Use the type scale's named steps: `micro`,
+  `caption`, `footnote`, `callout`, `body`, `lead`, `subhead`, `headline`, `amount`, `title`,
+  `figure` and `display` (styles.css `@theme`). A structural test refuses a new arbitrary size in
+  `screens/`, `ui/` and `app/`. Its one exemption is the wordmark, a single-weight serif that a
+  weighted step would fake-bold (Phase 28)
+- **Install a 21st.dev component or the Motion package to get an effect.** Port it: the
+  component's dependencies are a second animation engine, an icon set and a headless-UI library
+  this codebase does not use, each one third-party code with the session token in reach (§13.19,
+  Phase 28)
 - "Improve" the schema mid-implementation without flagging it first
 
 **Do:**

@@ -25,7 +25,7 @@ import { businessDate } from "../lib/time";
 import { Amount } from "../ui/Amount";
 import { SalesBars, VarianceStrip } from "../ui/chart";
 import { useArrival } from "../ui/motion";
-import { Button, Card, Empty, ErrorCard, Pill, SectionLabel, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, ListCard, Pill, RowLink, SectionLabel, Skeleton } from "../ui/primitives";
 import { SOURCE_PILL } from "./days";
 
 function useWindow() {
@@ -73,7 +73,7 @@ export function ReportsScreen() {
           <div className="mt-4">
             <VarianceStrip days={r.days} />
           </div>
-          <p className="mt-2 text-[0.8125rem] text-ink-muted">
+          <p className="mt-2 text-footnote text-ink-muted">
             Bar height is relative to the tallest day in this window. A solid bar is a reconciled day; a pale one is calculated just now. A day is flagged when its variance exceeds <Amount value={r.threshold} />.
           </p>
         </Card>
@@ -81,20 +81,18 @@ export function ReportsScreen() {
         <section>
           <SectionLabel>Day by day</SectionLabel>
           {r.days.length ? (
-            <Card className="py-1 sm:py-1">
+            <ListCard>
               <div ref={list}>
                 {[...r.days].reverse().map((day) => {
                   const variance = varianceLabel(day.variance);
                   return (
-                    <button
+                    <RowLink
                       key={day.business_date}
-                      type="button"
                       data-arrive
                       onClick={(event) => navigate(`/days/${day.business_date}`, { shared: sharedSource(event) })}
-                      className="pressable flex w-full items-center gap-3 border-b border-hairline py-3 text-left last:border-b-0"
                     >
                       <div className="min-w-0 grow">
-                        <p data-shared-source className="text-[0.9375rem] text-ink">
+                        <p data-shared-source className="text-body text-ink">
                           {businessDate(day.business_date)}
                         </p>
                         <div className="mt-1 flex flex-wrap gap-1.5">
@@ -105,17 +103,16 @@ export function ReportsScreen() {
                         </div>
                       </div>
                       <div className="flex shrink-0 flex-col items-end">
-                        <span className="tabular text-[0.9375rem] text-ink">
+                        <span className="tabular text-body text-ink">
                           <Amount value={day.total_sales} absent="not known" />
                         </span>
-                        <span className={`tabular text-[0.8125rem] ${variance.className}`}>{variance.text}</span>
+                        <span className={`tabular text-footnote ${variance.className}`}>{variance.text}</span>
                       </div>
-                      <CaretRightIcon size={16} className="shrink-0 text-ink-faint" aria-hidden />
-                    </button>
+                    </RowLink>
                   );
                 })}
               </div>
-            </Card>
+            </ListCard>
           ) : (
             <Empty>No days in this window.</Empty>
           )}
@@ -123,7 +120,7 @@ export function ReportsScreen() {
 
         <Card>
           <SectionLabel>Reading this</SectionLabel>
-          <p className="text-[0.8125rem] text-ink-muted">{r.basis}</p>
+          <p className="text-footnote text-ink-muted">{r.basis}</p>
         </Card>
       </div>
     </>
@@ -184,14 +181,14 @@ export function AlertsScreen() {
                 className="pressable liftable flex w-full items-center gap-3 rounded-[var(--radius-card)] border border-warning bg-surface px-4 py-3.5 text-left shadow-1"
               >
                 <div className="min-w-0 grow">
-                  <p className="text-[0.9375rem] font-medium text-ink">{ALERT_LABEL[alert.kind] ?? alert.kind}</p>
-                  <p className="text-[0.8125rem] text-ink-muted">{alert.detail}</p>
-                  <p data-shared-source className="text-[0.75rem] text-ink-faint">
+                  <p className="text-body font-medium text-ink">{ALERT_LABEL[alert.kind] ?? alert.kind}</p>
+                  <p className="text-footnote text-ink-muted">{alert.detail}</p>
+                  <p data-shared-source className="text-caption text-ink-faint">
                     {businessDate(alert.business_date)}
                   </p>
                 </div>
                 {alert.amount !== null ? (
-                  <span className="shrink-0 text-[0.9375rem] text-ink">
+                  <span className="shrink-0 text-body text-ink">
                     <Amount value={alert.amount} />
                   </span>
                 ) : null}
@@ -204,9 +201,9 @@ export function AlertsScreen() {
         )}
         <Card>
           <SectionLabel>Reading this</SectionLabel>
-          <p className="text-[0.8125rem] text-ink-muted">{r.basis}</p>
+          <p className="text-footnote text-ink-muted">{r.basis}</p>
           {/* §13.23's limitation, on the screen rather than only in the spec. */}
-          <p className="mt-2 text-[0.8125rem] text-ink-muted">
+          <p className="mt-2 text-footnote text-ink-muted">
             There is no dismiss. An alert clears when the thing it points at is dealt with: review the expense, reconcile the day, close the shift.
           </p>
         </Card>

@@ -27,8 +27,9 @@ import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { format } from "../lib/money";
 import { dateTime, nowLocalValue, toOffsetISO } from "../lib/time";
+import { Arrive } from "../ui/Arrive";
 import { SelectField, TextField, useForm } from "../ui/form";
-import { Card, Empty, ErrorCard, ListRow, Pill, SectionLabel, Skeleton } from "../ui/primitives";
+import { Card, Empty, ErrorCard, ListRow, Notice, Pill, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { ScreenTitle } from "../app/chrome";
 import { AddAction, Fields, SaveButton, useSave } from "./admin";
@@ -118,17 +119,17 @@ function PricingScreen({ kind }: { kind: Kind }) {
     const rows = asEntries(history.data.items);
 
     body = (
-      <div className="flex flex-col gap-5">
+      <Arrive items="children" className="flex flex-col gap-5">
         <section>
           <SectionLabel>In force now</SectionLabel>
           {inForce.length ? (
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
               {inForce.map((item) => (
                 <Card key={item.fuel_type_id}>
-                  <p className="text-[0.75rem] font-semibold tracking-[0.06em] text-ink-faint uppercase">{item.code}</p>
-                  <p className="tabular mt-1 text-[1.375rem] leading-tight font-semibold tracking-[-0.02em] text-ink">{format(item.amount)}</p>
+                  <p className="text-caption font-semibold tracking-[0.06em] text-ink-faint uppercase">{item.code}</p>
+                  <p className="tabular mt-1 text-amount text-ink">{format(item.amount)}</p>
                   {/* §4.5: per the fuel's own unit, never assumed litres. */}
-                  <p className="text-[0.8125rem] text-ink-muted">per {byId.get(item.fuel_type_id)?.unit_of_measure === "kilogram" ? "kg" : "litre"}</p>
+                  <p className="text-footnote text-ink-muted">per {byId.get(item.fuel_type_id)?.unit_of_measure === "kilogram" ? "kg" : "litre"}</p>
                 </Card>
               ))}
             </div>
@@ -149,13 +150,13 @@ function PricingScreen({ kind }: { kind: Kind }) {
                 </Pill>
               ))}
             </div>
-            <p className="mt-2 text-[0.8125rem] text-ink-muted">{kind.missing}</p>
+            <p className="mt-2 text-footnote text-ink-muted">{kind.missing}</p>
           </Card>
         ) : null}
 
         <section>
           <SectionLabel>History</SectionLabel>
-          <p className="mb-2 text-[0.8125rem] text-ink-muted">
+          <p className="mb-2 text-footnote text-ink-muted">
             Append-only. A correction is a new row with a later effective date; the old one stays, because it is what a closed shift was priced at.
           </p>
           {rows.length ? (
@@ -177,9 +178,9 @@ function PricingScreen({ kind }: { kind: Kind }) {
           ) : (
             <Empty>Nothing recorded yet.</Empty>
           )}
-          {history.data.next_cursor ? <p className="mt-2 text-[0.8125rem] text-ink-muted">Showing the latest 50.</p> : null}
+          {history.data.next_cursor ? <p className="mt-2 text-footnote text-ink-muted">Showing the latest 50.</p> : null}
         </section>
-      </div>
+      </Arrive>
     );
   }
 
@@ -235,9 +236,9 @@ function EntryForm({ kind, fuelTypes, onDone }: { kind: Kind; fuelTypes: FuelTyp
         hint="Rates revise at 06:00 IST. This is the moment it became live, not the moment you are typing it."
       />
       {backdated ? (
-        <p role="status" className="rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-[0.8125rem] text-warning">
+        <Notice role="status">
           This is in the past. A backdated entry can change what an already-closed shift was worth. It is allowed, and it is recorded against your name in the audit trail.
-        </p>
+        </Notice>
       ) : null}
       <SaveButton busy={busy} creating label={`Record ${kind.noun}`} onClick={submit} />
     </Fields>

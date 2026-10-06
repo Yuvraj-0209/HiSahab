@@ -387,9 +387,24 @@ def test_the_front_doors_sample_figures_agree_with_each_other() -> None:
     # Paytm settles yesterday's card + UPI as one credit.
     assert terms[1] + terms[2] == _rupees(re.search(r'PAYTM PAYMENTS SERVICES", amount: "(₹[\d,]+\.\d\d)"', source).group(1))
 
-    # Each mix sums to the month's sales, and each share is its rupees over the total to 0.1%.
+    # Phase 28: the phone walks through one sample day, and it is the gap's day. Its screens show
+    # the gap's terms one at a time, so each must be the same figure the equation uses -- and the
+    # udhaar slips photographed that day must add up to the udhaar the equation subtracts.
+    assert money("metered") == terms[0]
+    assert money("cardTaken") == terms[1]
+    assert money("upiTaken") == terms[2]
+    assert money("udhaarIssued") == terms[3]
+    assert money("cashCounted") == money("declared")
+    slips = [_rupees(v) for v in re.findall(r'slip: "(₹[\d,]+\.\d\d)"', source)]
+    assert len(slips) >= 2 and sum(slips) == terms[3]
+    # It is also a bar on the month's chart: the day the sales chart shows as 9 September.
+    assert _rupees(re.search(r'\["2026-09-09", "(₹[\d,]+\.\d\d)"', source).group(1)) == terms[0]
+
+    # The fuel mix sums to the month's sales, and each share is its rupees over the total to 0.1%.
+    # (Phase 28 retired the payment mix: Phase 26 took "How the money arrived" off the Summary at
+    # the owner's request, so the front door no longer shows it.)
     month = money("sales")
-    for block in ("FUEL_MIX", "PAYMENT_MIX"):
+    for block in ("FUEL_MIX",):
         body = source.split(f"export const {block}", 1)[1].split("];", 1)[0]
         rows = re.findall(r'share_pct: "([\d.]+)%".*?value: "(₹[\d,]+\.\d\d)"|value: "(₹[\d,]+\.\d\d)", share_pct: "([\d.]+)%"', body)
         pairs = [(Decimal(a or d), _rupees(b or c)) for a, b, c, d in rows]
@@ -397,3 +412,42 @@ def test_the_front_doors_sample_figures_agree_with_each_other() -> None:
         assert sum(value for _, value in pairs) == month, block
         for share, value in pairs:
             assert (value / month * 100).quantize(Decimal("0.1")) == share, (block, share, value)
+
+
+def test_the_front_door_never_links_to_a_hash() -> None:
+    """§14 (Phase 28): the app is hash-routed (§2), so on the front door `href="#how"` is not a
+    place on the page -- it is a route, and the router takes the visitor away from the story to
+    find it. The front door moves around its own page with buttons and `scrollIntoView`
+    (showroom/doors.ts). Every module under `showroom/`, and the sign-in page that hosts it."""
+    front_door = [*sorted((_SRC / "showroom").rglob("*.tsx")), _SRC / "screens" / "Login.tsx"]
+    assert len(front_door) > 3
+    offenders = [
+        f"{_name(path)}:{number}"
+        for path in front_door
+        for number, line in _code_lines(path)
+        if re.search(r"""href=\{?["'`]#""", line)
+    ]
+    assert offenders == [], f"use a button and scrollIntoView, not a hash anchor: {offenders}"
+
+
+def test_text_sizes_come_from_the_type_scale() -> None:
+    """§14 (Phase 28): one type scale, named in styles.css's `@theme` -- micro, caption, footnote,
+    callout, body, lead, subhead, headline, amount, title, figure, display. Before it there were
+    about 390 one-off `text-[…rem]` sizes in five slightly different card-title styles, so two
+    screens could disagree about what a heading looks like and nothing noticed.
+
+    The rule covers the app (`screens/`, `ui/`, `app/`). The front door's fluid headline sizes are
+    `clamp()` expressions, which this does not match and does not need to. One exemption, by
+    content rather than by file: the **wordmark**, set in a serif with a single weight and sized by
+    eye, which a scale step carrying a font weight would render as a faux bold."""
+    pattern = re.compile(r"text-\[\d*\.?\d+(?:rem|px)\]")
+    roots = [_SRC / "screens", _SRC / "ui", _SRC / "app"]
+    offenders = [
+        f"{_name(path)}:{number}: {match}"
+        for path in _modules()
+        if any(root in path.parents for root in roots)
+        for number, line in _code_lines(path)
+        if "wordmark" not in line
+        for match in pattern.findall(line)
+    ]
+    assert offenders == [], "use a type-scale step (styles.css @theme --text-*):\n" + "\n".join(offenders)

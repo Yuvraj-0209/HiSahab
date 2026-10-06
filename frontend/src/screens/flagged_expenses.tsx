@@ -12,17 +12,17 @@
  */
 
 import { useState } from "react";
-import { CaretRightIcon } from "@phosphor-icons/react";
 import { api } from "../api/client";
 import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenTitle } from "../app/chrome";
 import { useGo } from "../app/navigation";
 import { businessDate, todayAtOutlet } from "../lib/time";
+import { Arrive } from "../ui/Arrive";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { TextField, useForm } from "../ui/form";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, ListRow, Pill, RowLink, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 
 type Flagged = Schemas["FlaggedExpenseResponse"];
@@ -59,9 +59,9 @@ export function FlaggedExpensesScreen() {
   return (
     <>
       <ScreenTitle title="Flagged expenses" subtitle={`${page.data.items.length} waiting`} />
-      <div className="flex flex-col gap-5">
+      <Arrive items="children" className="flex flex-col gap-5">
         <Card>
-          <p className="text-[0.875rem] text-ink-muted">
+          <p className="text-callout text-ink-muted">
             A shift cannot be locked while it holds an unreviewed flagged expense. Reviewing one is a decision with your name on it: flags are never cleared automatically, not even when a reversal drops the day back under the threshold.
           </p>
           <div className="mt-4">
@@ -78,29 +78,23 @@ export function FlaggedExpensesScreen() {
               <Card key={key}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h2 className="text-[0.9375rem] font-semibold text-ink">{category}</h2>
-                    <p className="text-[0.8125rem] text-ink-muted">{businessDate(date)}</p>
+                    <h2 className="text-body font-semibold text-ink">{category}</h2>
+                    <p className="text-footnote text-ink-muted">{businessDate(date)}</p>
                   </div>
                   {expenses.length > 1 ? <Pill kind="review">{expenses.length} together</Pill> : null}
                 </div>
                 {expenses.length > 1 ? (
-                  <p className="mt-2 text-[0.8125rem] text-ink-muted">These were flagged as a group: individually small, together over the threshold.</p>
+                  <p className="mt-2 text-footnote text-ink-muted">These were flagged as a group: individually small, together over the threshold.</p>
                 ) : null}
                 <div className="mt-2">
                   {expenses.map((expense) => (
-                    <button
-                      key={expense.id}
-                      type="button"
-                      onClick={() => navigate(`/shifts/${expense.shift_id}/expenses`)}
-                      className="pressable flex w-full items-center gap-3 border-b border-hairline py-3 text-left last:border-b-0"
-                    >
+                    <RowLink key={expense.id} onClick={() => navigate(`/shifts/${expense.shift_id}/expenses`)}>
                       <span className="min-w-0 grow">
-                        <span className="block truncate text-[0.9375rem] text-ink">{expense.description}</span>
-                        <span className="block text-[0.8125rem] text-accent">Review on its shift</span>
+                        <span className="block truncate text-body text-ink">{expense.description}</span>
+                        <span className="block text-footnote text-accent">Review on its shift</span>
                       </span>
                       <Amount value={expense.amount} />
-                      <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
-                    </button>
+                    </RowLink>
                   ))}
                 </div>
               </Card>
@@ -110,8 +104,8 @@ export function FlaggedExpensesScreen() {
           <Empty>Nothing flagged. Every expense is either under the threshold or already reviewed.</Empty>
         )}
 
-        {page.data.next_cursor ? <p className="text-[0.8125rem] text-ink-muted">There are more flagged expenses than this page lists.</p> : null}
-      </div>
+        {page.data.next_cursor ? <p className="text-footnote text-ink-muted">There are more flagged expenses than this page lists.</p> : null}
+      </Arrive>
 
       <Sheet open={summaryOpen} onClose={() => setSummaryOpen(false)} title="Month-end expense summary">
         <MonthSummary />
@@ -157,7 +151,7 @@ function MonthSummary() {
           <div className="border-t border-hairline-strong">
             <ListRow label="Total" value={<Amount value={result.total} />} strong />
           </div>
-          <p className="mt-2 text-[0.8125rem] text-ink-muted">Every mode, not only cash. A bank-paid bill is a real expense even though it never touched the drawer.</p>
+          <p className="mt-2 text-footnote text-ink-muted">Every mode, not only cash. A bank-paid bill is a real expense even though it never touched the drawer.</p>
         </div>
       ) : null}
     </div>

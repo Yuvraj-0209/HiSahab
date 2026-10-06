@@ -34,7 +34,7 @@
  */
 
 import { type ChangeEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { ArrowLeftIcon, ArrowRightIcon, FileCsvIcon } from "@phosphor-icons/react";
+import { ArrowLeftIcon, FileCsvIcon, ListChecksIcon, ScalesIcon } from "@phosphor-icons/react";
 import { ApiError, api, explain, newIdempotencyKey, postMultipart } from "../api/client";
 import { useApiQuery, useRefreshApi } from "../api/queries";
 import { useRepeatableSubmission } from "../api/submission";
@@ -47,7 +47,7 @@ import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { CheckboxField, SelectField, useForm } from "../ui/form";
 import { useArrival } from "../ui/motion";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, SectionLabel, Skeleton, TruncationNotice } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, LinkTile, ListRow, Pill, SectionLabel, Skeleton, TruncationNotice } from "../ui/primitives";
 import { notify } from "../ui/toast";
 
 type Account = Schemas["BankAccountResponse"];
@@ -126,8 +126,8 @@ export function BankHubScreen() {
       <>
         <ScreenTitle title="Bank" />
         <Card>
-          <h2 className="text-[1.0625rem] font-semibold text-ink">No bank account yet</h2>
-          <p className="mt-1 text-[0.9375rem] text-ink-muted">
+          <h2 className="text-subhead text-ink">No bank account yet</h2>
+          <p className="mt-1 text-body text-ink-muted">
             An admin adds the outlet's bank account on the Admin tab. A statement is imported against one account, so there has to be one first.
           </p>
         </Card>
@@ -143,14 +143,16 @@ export function BankHubScreen() {
         <ImportCard accounts={active} />
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <WayIn
-            title="Review what it found"
-            detail="Udhaar paid into the bank, and whether each debit was a cost"
+          <LinkTile
+            Icon={ListChecksIcon}
+            label="Review what it found"
+            hint="Udhaar paid into the bank, and whether each debit was a cost"
             onClick={() => navigate("/credit/bank/review")}
           />
-          <WayIn
-            title="Reconciliation"
-            detail="Paytm and cash deposits, against the days they came from"
+          <LinkTile
+            Icon={ScalesIcon}
+            label="Reconciliation"
+            hint="Paytm and cash deposits, against the days they came from"
             onClick={() => navigate("/credit/bank/reconciliation")}
           />
         </div>
@@ -187,21 +189,6 @@ export function BankHubScreen() {
   );
 }
 
-function WayIn({ title, detail, onClick }: { title: string; detail: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="pressable liftable flex items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
-    >
-      <span className="min-w-0 grow">
-        <span className="block text-[0.9375rem] font-semibold text-ink">{title}</span>
-        <span className="block text-[0.8125rem] text-ink-muted">{detail}</span>
-      </span>
-      <ArrowRightIcon size={18} className="shrink-0 text-ink-faint" aria-hidden />
-    </button>
-  );
-}
 
 function ImportCard({ accounts }: { accounts: Account[] }) {
   const refresh = useRefreshApi();
@@ -250,7 +237,7 @@ function ImportCard({ accounts }: { accounts: Account[] }) {
    * the static mount, and the CSP's form-action 'none' blocks it anyway. Buttons only. */
   return (
     <Card>
-      <h2 className="text-[1.0625rem] font-semibold text-ink">Import a statement</h2>
+      <h2 className="text-subhead text-ink">Import a statement</h2>
       <div className="mt-3 flex flex-col gap-4">
         {accounts.length > 1 ? (
           <SelectField
@@ -261,15 +248,15 @@ function ImportCard({ accounts }: { accounts: Account[] }) {
             required
           />
         ) : (
-          <p className="text-[0.9375rem] text-ink">
+          <p className="text-body text-ink">
             {accounts[0]?.label} <span className="text-ink-muted">· {accounts[0]?.bank_name}</span>
           </p>
         )}
         <label className="pressable flex cursor-pointer items-center gap-3 rounded-[var(--radius-control)] border border-dashed border-hairline-strong bg-surface px-4 py-4">
           <FileCsvIcon size={28} className="shrink-0 text-accent" aria-hidden />
           <span className="min-w-0 grow">
-            <span className="block truncate text-[0.9375rem] font-medium text-ink">{file ? file.name : "Choose the statement CSV"}</span>
-            <span className="block text-[0.8125rem] text-ink-muted">Bank of Baroda export, not the .xls</span>
+            <span className="block truncate text-body font-medium text-ink">{file ? file.name : "Choose the statement CSV"}</span>
+            <span className="block text-footnote text-ink-muted">Bank of Baroda export, not the .xls</span>
           </span>
           <input
             ref={fileInput}
@@ -279,11 +266,11 @@ function ImportCard({ accounts }: { accounts: Account[] }) {
             onChange={(event: ChangeEvent<HTMLInputElement>) => setFile(event.target.files?.[0] ?? null)}
           />
         </label>
-        <p className="text-[0.8125rem] text-ink-muted">
+        <p className="text-footnote text-ink-muted">
           Download a few days past the month end: the last day's card and UPI settles the next morning, and lines already imported are skipped.
         </p>
         {problem ? (
-          <p role="alert" className="text-[0.875rem] text-short">
+          <p role="alert" className="text-callout text-short">
             {problem}
           </p>
         ) : null}
@@ -479,7 +466,7 @@ function CreditsSection({
   return (
     <section>
       <SectionLabel sticky>{heading}</SectionLabel>
-      <p className="mb-3 text-[0.875rem] text-ink-muted">
+      <p className="mb-3 text-callout text-ink-muted">
         {recordable.length
           ? `${recordable.length} incoming ${recordable.length === 1 ? "line looks" : "lines look"} like a customer settling up. Nothing is recorded until you tick it.`
           : "Nothing here needs recording."}
@@ -542,10 +529,10 @@ function CreditLine({
   const header = (
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
-        <p className="text-[0.9375rem] break-words text-ink">{line.narration}</p>
-        <p className="text-[0.8125rem] text-ink-muted">{businessDate(line.txn_date)}</p>
+        <p className="text-body break-words text-ink">{line.narration}</p>
+        <p className="text-footnote text-ink-muted">{businessDate(line.txn_date)}</p>
       </div>
-      <span className="shrink-0 text-[0.9375rem] font-semibold text-ink">
+      <span className="shrink-0 text-body font-semibold text-ink">
         <Amount value={line.amount} />
       </span>
     </div>
@@ -558,7 +545,7 @@ function CreditLine({
           {header}
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             <Pill kind="open">already on the ledger</Pill>
-            <span className="text-[0.8125rem] text-ink-muted">Matches a bank payment typed in for this date and amount.</span>
+            <span className="text-footnote text-ink-muted">Matches a bank payment typed in for this date and amount.</span>
           </div>
         </Card>
       </div>
@@ -571,7 +558,7 @@ function CreditLine({
           {header}
           <div className="mt-2.5 flex flex-col items-start gap-1.5">
             <Pill kind="review">matches more than one</Pill>
-            <span className="text-[0.8125rem] text-ink-muted">
+            <span className="text-footnote text-ink-muted">
               Several payments typed in by hand share this date and amount, so the app cannot tell which this is, and recording it again would count the money twice.
               Check the customers' ledgers.
             </span>
@@ -599,8 +586,8 @@ function CreditLine({
                   aria-pressed={form.values.credit_customer_id === proposal.credit_customer_id}
                   className="pressable rounded-[var(--radius-control)] border border-hairline bg-surface px-3 py-2 text-left aria-pressed:border-accent aria-pressed:bg-accent-tint"
                 >
-                  <span className="block text-[0.875rem] font-medium text-ink">{proposal.name}</span>
-                  <span className="block text-[0.75rem] text-ink-muted">{proposal.reason}</span>
+                  <span className="block text-callout font-medium text-ink">{proposal.name}</span>
+                  <span className="block text-caption text-ink-muted">{proposal.reason}</span>
                 </button>
               ))}
             </div>
@@ -618,7 +605,7 @@ function CreditLine({
           {/* §14: starts unticked. A person has to look before money lands on a ledger. */}
           <CheckboxField form={form} name="confirm" label="Record this repayment" />
           {error ? (
-            <p role="alert" className="text-[0.875rem] text-short">
+            <p role="alert" className="text-callout text-short">
               {error}
             </p>
           ) : null}
@@ -636,7 +623,7 @@ function DebitsSection({ page }: { page: Schemas["TransactionPage"] }) {
   return (
     <section>
       <SectionLabel>Money out</SectionLabel>
-      <p className="mb-3 text-[0.875rem] text-ink-muted">
+      <p className="mb-3 text-callout text-ink-muted">
         Was this a cost, or money moved between your own pockets? An IOCL payment is not an expense: it sits with them as an advance and comes back as fuel.
       </p>
       {undecided.length ? (
@@ -676,17 +663,17 @@ function DebitLine({ item }: { item: Transaction }) {
       <Card>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[0.9375rem] break-words text-ink">{item.narration}</p>
+            <p className="text-body break-words text-ink">{item.narration}</p>
             <div className="mt-1 flex flex-wrap items-center gap-2">
-              <span className="text-[0.8125rem] text-ink-muted">{businessDate(item.txn_date)}</span>
+              <span className="text-footnote text-ink-muted">{businessDate(item.txn_date)}</span>
               <Pill kind={notACost ? "open" : "neutral"}>{classificationLabel(item.classification)}</Pill>
             </div>
           </div>
-          <span className="shrink-0 text-[0.9375rem] font-semibold text-ink">
+          <span className="shrink-0 text-body font-semibold text-ink">
             <Amount value={item.amount} />
           </span>
         </div>
-        {notACost ? <p className="mt-2 text-[0.8125rem] text-ink-muted">Money moved between your own accounts, not spent.</p> : null}
+        {notACost ? <p className="mt-2 text-footnote text-ink-muted">Money moved between your own accounts, not spent.</p> : null}
         {/* The suggestion is the filled button; the answer is still the person's (§5.3a). */}
         <div className="mt-3 grid grid-cols-2 gap-2">
           <Button size="sm" variant={item.suggested_expense === "yes" ? "primary" : "secondary"} disabled={busy} onClick={() => void answer("yes")}>
@@ -777,7 +764,7 @@ function SettlementsCard({ items }: { items: Settlement[] }) {
   return (
     <Card>
       <SectionLabel>Card and UPI against Paytm</SectionLabel>
-      <p className="text-[0.875rem] text-ink-muted">
+      <p className="text-callout text-ink-muted">
         {items.length - mismatched.length} of {items.length} days settled exactly. Paytm pays a whole day's card and UPI together the next morning.
       </p>
       {mismatched.length ? (
@@ -800,7 +787,7 @@ function SettlementsCard({ items }: { items: Settlement[] }) {
           ))}
         </div>
       ) : (
-        <p className="mt-2 text-[0.9375rem] text-ink">Every day agrees.</p>
+        <p className="mt-2 text-body text-ink">Every day agrees.</p>
       )}
     </Card>
   );
@@ -819,7 +806,7 @@ function DepositsCard({ items }: { items: Deposit[] }) {
   return (
     <Card>
       <SectionLabel>Cash deposits</SectionLabel>
-      <p className="text-[0.875rem] text-ink-muted">
+      <p className="text-callout text-ink-muted">
         {items.length - problems.length} of {items.length} matched
         {slow.length ? `, ${slow.length} took more than a day to reach the bank.` : "."}
       </p>
@@ -835,7 +822,7 @@ function DepositsCard({ items }: { items: Deposit[] }) {
           ))}
         </div>
       ) : (
-        <p className="mt-2 text-[0.9375rem] text-ink">Every deposit agrees.</p>
+        <p className="mt-2 text-body text-ink">Every deposit agrees.</p>
       )}
     </Card>
   );

@@ -46,7 +46,7 @@ import { CheckboxField, TextField, useForm } from "../ui/form";
 import { useFlipList } from "../motion/flip";
 import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
 import { useArrival } from "../ui/motion";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, HeroFigure, ListRow, Notice, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
 
@@ -107,12 +107,12 @@ export function ReadingsScreen() {
       <div className="flex flex-col gap-5">
         <Card>
           <div className="flex items-center justify-between gap-3">
-            <span className="text-[0.8125rem] font-medium text-ink-muted">Shift</span>
+            <span className="text-footnote font-medium text-ink-muted">Shift</span>
             <Pill kind={data.shift_status === "open" ? "open" : data.shift_status === "locked" ? "locked" : "closed"}>
               {data.shift_status}
             </Pill>
           </div>
-          <p className="mt-2 text-[0.875rem] text-ink-muted">
+          <p className="mt-2 text-callout text-ink-muted">
             {editable
               ? "Each opening is carried forward from that nozzle's last closing reading. Confirm it against the meter. Do not assume it."
               : "This shift is no longer open, so readings cannot be changed. Corrections happen through an admin reopen."}
@@ -235,7 +235,7 @@ function NozzleCard({ line, editable, onOpen }: { line: Line; editable: boolean;
       <span className="flex w-full items-start justify-between gap-3">
         <span className="min-w-0">
           <span className="block text-headline text-ink">{line.nozzle_label}</span>
-          <span className="mt-0.5 block text-[0.8125rem] text-ink-muted">
+          <span className="mt-0.5 block text-footnote text-ink-muted">
             {line.dispenser_label} · {line.fuel_type_code} · {unitWord(line)}
           </span>
         </span>
@@ -248,7 +248,7 @@ function NozzleCard({ line, editable, onOpen }: { line: Line; editable: boolean;
             <span className="relative block h-1 overflow-hidden rounded-full bg-hairline-strong">
               {index < reached ? <span data-step-fill className="absolute inset-0 rounded-full bg-accent" /> : null}
             </span>
-            <span className={`text-[0.75rem] ${index < reached ? "text-ink" : "text-ink-faint"}`}>{step}</span>
+            <span className={`text-caption ${index < reached ? "text-ink" : "text-ink-faint"}`}>{step}</span>
           </span>
         ))}
       </span>
@@ -256,13 +256,13 @@ function NozzleCard({ line, editable, onOpen }: { line: Line; editable: boolean;
       <span className="tabular mt-5 grid w-full grid-cols-3 gap-3">
         {figures.map((figure) => (
           <span key={figure.label} className="min-w-0">
-            <span className="block text-[0.75rem] text-ink-faint">{figure.label}</span>
-            <span className={`mt-0.5 block truncate text-[1.0625rem] ${figure.quiet ? "text-ink-muted" : "font-semibold text-ink"}`}>{figure.value}</span>
+            <span className="block text-caption text-ink-faint">{figure.label}</span>
+            <span className={`mt-0.5 block truncate text-lead ${figure.quiet ? "text-ink-muted" : "font-semibold text-ink"}`}>{figure.value}</span>
           </span>
         ))}
       </span>
 
-      <span className="mt-auto flex w-full items-center justify-between border-t border-hairline pt-4 text-[0.875rem] font-medium text-accent">
+      <span className="mt-auto flex w-full items-center justify-between border-t border-hairline pt-4 text-callout font-medium text-accent">
         {nextAction(line, editable)}
         <CaretRightIcon size={16} aria-hidden />
       </span>
@@ -274,7 +274,7 @@ function NozzleCard({ line, editable, onOpen }: { line: Line; editable: boolean;
 function NozzleSheet({ line, shiftId, editable, onDone }: { line: Line; shiftId: string; editable: boolean; onDone: () => void }) {
   const saved = line.reading;
   if (!editable) {
-    return saved ? <SavedRows line={line} saved={saved} /> : <p className="text-[0.875rem] text-ink-muted">No reading was recorded for this nozzle.</p>;
+    return saved ? <SavedRows line={line} saved={saved} /> : <p className="text-callout text-ink-muted">No reading was recorded for this nozzle.</p>;
   }
   if (!saved) return line.requires_anchor ? <AnchorStep line={line} shiftId={shiftId} onDone={onDone} /> : <FirstEntry line={line} shiftId={shiftId} onDone={onDone} />;
   return <ClosingForm line={line} saved={saved} shiftId={shiftId} onDone={onDone} />;
@@ -315,14 +315,11 @@ function FirstEntry({ line, shiftId, onDone }: { line: Line; shiftId: string; on
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <p className="text-[0.8125rem] font-medium text-ink-muted">The chain says this nozzle opens at</p>
         {/* Large and NOT an input: §4.7's "pre-filled, not typeable". A field with a value in it
          * invites a glance-and-tab-past, which is the assumption this screen exists to prevent. */}
-        <p className="tabular mt-1 text-[2.25rem] leading-none font-semibold tracking-[-0.03em] text-ink">
-          {reading(line.chained_opening_reading)}
-        </p>
+        <HeroFigure label="The chain says this nozzle opens at">{reading(line.chained_opening_reading)}</HeroFigure>
       </div>
-      <p className="text-[0.875rem] text-ink-muted">
+      <p className="text-callout text-ink-muted">
         Read the physical meter before you touch this. If it does not match, say so. That is the signal, not a nuisance.
       </p>
       <div className="flex flex-col gap-2">
@@ -346,7 +343,7 @@ function ChoiceButton({ icon, children, onClick }: { icon: ReactNode; children: 
     <button
       type="button"
       onClick={onClick}
-      className="pressable flex min-h-14 w-full items-center gap-3 rounded-[var(--radius-control)] border-2 border-hairline-strong bg-surface px-4 text-left text-[0.9375rem] font-medium text-ink hover:border-accent"
+      className="pressable flex min-h-14 w-full items-center gap-3 rounded-[var(--radius-control)] border-2 border-hairline-strong bg-surface px-4 text-left text-body font-medium text-ink hover:border-accent"
     >
       <span className="grid size-8 place-items-center rounded-full bg-surface-sunken text-ink-muted">{icon}</span>
       {children}
@@ -361,7 +358,7 @@ function AnchorStep({ line, shiftId, onDone }: { line: Line; shiftId: string; on
   return (
     <div className="flex flex-col items-start gap-4">
       <Pill kind="review">needs anchoring</Pill>
-      <p className="text-[0.875rem] text-ink-muted">
+      <p className="text-callout text-ink-muted">
         This nozzle has no previous reading, so there is nothing to carry forward. Its first reading anchors the chain and is recorded as the starting point.
       </p>
       {satisfies(me.role, "admin") ? (
@@ -370,7 +367,7 @@ function AnchorStep({ line, shiftId, onDone }: { line: Line; shiftId: string; on
         </Button>
       ) : (
         // A dead control with no explanation is what §16's wayfinding rule forbids.
-        <p className="text-[0.875rem] text-ink-muted">
+        <p className="text-callout text-ink-muted">
           Only an admin can set a starting reading. Ask an admin to anchor it before this shift is closed.
         </p>
       )}
@@ -431,8 +428,8 @@ function EntryForm({ line, shiftId, choice, onDone }: { line: Line; shiftId: str
     <div className="flex flex-col gap-4">
       {matches && !anchor ? (
         <div className="rounded-[var(--radius-control)] bg-surplus-tint px-4 py-3">
-          <p className="text-[0.8125rem] text-surplus">Opening confirmed against the meter</p>
-          <p className="tabular text-[1.375rem] font-semibold text-ink">{reading(line.chained_opening_reading)}</p>
+          <p className="text-footnote text-surplus">Opening confirmed against the meter</p>
+          <p className="tabular text-amount text-ink">{reading(line.chained_opening_reading)}</p>
         </div>
       ) : null}
       {!matches ? (
@@ -531,9 +528,9 @@ function ClosingForm({ line, saved, shiftId, onDone }: { line: Line; saved: Save
   return (
     <div className="flex flex-col gap-4">
       {saved.requires_review ? (
-        <p className="rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-[0.8125rem] text-warning">
+        <Notice>
           {saved.review_note ? `Flagged for review: ${saved.review_note}` : "Flagged for review. A person needs to reconcile this reading."}
-        </p>
+        </Notice>
       ) : null}
       <SavedRows line={line} saved={saved} />
       {saved.closing_reading === null ? (
@@ -605,7 +602,7 @@ function OverrideForm({ line, shiftId, onDone }: { line: Line; shiftId: string; 
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-[0.875rem] text-ink-muted">
+      <p className="text-callout text-ink-muted">
         The meter was reset, so the opening and closing pair has no meaning. The system does not try to infer the split: enter what was actually sold.
       </p>
       <TextField form={form} name="manual_quantity_override" label={`Quantity actually sold (${unitWord(line)})`} inputMode="decimal" required />

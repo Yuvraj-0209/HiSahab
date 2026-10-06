@@ -59,7 +59,7 @@ import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { SelectField, TextField, useForm } from "../ui/form";
 import { useArrival } from "../ui/motion";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, ListCard, ListRow, Pill, type PillKind, RowLink, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
 import { commitTick } from "../motion/haptic";
@@ -104,10 +104,12 @@ export function TodayScreen() {
 export function ShiftByIdScreen() {
   const { shiftId = "" } = useParams();
   const shift = useApiQuery<Shift>(`/shifts/${shiftId}`);
+  // Titled as the shift it is, never "Today" (Phase 28 B6): this route opens last week's closed
+  // shift as readily as this morning's, and the title is what a reader checks first.
   if (shift.isPending) {
     return (
       <>
-        <ScreenTitle large title="Today" subtitle="Loading…" />
+        <ScreenTitle large title="Shift" />
         <Skeleton shape="cards" rows={6} />
       </>
     );
@@ -115,23 +117,23 @@ export function ShiftByIdScreen() {
   if (shift.isError || !shift.data) {
     return (
       <>
-        <ScreenTitle large title="Today" />
+        <ScreenTitle large title="Shift" />
         <ErrorCard error={shift.error} onRetry={() => void shift.refetch()} />
       </>
     );
   }
-  return <ShiftDetail shift={shift.data} />;
+  return <ShiftDetail shift={shift.data} title={`Shift ${shift.data.sequence}`} />;
 }
 
 /* --- one shift ------------------------------------------------------------------------- */
 
-function ShiftDetail({ shift }: { shift: Shift }) {
+function ShiftDetail({ shift, title = "Today" }: { shift: Shift; title?: string }) {
   const { me } = useSession();
   const isManager = satisfies(me.role, "manager");
 
   return (
     <>
-      <ScreenTitle large title="Today" subtitle={shiftSubtitle(shift)} />
+      <ScreenTitle large title={title} subtitle={shiftSubtitle(shift)} />
       <div className="flex flex-col gap-4">
         <ShiftHeader shift={shift} />
         {isManager ? <ShiftFigures shift={shift} /> : null}
@@ -199,12 +201,12 @@ function ShiftHeader({ shift }: { shift: Shift }) {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <Pill kind={STATUS_PILL[shift.status] ?? "neutral"}>{shift.status}</Pill>
-              <span className="text-[0.8125rem] text-ink-muted">Shift {shift.sequence}</span>
+              <span className="text-footnote text-ink-muted">Shift {shift.sequence}</span>
             </div>
             <p className="mt-1.5 text-headline text-ink">
               {businessDateWeekday(shift.business_date)} {businessDate(shift.business_date)}
             </p>
-            <p className="mt-0.5 text-[0.875rem] text-ink-muted">
+            <p className="mt-0.5 text-callout text-ink-muted">
               {timeOnly(shift.started_at)}
               {shift.ended_at ? ` to ${timeOnly(shift.ended_at)}` : " onwards"}
             </p>
@@ -241,7 +243,7 @@ function ShiftHeader({ shift }: { shift: Shift }) {
           </div>
         ) : null}
       </div>
-      {reason ? <p className="mt-4 text-[0.8125rem] text-ink-muted">{reason}</p> : null}
+      {reason ? <p className="mt-4 text-footnote text-ink-muted">{reason}</p> : null}
 
       <Sheet open={reopening} onClose={() => setReopening(false)} title="Reopen shift" subtitle={shiftSubtitle(shift)}>
         <ReopenForm shift={shift} onDone={() => setReopening(false)} />
@@ -300,7 +302,7 @@ export function VoidShiftForm({ shift, onVoided }: { shift: Shift; onVoided: () 
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-[0.875rem] text-ink-muted">
+      <p className="text-callout text-ink-muted">
         Voiding removes this shift entirely. It is possible only while nothing has been recorded on it: no readings, cash, expenses or udhaar. The
         shift and your reason stay in the audit trail against your name.
       </p>
@@ -354,7 +356,7 @@ function ReopenForm({ shift, onDone }: { shift: Shift; onDone: () => void }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-[0.875rem] text-ink-muted">
+      <p className="text-callout text-ink-muted">
         Reopening moves this shift back to open. The reason is stored in the audit trail against your name.
       </p>
       <TextField form={form} name="reason" label="Why is this being reopened?" hint="3 to 500 characters." required />
@@ -384,6 +386,19 @@ const DAY_SOURCE_LABEL: Record<string, string> = {
   no_trading: "No trading recorded for this date.",
   unavailable: "Not available.",
 };
+
+/**
+ * What a card's figure says when there is no figure (Phase 28 B5). Three different facts, and
+ * the card must not blur them: still loading ("…"), the read failed ("not loaded"), or the
+ * server answered with nothing -- which only the caller can word ("not declared" means nobody
+ * declared cash, a real answer). Before this, a failed read showed "…" forever, and a failed
+ * collections read claimed nobody had declared cash at all (§6.8, §14: never zero as an omission).
+ */
+function absentFor(query: { isPending: boolean; isError: boolean }, answered = "not loaded"): string {
+  if (query.isPending) return "…";
+  if (query.isError) return "not loaded";
+  return answered;
+}
 
 function ShiftFigures({ shift }: { shift: Shift }) {
   // Each read is independent: one section failing to load must not blank the page.
@@ -434,7 +449,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
         Icon={WalletIcon}
         title="Collections"
         caption="Declared cash and what came in by machine"
-        figure={<Amount value={collections.data?.declared_cash ?? null} absent={collections.isPending ? "…" : "not declared"} />}
+        figure={<Amount value={collections.data?.declared_cash ?? null} absent={absentFor(collections, "not declared")} />}
         lines={collectionLines(collections.data ?? null).slice(1)}
         loading={collections.isPending}
         onDetails={() => setOpen("collections")}
@@ -444,7 +459,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
         title="Expenses"
         caption={countLabel(expenses.data?.items.length, "item")}
         badge={unreviewed ? <Pill kind="review">{unreviewed} to review</Pill> : null}
-        figure={<Amount value={expenses.data?.total ?? null} absent="…" />}
+        figure={<Amount value={expenses.data?.total ?? null} absent={absentFor(expenses)} />}
         lines={expenseLines(expenses.data ?? null)}
         loading={expenses.isPending}
         onDetails={() => setOpen("expenses")}
@@ -453,7 +468,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
         Icon={NotebookIcon}
         title="Credit"
         caption={`${countLabel(creditSales.data?.items.length, "sale")}, ${countLabel(repayments.data?.items.length, "repayment")}`}
-        figure={<Amount value={creditSales.data?.total ?? null} absent="…" />}
+        figure={<Amount value={creditSales.data?.total ?? null} absent={absentFor(creditSales)} />}
         figureLabel="issued"
         lines={[
           { label: "Repaid", value: <Amount value={repayments.data?.total ?? null} absent="-" /> },
@@ -466,8 +481,8 @@ function ShiftFigures({ shift }: { shift: Shift }) {
         Icon={BankIcon}
         title="Bank deposits"
         caption={countLabel(deposits.data?.items.length, "deposit")}
-        figure={<Amount value={deposits.data?.total ?? null} absent="…" />}
-        lines={[]}
+        figure={<Amount value={deposits.data?.total ?? null} absent={absentFor(deposits)} />}
+        lines={depositLines(deposits.data ?? null).slice(1)}
         loading={deposits.isPending}
         onDetails={() => setOpen("deposits")}
       />
@@ -482,7 +497,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
             </Pill>
           ) : null
         }
-        figure={<Amount value={dayCash?.expected_closing ?? null} absent={day.isPending ? "…" : "-"} />}
+        figure={<Amount value={dayCash?.expected_closing ?? null} absent={absentFor(day, "-")} />}
         figureLabel="expected closing"
         lines={dayCashLines(dayCash).filter((line) => !("note" in line)).slice(2)}
         loading={day.isPending}
@@ -499,7 +514,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
             ))}
           </div>
         ) : (
-          <p className="text-[0.875rem] text-ink-muted">Nozzle readings unavailable.</p>
+          <p className="text-callout text-ink-muted">Nozzle readings unavailable.</p>
         )}
       </Sheet>
       <Sheet open={open === "collections"} onClose={() => setOpen(null)} title="Collections" subtitle={shiftSubtitle(shift)}>
@@ -525,10 +540,15 @@ function ShiftFigures({ shift }: { shift: Shift }) {
 }
 
 /**
- * One domain of the shift: what it is, the figure it is read for, a few supporting lines, and
- * Details. Six of them sit three across and two down, all the same size (Phase 25 D3): equal
- * weight, because a manager reads the six together, and a card made bigger than its neighbours
- * broke the rows rather than adding emphasis.
+ * One domain of the shift: what it is, the figure it is read for, and a few supporting lines. Six
+ * of them sit three across and two down, all the same size (Phase 25 D3): equal weight, because a
+ * manager reads the six together, and a card made bigger than its neighbours broke the rows
+ * rather than adding emphasis.
+ *
+ * The whole card opens its sheet (Phase 28 D6). It used to end in a full-width "Details" button,
+ * six of them on one screen; now the title is the button and its hit area is stretched over the
+ * card, so the heading stays a heading for a screen reader and the target is the whole card for
+ * a thumb. A caret in the corner says it opens; the focus ring is drawn around the card.
  *
  * The icon chip says which domain at a glance; the figure is the server's string at one size,
  * rolled by `Amount` when it changes; a null is still a word.
@@ -555,24 +575,33 @@ function DomainCard({
   onDetails: () => void;
 }) {
   const shown = lines.filter((line) => !("note" in line)).slice(0, 3);
+  // A card with no rows to show says why in a sentence, rather than standing half empty.
+  const note = shown.length ? null : (lines.find((line) => "note" in line) as { note: string } | undefined)?.note;
   return (
-    <div data-arrive>
-      <Card className="flex h-full flex-col">
+    <div data-arrive className="h-full">
+      <Card className="domain-card pressable liftable link-row relative flex h-full flex-col">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-[12px] bg-accent-tint text-accent" aria-hidden="true">
               <Icon size={20} />
             </span>
             <div className="min-w-0">
-              <h2 className="text-[0.9375rem] font-semibold text-ink">{title}</h2>
-              {caption ? <p className="truncate text-[0.8125rem] text-ink-muted">{caption}</p> : null}
+              <h2 className="text-body font-semibold text-ink">
+                <button type="button" onClick={onDetails} className="domain-card-open text-left">
+                  {title}
+                </button>
+              </h2>
+              {caption ? <p className="truncate text-footnote text-ink-muted">{caption}</p> : null}
             </div>
           </div>
-          {badge}
+          <span className="flex shrink-0 items-center gap-2">
+            {badge}
+            <CaretRightIcon size={16} className="link-caret text-ink-faint" aria-hidden />
+          </span>
         </div>
         <div className="mt-5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <span className="text-title text-ink">{loading ? <span className="skeleton inline-block h-8 w-40 rounded-lg align-middle" /> : figure}</span>
-          {figureLabel && !loading ? <span className="text-[0.8125rem] text-ink-muted">{figureLabel}</span> : null}
+          {figureLabel && !loading ? <span className="text-footnote text-ink-muted">{figureLabel}</span> : null}
         </div>
         {shown.length ? (
           <div className="mt-3">
@@ -582,17 +611,9 @@ function DomainCard({
               ),
             )}
           </div>
+        ) : note && !loading ? (
+          <p className="mt-3 text-footnote text-ink-muted">{note}</p>
         ) : null}
-        <div className="mt-auto pt-5">
-          <button
-            type="button"
-            onClick={onDetails}
-            className="pressable flex w-full items-center justify-between rounded-[var(--radius-control)] bg-surface-sunken px-3.5 py-2.5 text-[0.875rem] font-medium text-ink transition-colors hover:bg-accent-tint hover:text-accent"
-          >
-            Details
-            <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
-          </button>
-        </div>
       </Card>
     </div>
   );
@@ -604,7 +625,7 @@ function Lines({ lines }: { lines: Line[] }) {
     <div>
       {lines.map((line, index) =>
         "note" in line ? (
-          <p key={index} className="border-b border-hairline py-3 text-[0.8125rem] text-ink-muted last:border-b-0">
+          <p key={index} className="border-b border-hairline py-3 text-footnote text-ink-muted last:border-b-0">
             {line.note}
           </p>
         ) : (
@@ -775,8 +796,8 @@ function NoShift() {
       <ScreenTitle large title="Today" subtitle="No open shift" />
       <div className="flex flex-col gap-5">
         <Card>
-          <p className="text-[1.125rem] font-semibold tracking-[-0.015em] text-ink">No shift is open at this outlet.</p>
-          <p className="mt-1.5 max-w-[60ch] text-[0.875rem] text-ink-muted">
+          <p className="text-subhead text-ink">No shift is open at this outlet.</p>
+          <p className="mt-1.5 max-w-[60ch] text-callout text-ink-muted">
             Only one shift may be open at a time. That is what makes the carried-forward meter reading unambiguous.
           </p>
           <div className="mt-5">
@@ -789,27 +810,21 @@ function NoShift() {
         {recent.data?.items.length ? (
           <section>
             <SectionLabel>Recent shifts</SectionLabel>
-            <Card className="py-1 sm:py-1">
+            <ListCard>
               {recent.data.items.map((shift) => (
-                <button
-                  key={shift.id}
-                  type="button"
-                  onClick={() => navigate(`/shifts/${shift.id}`)}
-                  className="pressable flex w-full items-center gap-3 border-b border-hairline py-3 text-left last:border-b-0"
-                >
+                <RowLink key={shift.id} onClick={() => navigate(`/shifts/${shift.id}`)}>
                   <div className="min-w-0 grow">
-                    <p className="text-[0.9375rem] text-ink">
+                    <p className="text-body text-ink">
                       {businessDate(shift.business_date)} · shift {shift.sequence}
                     </p>
-                    <p className="text-[0.8125rem] text-ink-muted">
+                    <p className="text-footnote text-ink-muted">
                       {shift.status === "closed" ? "Closed, needs locking or review" : shift.status}
                     </p>
                   </div>
                   <Pill kind={STATUS_PILL[shift.status] ?? "neutral"}>{shift.status}</Pill>
-                  <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
-                </button>
+                </RowLink>
               ))}
-            </Card>
+            </ListCard>
           </section>
         ) : null}
       </div>

@@ -84,11 +84,11 @@ export function ReversalForm({ path, amount, description, replacementText, repla
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-[var(--radius-control)] bg-surface-sunken px-4 py-3">
-        <p className="text-[0.8125rem] text-ink-muted">Reversing</p>
-        <p className="tabular text-[1.5rem] leading-tight font-semibold tracking-[-0.02em] text-ink">{format(amount)}</p>
-        {description ? <p className="mt-0.5 text-[0.8125rem] text-ink-muted">{description}</p> : null}
+        <p className="text-footnote text-ink-muted">Reversing</p>
+        <p className="tabular text-amount text-ink">{format(amount)}</p>
+        {description ? <p className="mt-0.5 text-footnote text-ink-muted">{description}</p> : null}
       </div>
-      <p className="text-[0.8125rem] text-ink-muted">
+      <p className="text-footnote text-ink-muted">
         Nothing is deleted. A negative row is added pointing back at the original, and both stay on the record.
       </p>
       <TextField

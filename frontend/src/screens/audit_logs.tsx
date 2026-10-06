@@ -123,7 +123,7 @@ function FilterCard({ current, onApply, failed }: { current: Filters; onApply: (
 
   return (
     <Card>
-      <p className="mb-3 text-[0.8125rem] text-ink-muted">
+      <p className="mb-3 text-footnote text-ink-muted">
         Append-only. Nothing here has ever been updated or deleted, and nothing can be: this is the record every other screen is checked against.
       </p>
       <div className="flex flex-col gap-3">
@@ -178,14 +178,14 @@ function EntryCard({ entry }: { entry: Entry }) {
       <Card>
         <div className="flex items-center gap-2">
           <Pill kind={ACTION_PILL[entry.action]}>{actionLabel(entry.action)}</Pill>
-          <span className="truncate text-[0.9375rem] font-medium text-ink">{entry.table_name}</span>
+          <span className="truncate text-body font-medium text-ink">{entry.table_name}</span>
         </div>
-        <p className="mt-1.5 text-[0.8125rem] text-ink-muted">{dateTime(entry.changed_at)}</p>
-        <p className="font-mono text-[0.75rem] break-all text-ink-faint">record {entry.record_id}</p>
+        <p className="mt-1.5 text-footnote text-ink-muted">{dateTime(entry.changed_at)}</p>
+        <p className="font-mono text-caption break-all text-ink-faint">record {entry.record_id}</p>
         {changed.length ? (
           <dl className="mt-3 flex flex-col gap-2 border-t border-hairline pt-3">
             {changed.map((key) => (
-              <div key={key} className="grid grid-cols-1 gap-x-3 text-[0.8125rem] sm:grid-cols-[minmax(0,10rem)_1fr]">
+              <div key={key} className="grid grid-cols-1 gap-x-3 text-footnote sm:grid-cols-[minmax(0,10rem)_1fr]">
                 <dt className="truncate font-mono text-ink-muted">{key}</dt>
                 <dd className="min-w-0 break-words">
                   {oldValues ? (
@@ -200,7 +200,7 @@ function EntryCard({ entry }: { entry: Entry }) {
             ))}
           </dl>
         ) : (
-          <p className="mt-2 text-[0.8125rem] text-ink-muted">{oldValues ? "No field differences recorded." : "Created."}</p>
+          <p className="mt-2 text-footnote text-ink-muted">{oldValues ? "No field differences recorded." : "Created."}</p>
         )}
       </Card>
     </div>

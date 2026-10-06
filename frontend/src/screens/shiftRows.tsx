@@ -10,7 +10,8 @@ import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
 import { useFlipList } from "../motion/flip";
 import { Amount } from "../ui/Amount";
-import { Button, Card, Empty, TruncationNotice } from "../ui/primitives";
+import { Arrive } from "../ui/Arrive";
+import { Button, Card, Empty, HeroFigure, TruncationNotice } from "../ui/primitives";
 
 export function ShiftRowsFrame({
   title,
@@ -51,24 +52,28 @@ export function ShiftRowsFrame({
           </Button>
         </ScreenActions>
       ) : null}
-      <div className="flex flex-col gap-5">
-        <Card>
-          <p className="text-[0.8125rem] font-medium text-ink-muted">{totalLabel}</p>
-          <p className="mt-1 text-[2.25rem] leading-none font-semibold tracking-[-0.03em] text-ink">
-            <Amount value={total} />
-          </p>
-          {extra}
-          <p className="mt-3 max-w-[60ch] text-[0.875rem] text-ink-muted">{explanation}</p>
-        </Card>
-        {count ? (
-          <div ref={list} className="flex flex-col gap-3">
-            {children}
-          </div>
-        ) : (
-          <Empty>{emptyText}</Empty>
-        )}
+      {/* The total arrives, then the list as one block: its rows belong to Flip (ui/Arrive.tsx). */}
+      <Arrive className="flex flex-col gap-5">
+        <div data-arrive>
+          <Card>
+            <HeroFigure label={totalLabel}>
+              <Amount value={total} />
+            </HeroFigure>
+            {extra}
+            <p className="mt-3 max-w-[60ch] text-callout text-ink-muted">{explanation}</p>
+          </Card>
+        </div>
+        <div data-arrive>
+          {count ? (
+            <div ref={list} className="flex flex-col gap-3">
+              {children}
+            </div>
+          ) : (
+            <Empty>{emptyText}</Empty>
+          )}
+        </div>
         {truncated ? <TruncationNotice count={count} /> : null}
-      </div>
+      </Arrive>
     </>
   );
 }
@@ -93,12 +98,12 @@ export function MoneyRowCard({
     <Card>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-[0.9375rem] font-semibold text-ink">{title}</h2>
-          {caption ? <p className="text-[0.8125rem] text-ink-muted">{caption}</p> : null}
+          <h2 className="text-body font-semibold text-ink">{title}</h2>
+          {caption ? <p className="text-footnote text-ink-muted">{caption}</p> : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {badges}
-          <span className="text-[1.125rem] font-semibold tracking-[-0.015em] text-ink">
+          <span className="text-subhead text-ink">
             <Amount value={amount} />
           </span>
         </div>

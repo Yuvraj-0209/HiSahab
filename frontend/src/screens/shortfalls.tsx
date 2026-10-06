@@ -23,10 +23,11 @@ import type { Schemas } from "../api/types";
 import { ScreenTitle } from "../app/chrome";
 import { isNegative } from "../lib/money";
 import { dateTime } from "../lib/time";
+import { Arrive } from "../ui/Arrive";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { TextField, useForm } from "../ui/form";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, HeroFigure, ListCard, ListRow, Pill, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
 
@@ -64,31 +65,30 @@ export function ShortfallLedgerScreen() {
   return (
     <>
       <ScreenTitle title="Shortfall ledger" subtitle={row?.full_name} />
-      <div className="flex flex-col gap-5">
+      <Arrive items="children" className="flex flex-col gap-5">
         <Card>
-          <p className="text-[0.8125rem] font-medium text-ink-muted">Outstanding</p>
-          <p className="mt-1 text-[2.25rem] leading-none font-semibold tracking-[-0.03em] text-ink">
+          <HeroFigure label="Outstanding">
             {/* No row in the outstanding report means nothing has ever been booked: a true zero. */}
             <Amount value={row?.outstanding ?? "0.00"} />
-          </p>
-          <p className="mt-3 text-[0.875rem] text-ink-muted">Booked shortfalls less settlements, reversals included. Computed on every read, never stored.</p>
+          </HeroFigure>
+          <p className="mt-3 text-callout text-ink-muted">Booked shortfalls less settlements, reversals included. Computed on every read, never stored.</p>
           <div className="mt-4">
             {open ? (
               <Button variant="primary" block onClick={() => setSettling(true)}>
                 Record a settlement
               </Button>
             ) : (
-              <p className="text-[0.8125rem] text-ink-muted">A settlement is filed against the shift the cash arrived in, so one has to be open.</p>
+              <p className="text-footnote text-ink-muted">A settlement is filed against the shift the cash arrived in, so one has to be open.</p>
             )}
           </div>
         </Card>
 
-        <p className="text-[0.8125rem] text-ink-muted">
+        <p className="text-footnote text-ink-muted">
           A shortfall can only be repaid in cash. V1 has no way to write one off, so a small figure nobody will chase stays on this balance and it only ever grows.
         </p>
 
         {ledger.data.items.length ? (
-          <Card className="py-1 sm:py-1">
+          <ListCard>
             {ledger.data.items.map((entry) => (
               <ListRow
                 key={entry.id}
@@ -104,11 +104,11 @@ export function ShortfallLedgerScreen() {
                 }
               />
             ))}
-          </Card>
+          </ListCard>
         ) : (
           <Empty>Nothing on this ledger.</Empty>
         )}
-      </div>
+      </Arrive>
 
       <Sheet open={settling} onClose={() => setSettling(false)} title="Record a settlement" subtitle={row?.full_name}>
         {open ? <SettlementForm shiftId={open.id} salesmanId={salesmanId} onDone={() => setSettling(false)} /> : null}
@@ -142,7 +142,7 @@ function SettlementForm({ shiftId, salesmanId, onDone }: { shiftId: string; sale
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-[0.875rem] text-ink-muted">Cash handed back by the salesman. It increases the expected cash for the shift it arrives in.</p>
+      <p className="text-callout text-ink-muted">Cash handed back by the salesman. It increases the expected cash for the shift it arrives in.</p>
       <TextField
         form={form}
         name="amount"
