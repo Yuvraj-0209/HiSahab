@@ -32,6 +32,7 @@ import { useSession } from "../app/session";
 import { useFlipList } from "../motion/flip";
 import { isZero } from "../lib/money";
 import { satisfies } from "../lib/roles";
+import { Arrive } from "../ui/Arrive";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { TextField, useForm } from "../ui/form";
@@ -88,7 +89,7 @@ export function CollectionsScreen() {
   return (
     <>
       <ScreenTitle title="Collections" subtitle={`Shift ${shift.data.sequence} · ${shift.data.status}`} />
-      <div className="flex flex-col gap-5">
+      <Arrive items="children" className="flex flex-col gap-5">
         <Card>
           <HeroFigure label="Cash declared">
             <Amount value={declared} absent="not declared" />
@@ -159,7 +160,7 @@ export function CollectionsScreen() {
         ) : null}
 
         {data.truncated ? <TruncationNotice count={data.items.length} /> : null}
-      </div>
+      </Arrive>
 
       <Sheet
         open={action !== null}

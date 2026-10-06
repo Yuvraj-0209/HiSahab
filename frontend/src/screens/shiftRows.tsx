@@ -10,6 +10,7 @@ import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
 import { useFlipList } from "../motion/flip";
 import { Amount } from "../ui/Amount";
+import { Arrive } from "../ui/Arrive";
 import { Button, Card, Empty, HeroFigure, TruncationNotice } from "../ui/primitives";
 
 export function ShiftRowsFrame({
@@ -51,23 +52,28 @@ export function ShiftRowsFrame({
           </Button>
         </ScreenActions>
       ) : null}
-      <div className="flex flex-col gap-5">
-        <Card>
-          <HeroFigure label={totalLabel}>
-            <Amount value={total} />
-          </HeroFigure>
-          {extra}
-          <p className="mt-3 max-w-[60ch] text-callout text-ink-muted">{explanation}</p>
-        </Card>
-        {count ? (
-          <div ref={list} className="flex flex-col gap-3">
-            {children}
-          </div>
-        ) : (
-          <Empty>{emptyText}</Empty>
-        )}
+      {/* The total arrives, then the list as one block: its rows belong to Flip (ui/Arrive.tsx). */}
+      <Arrive className="flex flex-col gap-5">
+        <div data-arrive>
+          <Card>
+            <HeroFigure label={totalLabel}>
+              <Amount value={total} />
+            </HeroFigure>
+            {extra}
+            <p className="mt-3 max-w-[60ch] text-callout text-ink-muted">{explanation}</p>
+          </Card>
+        </div>
+        <div data-arrive>
+          {count ? (
+            <div ref={list} className="flex flex-col gap-3">
+              {children}
+            </div>
+          ) : (
+            <Empty>{emptyText}</Empty>
+          )}
+        </div>
         {truncated ? <TruncationNotice count={count} /> : null}
-      </div>
+      </Arrive>
     </>
   );
 }

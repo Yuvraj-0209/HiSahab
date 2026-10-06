@@ -18,6 +18,7 @@ import type { Schemas } from "../api/types";
 import { ScreenTitle } from "../app/chrome";
 import { useGo } from "../app/navigation";
 import { businessDate, todayAtOutlet } from "../lib/time";
+import { Arrive } from "../ui/Arrive";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { TextField, useForm } from "../ui/form";
@@ -58,7 +59,7 @@ export function FlaggedExpensesScreen() {
   return (
     <>
       <ScreenTitle title="Flagged expenses" subtitle={`${page.data.items.length} waiting`} />
-      <div className="flex flex-col gap-5">
+      <Arrive items="children" className="flex flex-col gap-5">
         <Card>
           <p className="text-callout text-ink-muted">
             A shift cannot be locked while it holds an unreviewed flagged expense. Reviewing one is a decision with your name on it: flags are never cleared automatically, not even when a reversal drops the day back under the threshold.
@@ -104,7 +105,7 @@ export function FlaggedExpensesScreen() {
         )}
 
         {page.data.next_cursor ? <p className="text-footnote text-ink-muted">There are more flagged expenses than this page lists.</p> : null}
-      </div>
+      </Arrive>
 
       <Sheet open={summaryOpen} onClose={() => setSummaryOpen(false)} title="Month-end expense summary">
         <MonthSummary />

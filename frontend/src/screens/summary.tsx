@@ -53,6 +53,7 @@ import { lastMonth, lastThreeMonths, type Range, thisMonth, thisYear } from "../
 import { format, quantity } from "../lib/money";
 import { businessDate, businessDateRange, businessDateWeekday, todayAtOutlet } from "../lib/time";
 import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
+import { Arrive } from "../ui/Arrive";
 import { Amount } from "../ui/Amount";
 import { Bridge, CategoryBars, categoryColour, Donut, SalesBars, Swatch } from "../ui/chart";
 import { TextField, useForm } from "../ui/form";
@@ -120,7 +121,7 @@ export function SummaryScreen() {
 function SummaryBody({ report }: { report: Report }) {
   const navigate = useGo();
   return (
-    <div className="flex flex-col gap-4">
+    <Arrive items="children" className="flex flex-col gap-4">
       <Headline report={report} />
       <Card>
         <SectionLabel>Sales by day</SectionLabel>
@@ -135,7 +136,7 @@ function SummaryBody({ report }: { report: Report }) {
       <ExpensesCard report={report} />
       <CreditCard report={report} />
       <Provenance report={report} />
-    </div>
+    </Arrive>
   );
 }
 

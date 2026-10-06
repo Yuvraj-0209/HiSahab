@@ -23,6 +23,7 @@ import type { Schemas } from "../api/types";
 import { ScreenTitle } from "../app/chrome";
 import { isNegative } from "../lib/money";
 import { dateTime } from "../lib/time";
+import { Arrive } from "../ui/Arrive";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { TextField, useForm } from "../ui/form";
@@ -64,7 +65,7 @@ export function ShortfallLedgerScreen() {
   return (
     <>
       <ScreenTitle title="Shortfall ledger" subtitle={row?.full_name} />
-      <div className="flex flex-col gap-5">
+      <Arrive items="children" className="flex flex-col gap-5">
         <Card>
           <HeroFigure label="Outstanding">
             {/* No row in the outstanding report means nothing has ever been booked: a true zero. */}
@@ -107,7 +108,7 @@ export function ShortfallLedgerScreen() {
         ) : (
           <Empty>Nothing on this ledger.</Empty>
         )}
-      </div>
+      </Arrive>
 
       <Sheet open={settling} onClose={() => setSettling(false)} title="Record a settlement" subtitle={row?.full_name}>
         {open ? <SettlementForm shiftId={open.id} salesmanId={salesmanId} onDone={() => setSettling(false)} /> : null}

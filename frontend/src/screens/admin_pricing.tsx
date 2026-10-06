@@ -27,6 +27,7 @@ import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { format } from "../lib/money";
 import { dateTime, nowLocalValue, toOffsetISO } from "../lib/time";
+import { Arrive } from "../ui/Arrive";
 import { SelectField, TextField, useForm } from "../ui/form";
 import { Card, Empty, ErrorCard, ListRow, Notice, Pill, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
@@ -118,7 +119,7 @@ function PricingScreen({ kind }: { kind: Kind }) {
     const rows = asEntries(history.data.items);
 
     body = (
-      <div className="flex flex-col gap-5">
+      <Arrive items="children" className="flex flex-col gap-5">
         <section>
           <SectionLabel>In force now</SectionLabel>
           {inForce.length ? (
@@ -179,7 +180,7 @@ function PricingScreen({ kind }: { kind: Kind }) {
           )}
           {history.data.next_cursor ? <p className="mt-2 text-footnote text-ink-muted">Showing the latest 50.</p> : null}
         </section>
-      </div>
+      </Arrive>
     );
   }
 

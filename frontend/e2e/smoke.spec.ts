@@ -326,6 +326,23 @@ test("today: a card whose figures failed to load says so, never '…' and never 
   await expect(page.getByText("not declared")).toHaveCount(0);
 });
 
+test("today: a card opens its details from anywhere on it, not from a button at its foot (Phase 28 D6)", async ({ page }) => {
+  const problems = await watch(page);
+  await signedIn(page, { role: "admin", responses: todayResponses("open") });
+  await page.goto("/#/today");
+  const card = page.getByRole("heading", { name: "Collections", exact: true }).locator("xpath=ancestor::section[1]");
+  await expect(card.getByRole("button", { name: "Details" })).toHaveCount(0);
+  // Pressed where a row's label is drawn, well away from the title that carries the button. A
+  // click at a position, as a thumb makes one: the stretched button lies over the whole card, so
+  // the row underneath is not itself a target and Playwright would refuse to click it directly.
+  await card.evaluate((element) => element.scrollIntoView({ block: "center" }));
+  await page.waitForTimeout(300);
+  const box = (await card.getByText("Card", { exact: true }).boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.getByRole("dialog", { name: "Collections" })).toBeVisible();
+  expect(problems).toEqual([]);
+});
+
 test("a shift opened by its id is titled as that shift, not as Today (Phase 28 B6)", async ({ page }) => {
   await signedIn(page, { role: "admin", responses: todayResponses("closed") });
   await page.goto(`/#/shifts/${SHIFT_ID}`);

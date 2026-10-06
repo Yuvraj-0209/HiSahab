@@ -52,7 +52,7 @@ export function CashScreen() {
     return (
       <>
         <ScreenTitle large title="Cash" />
-        <Skeleton rows={4} />
+        <Skeleton shape="cards" rows={3} />
       </>
     );
   }
@@ -81,34 +81,47 @@ export function CashScreen() {
       <div className="flex flex-col gap-6">
         <Card>
           {open ? (
-            <div className="flex flex-col gap-3">
-              <div>
-                <p className="text-footnote font-medium text-ink-muted">Open shift</p>
-                <p className="text-subhead text-ink">
-                  {businessDate(open.business_date)} · shift {open.sequence}
-                </p>
-              </div>
-              {/* Named for what it shows, never for what a reader might wish it did (§14). */}
-              <Button block onClick={() => navigate(`/shifts/${open.id}/cash-position`)}>
-                Cash position
-              </Button>
-              <p className="text-footnote text-ink-muted">
-                Shows what this salesman should be holding and the gap. It is a report: nothing is written, and the day is reconciled once every shift on it is closed.
-              </p>
-              {satisfies(me.role, "admin") ? (
-                <>
-                  <Button
-                    block
-                    onClick={() => {
-                      setVoidTarget(open);
-                      setVoiding(true);
-                    }}
-                  >
-                    Void shift
+            // The band Today uses (Phase 25 D3): the shift on the left, its acts on the right on a
+            // wide screen and full width under the thumb on a phone (Phase 28 D6). Each act's
+            // explanation stays beneath it, in the order the buttons read.
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-footnote font-medium text-ink-muted">Open shift</p>
+                  <p className="text-subhead text-ink">
+                    {businessDate(open.business_date)} · shift {open.sequence}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row md:shrink-0">
+                  {/* Named for what it shows, never for what a reader might wish it did (§14). */}
+                  <Button className="w-full md:w-auto md:min-w-[10rem]" onClick={() => navigate(`/shifts/${open.id}/cash-position`)}>
+                    Cash position
                   </Button>
-                  <p className="text-footnote text-ink-muted">Opened for the wrong day? An empty shift can be voided, and the day it was blocking can then be opened.</p>
-                </>
-              ) : null}
+                  {satisfies(me.role, "admin") ? (
+                    <Button
+                      className="w-full md:w-auto md:min-w-[10rem]"
+                      onClick={() => {
+                        setVoidTarget(open);
+                        setVoiding(true);
+                      }}
+                    >
+                      Void shift
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5 border-t border-hairline pt-3 text-footnote text-ink-muted">
+                <p>
+                  <span className="font-medium text-ink">Cash position</span> shows what this salesman should be holding and the gap. It is a report: nothing
+                  is written, and the day is reconciled once every shift on it is closed.
+                </p>
+                {satisfies(me.role, "admin") ? (
+                  <p>
+                    <span className="font-medium text-ink">Void shift</span> is for a shift opened for the wrong day: an empty one can be voided, and the day it
+                    was blocking can then be opened.
+                  </p>
+                ) : null}
+              </div>
             </div>
           ) : (
             <p className="text-callout text-ink-muted">No shift is currently open.</p>

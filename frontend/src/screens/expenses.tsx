@@ -34,6 +34,7 @@ import { useSession } from "../app/session";
 import { useFlipList } from "../motion/flip";
 import { compareMoney } from "../lib/money";
 import { satisfies } from "../lib/roles";
+import { Arrive } from "../ui/Arrive";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { SelectField, TextField, useForm } from "../ui/form";
@@ -101,7 +102,7 @@ export function ExpensesScreen() {
         </ScreenActions>
       ) : null}
 
-      <div className="flex flex-col gap-5">
+      <Arrive items="children" className="flex flex-col gap-5">
         {totals.length ? (
           <Card>
             <div className="flex items-baseline justify-between gap-3">
@@ -138,7 +139,7 @@ export function ExpensesScreen() {
         )}
 
         {data.truncated ? <TruncationNotice count={data.items.length} /> : null}
-      </div>
+      </Arrive>
 
       <Sheet
         open={action !== null}

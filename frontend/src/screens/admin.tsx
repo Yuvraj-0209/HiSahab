@@ -47,6 +47,7 @@ import { ScreenActions, ScreenTitle } from "../app/chrome";
 import { useGo } from "../app/navigation";
 import { quantity, reading } from "../lib/money";
 import { localTime, toOffsetISO } from "../lib/time";
+import { Arrive } from "../ui/Arrive";
 import { reportFailure } from "../ui/feedback";
 import { CheckboxField, type FormState, type FormValues, SelectField, TextField, useForm } from "../ui/form";
 import { Button, Card, Empty, ErrorCard, LinkTile, ListRow, Notice, Pill, Skeleton } from "../ui/primitives";
@@ -165,7 +166,9 @@ export function AdminCard({
 }
 
 export function AdminGrid({ children }: { children: ReactNode }) {
-  return <div className="grid grid-cols-1 gap-3 md:grid-cols-2">{children}</div>;
+  // Its cards are `data-arrive`; until Phase 28 nothing read that, and every admin list simply
+  // appeared.
+  return <Arrive className="grid grid-cols-1 gap-3 md:grid-cols-2">{children}</Arrive>;
 }
 
 /** Save a sheet's form: clear old errors, write, close, refresh every cached read. A 422 lands

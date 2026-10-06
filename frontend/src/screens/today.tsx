@@ -482,7 +482,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
         title="Bank deposits"
         caption={countLabel(deposits.data?.items.length, "deposit")}
         figure={<Amount value={deposits.data?.total ?? null} absent={absentFor(deposits)} />}
-        lines={[]}
+        lines={depositLines(deposits.data ?? null).slice(1)}
         loading={deposits.isPending}
         onDetails={() => setOpen("deposits")}
       />
@@ -540,10 +540,15 @@ function ShiftFigures({ shift }: { shift: Shift }) {
 }
 
 /**
- * One domain of the shift: what it is, the figure it is read for, a few supporting lines, and
- * Details. Six of them sit three across and two down, all the same size (Phase 25 D3): equal
- * weight, because a manager reads the six together, and a card made bigger than its neighbours
- * broke the rows rather than adding emphasis.
+ * One domain of the shift: what it is, the figure it is read for, and a few supporting lines. Six
+ * of them sit three across and two down, all the same size (Phase 25 D3): equal weight, because a
+ * manager reads the six together, and a card made bigger than its neighbours broke the rows
+ * rather than adding emphasis.
+ *
+ * The whole card opens its sheet (Phase 28 D6). It used to end in a full-width "Details" button,
+ * six of them on one screen; now the title is the button and its hit area is stretched over the
+ * card, so the heading stays a heading for a screen reader and the target is the whole card for
+ * a thumb. A caret in the corner says it opens; the focus ring is drawn around the card.
  *
  * The icon chip says which domain at a glance; the figure is the server's string at one size,
  * rolled by `Amount` when it changes; a null is still a word.
@@ -570,20 +575,29 @@ function DomainCard({
   onDetails: () => void;
 }) {
   const shown = lines.filter((line) => !("note" in line)).slice(0, 3);
+  // A card with no rows to show says why in a sentence, rather than standing half empty.
+  const note = shown.length ? null : (lines.find((line) => "note" in line) as { note: string } | undefined)?.note;
   return (
-    <div data-arrive>
-      <Card className="flex h-full flex-col">
+    <div data-arrive className="h-full">
+      <Card className="domain-card pressable liftable link-row relative flex h-full flex-col">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-[12px] bg-accent-tint text-accent" aria-hidden="true">
               <Icon size={20} />
             </span>
             <div className="min-w-0">
-              <h2 className="text-body font-semibold text-ink">{title}</h2>
+              <h2 className="text-body font-semibold text-ink">
+                <button type="button" onClick={onDetails} className="domain-card-open text-left">
+                  {title}
+                </button>
+              </h2>
               {caption ? <p className="truncate text-footnote text-ink-muted">{caption}</p> : null}
             </div>
           </div>
-          {badge}
+          <span className="flex shrink-0 items-center gap-2">
+            {badge}
+            <CaretRightIcon size={16} className="link-caret text-ink-faint" aria-hidden />
+          </span>
         </div>
         <div className="mt-5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <span className="text-title text-ink">{loading ? <span className="skeleton inline-block h-8 w-40 rounded-lg align-middle" /> : figure}</span>
@@ -597,17 +611,9 @@ function DomainCard({
               ),
             )}
           </div>
+        ) : note && !loading ? (
+          <p className="mt-3 text-footnote text-ink-muted">{note}</p>
         ) : null}
-        <div className="mt-auto pt-5">
-          <button
-            type="button"
-            onClick={onDetails}
-            className="pressable flex w-full items-center justify-between rounded-[var(--radius-control)] bg-surface-sunken px-3.5 py-2.5 text-callout font-medium text-ink transition-colors hover:bg-accent-tint hover:text-accent"
-          >
-            Details
-            <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
-          </button>
-        </div>
       </Card>
     </div>
   );

@@ -21,7 +21,7 @@ import { CaretDownIcon, PrinterIcon } from "@phosphor-icons/react";
 import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
-import { useGo } from "../app/navigation";
+import { sharedSource, useGo } from "../app/navigation";
 import { lastCompletedHalf } from "../lib/billing";
 import { format, isZero } from "../lib/money";
 import { businessDate, businessDateRange, todayAtOutlet } from "../lib/time";
@@ -210,12 +210,14 @@ function CustomerCard({ entry, to }: { entry: Row; to: string }) {
   const owedBefore = !entry.opening_balance_entered && isZero(entry.owed_before) ? null : entry.owed_before;
 
   return (
-    <div ref={card} data-arrive className="statement-customer">
+    <div ref={card} data-arrive data-shared-scope className="statement-customer">
       <Card>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h2 className="truncate text-body font-semibold text-ink">{entry.name}</h2>
+              <h2 data-shared-source className="truncate text-body font-semibold text-ink">
+                {entry.name}
+              </h2>
               {entry.is_active ? null : <Pill kind="neutral">inactive</Pill>}
             </div>
             <p className="text-footnote text-ink-muted">{entry.phone}</p>
@@ -262,7 +264,8 @@ function CustomerCard({ entry, to }: { entry: Row; to: string }) {
             <Button size="sm" icon={<PrinterIcon size={16} aria-hidden />} onClick={() => printStatement(card.current)}>
               Print this customer
             </Button>
-            <Button size="sm" variant="plain" onClick={() => navigate(`/credit/customers/${entry.customer_id}`)}>
+            {/* The customer's name flies into the ledger's title, as from the Credit hub. */}
+            <Button size="sm" variant="plain" onClick={(event) => navigate(`/credit/customers/${entry.customer_id}`, { shared: sharedSource(event) })}>
               Open the ledger
             </Button>
           </div>

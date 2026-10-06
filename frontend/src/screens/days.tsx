@@ -32,6 +32,7 @@ import { type Day, dayState, LIFECYCLE, mergeDays, oldestUnreconciled } from "..
 import { format, varianceLabel } from "../lib/money";
 import { satisfies } from "../lib/roles";
 import { businessDate, todayAtOutlet } from "../lib/time";
+import { Arrive } from "../ui/Arrive";
 import { Amount } from "../ui/Amount";
 import { describeSource } from "../ui/chart";
 import { reportFailure } from "../ui/feedback";
@@ -308,7 +309,7 @@ export function DayScreen() {
     return (
       <>
         <ScreenTitle title="Day" subtitle={businessDate(date)} />
-        <Skeleton rows={4} />
+        <Skeleton shape="figure" rows={4} />
       </>
     );
   }
@@ -351,7 +352,7 @@ export function DayScreen() {
         </Button>
       </ScreenActions>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <Arrive items="children" className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Where this day stands, and the one act that moves it on. */}
         <Card className="lg:col-span-2">
           <div className="flex items-center justify-between gap-3">
@@ -548,7 +549,7 @@ export function DayScreen() {
             </p>
           </Card>
         ) : null}
-      </div>
+      </Arrive>
 
       {sheet}
       <Sheet open={act !== null} onClose={() => setAct(null)} title={act === "unfinalise" ? "Unfinalise day" : "Record the count"} subtitle={businessDate(date)}>

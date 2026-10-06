@@ -21,15 +21,16 @@ import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
 
 /**
  * Stagger the first eight `[data-arrive]` children of `scope` in, the first time `ready`
- * becomes true -- and never again for this mount.
+ * becomes true -- and never again for this mount. `selector` picks other items instead: ui/Arrive
+ * passes `:scope > *` to stagger a column's own cards.
  */
-export function useArrival(scope: RefObject<HTMLElement | null>, ready: boolean) {
+export function useArrival(scope: RefObject<HTMLElement | null>, ready: boolean, selector = "[data-arrive]") {
   const done = useRef(false);
   useMotion(
     (play) => {
       if (!ready || done.current || !scope.current) return;
       done.current = true;
-      const items = Array.from(scope.current.querySelectorAll("[data-arrive]")).slice(0, 8);
+      const items = Array.from(scope.current.querySelectorAll(selector)).slice(0, 8);
       if (items.length === 0) return;
       play(() => {
         gsap.from(items, {

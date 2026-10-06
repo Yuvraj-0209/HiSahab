@@ -916,6 +916,25 @@ select.field-control {
   }
 }
 
+/* Today's domain card (screens/today.tsx DomainCard, Phase 28 D6): the title is the button, and its
+ * hit area is stretched over the whole card, so a thumb can press anywhere on it while a screen
+ * reader still meets a heading. The focus ring goes around the card, where the target is. */
+.domain-card-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-card);
+}
+
+.domain-card-open:focus-visible {
+  outline: none;
+}
+
+.domain-card:has(.domain-card-open:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* "A day at the pump" (Phase 28 D5, showroom/Story.tsx). The step the phone is showing reads at
  * full strength and the rest recede -- by colour, not opacity, so a receded step still passes
  * contrast (axe reads every step, on screen or not). CSS owns this; GSAP never moves the copy. */

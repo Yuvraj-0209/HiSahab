@@ -26,6 +26,7 @@ import { useApiQuery, useRefreshApi } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenTitle } from "../app/chrome";
 import { businessDate, todayAtOutlet } from "../lib/time";
+import { Arrive } from "../ui/Arrive";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { TextField, useForm } from "../ui/form";
@@ -73,7 +74,7 @@ export function OpeningBalancesScreen() {
   return (
     <>
       <ScreenTitle title="Opening balances" subtitle={`${anchored.length} of ${items.length} entered`} />
-      <div className="flex flex-col gap-5">
+      <Arrive items="children" className="flex flex-col gap-5">
         <Card>
           <SectionLabel>What this is</SectionLabel>
           <p className="text-body text-ink">
@@ -136,7 +137,7 @@ export function OpeningBalancesScreen() {
         ) : null}
 
         {items.length ? null : <Empty>No credit customers yet. Add them under Admin, Credit customers, first.</Empty>}
-      </div>
+      </Arrive>
 
       <Sheet
         open={action !== null}

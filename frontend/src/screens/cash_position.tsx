@@ -38,6 +38,7 @@ import type { Schemas } from "../api/types";
 import { ScreenTitle } from "../app/chrome";
 import { format, gapLabel, isNegative, isZero } from "../lib/money";
 import { businessDate } from "../lib/time";
+import { Arrive } from "../ui/Arrive";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { TextField, useForm } from "../ui/form";
@@ -75,7 +76,7 @@ export function CashPositionScreen() {
   return (
     <>
       <ScreenTitle title="Cash position" subtitle={businessDate(p.business_date)} />
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <Arrive items="children" className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card className="lg:col-span-2">
           <SectionLabel>The comparison</SectionLabel>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -150,7 +151,7 @@ export function CashPositionScreen() {
             <BookingControl position={p} onBook={() => setBooking(true)} />
           </div>
         </Card>
-      </div>
+      </Arrive>
 
       <Sheet open={booking} onClose={() => setBooking(false)} title="Book a shortfall" subtitle={businessDate(p.business_date)}>
         <BookingForm shiftId={shiftId} position={p} onDone={() => setBooking(false)} />
