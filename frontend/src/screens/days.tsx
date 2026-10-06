@@ -38,7 +38,7 @@ import { reportFailure } from "../ui/feedback";
 import { TextField, useForm } from "../ui/form";
 import { LifecycleStrip } from "../ui/lifecycle";
 import { useArrival } from "../ui/motion";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, HeroFigure, ListCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
 import { commitTick } from "../motion/haptic";
@@ -271,13 +271,13 @@ export function DaysScreen() {
       <ScreenTitle title="Days" subtitle={`${days.length} trading day${days.length === 1 ? "" : "s"}`} />
       <div className="flex flex-col gap-4">
         {days.length ? (
-          <Card className="py-1 sm:py-1">
+          <ListCard>
             <div ref={list}>
               {days.map((day) => (
                 <DayRow key={day.business_date} day={day} unblocked={unblocked} />
               ))}
             </div>
-          </Card>
+          </ListCard>
         ) : (
           <Empty>No trading day has been entered yet.</Empty>
         )}
@@ -417,10 +417,9 @@ export function DayScreen() {
         ) : null}
 
         <Card>
-          <span className="text-footnote font-medium text-ink-muted">Expected closing</span>
-          <p className="mt-1 text-figure text-ink">
+          <HeroFigure label="Expected closing">
             <Amount value={cash.expected_closing} absent="not known" />
-          </p>
+          </HeroFigure>
           {cash.expected_closing === null && cash.source === "computed" ? (
             <p className="mt-2 text-footnote text-ink-muted">
               No earlier day has been reconciled, so there is no opening balance to carry from. An admin seeds the first one.

@@ -30,7 +30,6 @@ import { type ReactNode, useState } from "react";
 import {
   AddressBookIcon,
   BankIcon,
-  CaretRightIcon,
   ClockCounterClockwiseIcon,
   ClockIcon,
   CurrencyInrIcon,
@@ -50,7 +49,7 @@ import { quantity, reading } from "../lib/money";
 import { localTime, toOffsetISO } from "../lib/time";
 import { reportFailure } from "../ui/feedback";
 import { CheckboxField, type FormState, type FormValues, SelectField, TextField, useForm } from "../ui/form";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, LinkTile, ListRow, Notice, Pill, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
 
@@ -76,21 +75,7 @@ export function AdminHubScreen() {
       <ScreenTitle large title="Admin" />
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
         {SECTIONS.map(({ label, hint, route, Icon }) => (
-          <button
-            key={route}
-            type="button"
-            onClick={() => navigate(route)}
-            className="pressable liftable flex items-center gap-3.5 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
-          >
-            <span className="grid size-10 shrink-0 place-items-center rounded-[var(--radius-control)] bg-accent-tint text-accent">
-              <Icon size={20} aria-hidden />
-            </span>
-            <span className="min-w-0 grow">
-              <span className="block text-body font-medium text-ink">{label}</span>
-              <span className="block text-footnote text-ink-muted">{hint}</span>
-            </span>
-            <CaretRightIcon size={16} className="shrink-0 text-ink-faint" aria-hidden />
-          </button>
+          <LinkTile key={route} arrive Icon={Icon} label={label} hint={hint} onClick={() => navigate(route)} />
         ))}
       </div>
       <p className="mt-4 text-footnote text-ink-muted">
@@ -454,10 +439,10 @@ export function CategoriesScreen() {
           <div className="flex flex-col gap-3">
             {/* §14, twice over. The enum that once made this impossible is gone, so the warning
              * lives where somebody would otherwise create the category. */}
-            <p className="rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-footnote text-warning">
+            <Notice>
               Never create a category for a fuel restock, a tanker delivery, or an IOCL or PAD settlement. That money leaves the bank, not the drawer: filing it here makes the cash
               engine invent a daily shortage that never happened.
-            </p>
+            </Notice>
             {rows.length ? (
               <AdminGrid>
                 {rows.map((category) => (

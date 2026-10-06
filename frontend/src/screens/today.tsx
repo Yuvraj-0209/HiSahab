@@ -59,7 +59,7 @@ import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { SelectField, TextField, useForm } from "../ui/form";
 import { useArrival } from "../ui/motion";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, ListCard, ListRow, Pill, type PillKind, RowLink, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
 import { commitTick } from "../motion/haptic";
@@ -789,14 +789,9 @@ function NoShift() {
         {recent.data?.items.length ? (
           <section>
             <SectionLabel>Recent shifts</SectionLabel>
-            <Card className="py-1 sm:py-1">
+            <ListCard>
               {recent.data.items.map((shift) => (
-                <button
-                  key={shift.id}
-                  type="button"
-                  onClick={() => navigate(`/shifts/${shift.id}`)}
-                  className="pressable flex w-full items-center gap-3 border-b border-hairline py-3 text-left last:border-b-0"
-                >
+                <RowLink key={shift.id} onClick={() => navigate(`/shifts/${shift.id}`)}>
                   <div className="min-w-0 grow">
                     <p className="text-body text-ink">
                       {businessDate(shift.business_date)} · shift {shift.sequence}
@@ -806,10 +801,9 @@ function NoShift() {
                     </p>
                   </div>
                   <Pill kind={STATUS_PILL[shift.status] ?? "neutral"}>{shift.status}</Pill>
-                  <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
-                </button>
+                </RowLink>
               ))}
-            </Card>
+            </ListCard>
           </section>
         ) : null}
       </div>

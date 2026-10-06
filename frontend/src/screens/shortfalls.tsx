@@ -26,7 +26,7 @@ import { dateTime } from "../lib/time";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { TextField, useForm } from "../ui/form";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, HeroFigure, ListCard, ListRow, Pill, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
 
@@ -66,11 +66,10 @@ export function ShortfallLedgerScreen() {
       <ScreenTitle title="Shortfall ledger" subtitle={row?.full_name} />
       <div className="flex flex-col gap-5">
         <Card>
-          <p className="text-footnote font-medium text-ink-muted">Outstanding</p>
-          <p className="mt-1 text-figure text-ink">
+          <HeroFigure label="Outstanding">
             {/* No row in the outstanding report means nothing has ever been booked: a true zero. */}
             <Amount value={row?.outstanding ?? "0.00"} />
-          </p>
+          </HeroFigure>
           <p className="mt-3 text-callout text-ink-muted">Booked shortfalls less settlements, reversals included. Computed on every read, never stored.</p>
           <div className="mt-4">
             {open ? (
@@ -88,7 +87,7 @@ export function ShortfallLedgerScreen() {
         </p>
 
         {ledger.data.items.length ? (
-          <Card className="py-1 sm:py-1">
+          <ListCard>
             {ledger.data.items.map((entry) => (
               <ListRow
                 key={entry.id}
@@ -104,7 +103,7 @@ export function ShortfallLedgerScreen() {
                 }
               />
             ))}
-          </Card>
+          </ListCard>
         ) : (
           <Empty>Nothing on this ledger.</Empty>
         )}

@@ -48,7 +48,7 @@ import { api } from "../api/client";
 import { apiKey, useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
-import { useGo } from "../app/navigation";
+import { sharedSource, useGo } from "../app/navigation";
 import { lastMonth, lastThreeMonths, type Range, thisMonth, thisYear } from "../lib/calendar";
 import { format, quantity } from "../lib/money";
 import { businessDate, businessDateRange, businessDateWeekday, todayAtOutlet } from "../lib/time";
@@ -56,7 +56,7 @@ import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
 import { Amount } from "../ui/Amount";
 import { Bridge, CategoryBars, categoryColour, Donut, SalesBars, Swatch } from "../ui/chart";
 import { TextField, useForm } from "../ui/form";
-import { Button, Card, Empty, ErrorCard, Pill, SectionLabel, Skeleton, TruncationNotice } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, HeroFigure, Notice, Pill, RowLink, SectionLabel, Skeleton, TruncationNotice } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
 import { SOURCE_PILL } from "./days";
@@ -165,10 +165,9 @@ function Headline({ report }: { report: Report }) {
     <Card>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:gap-10">
         <div className="flex flex-col justify-center">
-          <p className="text-footnote font-medium text-ink-muted">Total sales</p>
-          <p className="tabular mt-1 text-figure text-ink sm:text-display">
+          <HeroFigure label="Total sales" className="sm:text-display">
             <Amount value={report.total_sales} />
-          </p>
+          </HeroFigure>
           <p className="mt-2 text-footnote text-ink-muted">
             Fuel and non-fuel, across {report.trading_days} trading day
             {report.trading_days === 1 ? "" : "s"}.
@@ -203,10 +202,10 @@ function Headline({ report }: { report: Report }) {
         Litres and kilograms are different measures, so they are never added together.
       </p>
       {report.partial ? (
-        <p className="mt-3 rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-footnote text-warning">
+        <Notice className="mt-3">
           At least one day in this window could not be fully calculated, from a missing reading or price. These totals are a floor, not a complete
           figure.
-        </p>
+        </Notice>
       ) : null}
     </Card>
   );
@@ -573,17 +572,16 @@ function CreditCard({ report }: { report: Report }) {
             <ul className="flex flex-col">
               {credit.top_owing.map((customer) => (
                 <li key={customer.customer_id}>
-                  <button
-                    type="button"
-                    onClick={() => navigate(`/credit/customers/${customer.customer_id}`)}
-                    className="flex w-full items-center justify-between gap-3 border-b border-hairline py-2.5 text-left last:border-b-0 hover:text-accent"
+                  {/* The name flies into the ledger's title, as a customer row's does on the Credit tab. */}
+                  <RowLink
+                    className="py-2.5"
+                    onClick={(event) => navigate(`/credit/customers/${customer.customer_id}`, { shared: sharedSource(event) })}
                   >
-                    <span className="truncate text-body text-ink">{customer.name}</span>
-                    <span className="flex shrink-0 items-center gap-1.5">
-                      <span className="tabular text-body text-ink">{format(customer.owed_at_end)}</span>
-                      <CaretRightIcon size={14} className="text-ink-faint" aria-hidden />
+                    <span data-shared-source className="min-w-0 grow truncate text-body text-ink">
+                      {customer.name}
                     </span>
-                  </button>
+                    <span className="tabular shrink-0 text-body text-ink">{format(customer.owed_at_end)}</span>
+                  </RowLink>
                 </li>
               ))}
             </ul>

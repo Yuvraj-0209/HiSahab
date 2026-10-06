@@ -28,7 +28,7 @@ import { businessDate, businessDateRange, todayAtOutlet } from "../lib/time";
 import { Amount } from "../ui/Amount";
 import { TextField, useForm } from "../ui/form";
 import { useArrival } from "../ui/motion";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, ListRow, Notice, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
 import { notify } from "../ui/toast";
 
 type Row = Schemas["StatementRowResponse"];
@@ -165,9 +165,6 @@ export function CreditStatementScreen() {
   );
 }
 
-function Notice({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <p className={`rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-footnote text-warning ${className}`}>{children}</p>;
-}
 
 function DateForm({ from, to }: { from: string; to: string }) {
   const navigate = useGo();

@@ -46,7 +46,7 @@ import { CheckboxField, TextField, useForm } from "../ui/form";
 import { useFlipList } from "../motion/flip";
 import { DURATION, EASE, gsap, useMotion } from "../motion/gsap";
 import { useArrival } from "../ui/motion";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, HeroFigure, ListRow, Notice, Pill, type PillKind, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
 
@@ -315,12 +315,9 @@ function FirstEntry({ line, shiftId, onDone }: { line: Line; shiftId: string; on
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <p className="text-footnote font-medium text-ink-muted">The chain says this nozzle opens at</p>
         {/* Large and NOT an input: §4.7's "pre-filled, not typeable". A field with a value in it
          * invites a glance-and-tab-past, which is the assumption this screen exists to prevent. */}
-        <p className="tabular mt-1 text-figure text-ink">
-          {reading(line.chained_opening_reading)}
-        </p>
+        <HeroFigure label="The chain says this nozzle opens at">{reading(line.chained_opening_reading)}</HeroFigure>
       </div>
       <p className="text-callout text-ink-muted">
         Read the physical meter before you touch this. If it does not match, say so. That is the signal, not a nuisance.
@@ -531,9 +528,9 @@ function ClosingForm({ line, saved, shiftId, onDone }: { line: Line; saved: Save
   return (
     <div className="flex flex-col gap-4">
       {saved.requires_review ? (
-        <p className="rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-footnote text-warning">
+        <Notice>
           {saved.review_note ? `Flagged for review: ${saved.review_note}` : "Flagged for review. A person needs to reconcile this reading."}
-        </p>
+        </Notice>
       ) : null}
       <SavedRows line={line} saved={saved} />
       {saved.closing_reading === null ? (

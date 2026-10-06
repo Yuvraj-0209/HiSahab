@@ -5,7 +5,8 @@
  * that quotes the request id (§9) -- a blank region answers nobody's question.
  */
 
-import { type ButtonHTMLAttributes, type ReactNode, useRef } from "react";
+import { type ButtonHTMLAttributes, type ComponentType, type ReactNode, useRef } from "react";
+import { CaretRightIcon, type IconProps } from "@phosphor-icons/react";
 import { explain, requestIdOf } from "../api/client";
 
 /* --- buttons ----------------------------------------------------------------------------- */
@@ -77,6 +78,88 @@ export function Card({
     <Tag className={`rounded-[var(--radius-card)] border border-hairline bg-surface p-4 shadow-1 sm:p-5 ${className}`}>
       {children}
     </Tag>
+  );
+}
+
+/** A card holding a list of rows, each with its own hairline: the card's padding is the rows'. */
+export function ListCard({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return <Card className={`py-1 sm:py-1 ${className}`}>{children}</Card>;
+}
+
+/* --- ways to somewhere else (Phase 28 D6) -------------------------------------------------- */
+
+/**
+ * A tile that opens another screen: an icon chip, a label, an optional hint, and a caret. The
+ * Entry list, the Admin hub, the Cash tab's look-backs, the Credit hub and the Bank hub all used
+ * to build this by hand, in five slightly different shapes; one tap target now looks like one.
+ */
+export function LinkTile({
+  Icon,
+  label,
+  hint,
+  onClick,
+  arrive = false,
+}: {
+  Icon?: ComponentType<IconProps> | undefined;
+  label: ReactNode;
+  hint?: ReactNode;
+  onClick: () => void;
+  /** Join the screen's arrival choreography (`useArrival`'s `[data-arrive]`). */
+  arrive?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      data-arrive={arrive ? "" : undefined}
+      onClick={onClick}
+      className="pressable liftable link-row flex w-full items-center gap-3.5 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
+    >
+      {Icon ? (
+        <span className="grid size-10 shrink-0 place-items-center rounded-[var(--radius-control)] bg-accent-tint text-accent">
+          <Icon size={20} aria-hidden />
+        </span>
+      ) : null}
+      <span className="min-w-0 grow">
+        <span className="block text-body font-medium text-ink">{label}</span>
+        {hint ? <span className="block text-footnote text-ink-muted">{hint}</span> : null}
+      </span>
+      <CaretRightIcon size={16} className="link-caret shrink-0 text-ink-faint" aria-hidden />
+    </button>
+  );
+}
+
+/**
+ * A row inside a list card that opens something: the whole row is the target and a caret ends it.
+ * What the row says is the caller's; the shape, the hairline and the caret are this. Pass
+ * `caret={false}` where the row ends in something else that already says "more".
+ */
+export function RowLink({
+  children,
+  caret = true,
+  className = "",
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & { caret?: boolean }) {
+  return (
+    <button type="button" className={`pressable link-row flex w-full items-center gap-3 border-b border-hairline py-3 text-left last:border-b-0 ${className}`} {...rest}>
+      {children}
+      {caret ? <CaretRightIcon size={16} className="link-caret shrink-0 text-ink-faint" aria-hidden /> : null}
+    </button>
+  );
+}
+
+/* --- the one figure a card is for (Phase 28 D6) --------------------------------------------- */
+
+/**
+ * A label over the figure a card exists to show, at the scale's `figure` step. The value is
+ * whatever the caller renders -- an `Amount` (so a changed figure rolls), a meter reading -- and is
+ * never formatted here.
+ */
+export function HeroFigure({ label, children, className = "" }: { label: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <div>
+      <p className="text-footnote font-medium text-ink-muted">{label}</p>
+      <p className={`tabular mt-1 text-figure text-ink ${className}`}>{children}</p>
+    </div>
   );
 }
 
@@ -174,9 +257,15 @@ export function Empty({ children }: { children: ReactNode }) {
 /** Several endpoints return `truncated: true` rather than a cursor (§9's considered
  * exceptions). Showing a partial list silently is how a reader trusts a wrong total. */
 export function TruncationNotice({ count }: { count: number }) {
+  return <Notice>Showing the first {count}. There are more rows than this view lists.</Notice>;
+}
+
+/** A warning in words, on the warning tint: something a reader should know before trusting the
+ * figures around it. Amber means warning and nothing else (§14). */
+export function Notice({ children, className = "", role }: { children: ReactNode; className?: string; role?: "status" | undefined }) {
   return (
-    <p className="rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-footnote text-warning">
-      Showing the first {count}. There are more rows than this view lists.
+    <p role={role} className={`rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-footnote text-warning ${className}`}>
+      {children}
     </p>
   );
 }

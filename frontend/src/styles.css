@@ -904,6 +904,18 @@ select.field-control {
   }
 }
 
+/* A tile or row that opens somewhere (ui/primitives.tsx LinkTile, RowLink, Phase 28 D6): where
+ * there is a mouse, the caret leans 2px the way the tap would go. CSS alone, on the caret alone. */
+.link-caret {
+  transition: transform var(--dur-small) var(--ease-enter);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .link-row:hover .link-caret {
+    transform: translateX(2px);
+  }
+}
+
 /* "A day at the pump" (Phase 28 D5, showroom/Story.tsx). The step the phone is showing reads at
  * full strength and the rest recede -- by colour, not opacity, so a receded step still passes
  * contrast (axe reads every step, on screen or not). CSS owns this; GSAP never moves the copy. */

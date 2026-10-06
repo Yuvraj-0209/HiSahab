@@ -13,8 +13,8 @@
  * shift opened for the wrong day is noticed, because it blocks the day the worklist is asking for.
  */
 
-import { type ReactNode, useRef, useState } from "react";
-import { BellIcon, CaretRightIcon, ChartBarIcon, FlagIcon } from "@phosphor-icons/react";
+import { useRef, useState } from "react";
+import { BellIcon, ChartBarIcon, FlagIcon } from "@phosphor-icons/react";
 import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
 import { ScreenTitle } from "../app/chrome";
@@ -26,7 +26,7 @@ import { satisfies } from "../lib/roles";
 import { businessDate } from "../lib/time";
 import { Amount } from "../ui/Amount";
 import { useArrival } from "../ui/motion";
-import { Button, Card, Empty, ErrorCard, SectionLabel, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, LinkTile, ListCard, RowLink, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { DayRow, useDays, useReconcile, WorklistCard } from "./days";
 import { useForgetShift, VoidShiftForm } from "./today";
@@ -131,11 +131,11 @@ export function CashScreen() {
         <section>
           <SectionLabel sticky>Trading days</SectionLabel>
           {days.length ? (
-            <Card className="py-1 sm:py-1">
+            <ListCard>
               {days.slice(0, RECENT).map((day) => (
                 <DayRow key={day.business_date} day={day} unblocked={unblocked} />
               ))}
-            </Card>
+            </ListCard>
           ) : (
             <Empty>No trading day has been entered yet.</Empty>
           )}
@@ -150,22 +150,16 @@ export function CashScreen() {
           <SectionLabel sticky>Salesman balances</SectionLabel>
           {owed.length ? (
             <>
-              <Card className="py-1 sm:py-1">
+              <ListCard>
                 {owed.map((row) => (
-                  <button
-                    key={row.salesman_id}
-                    type="button"
-                    onClick={() => navigate(`/salesmen/${row.salesman_id}/ledger`)}
-                    className="pressable flex w-full items-center justify-between gap-3 border-b border-hairline py-3 text-left last:border-b-0"
-                  >
-                    <span className="text-body text-ink">{row.full_name}</span>
-                    <span className="flex items-center gap-2 text-short">
+                  <RowLink key={row.salesman_id} onClick={() => navigate(`/salesmen/${row.salesman_id}/ledger`)}>
+                    <span className="grow text-body text-ink">{row.full_name}</span>
+                    <span className="text-short">
                       <Amount value={row.outstanding} />
-                      <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
                     </span>
-                  </button>
+                  </RowLink>
                 ))}
-              </Card>
+              </ListCard>
               {/* §13.15, where somebody will see it. */}
               <p className="mt-2 text-footnote text-ink-muted">
                 A shortfall can only be repaid in cash. V1 has no way to write one off, so a small figure nobody will chase stays here.
@@ -180,9 +174,9 @@ export function CashScreen() {
         <section>
           <SectionLabel sticky>Look back</SectionLabel>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <LookBack icon={<FlagIcon size={20} aria-hidden />} label="Flagged expenses" onClick={() => navigate("/expenses/flagged")} />
-            <LookBack icon={<ChartBarIcon size={20} aria-hidden />} label="The latest trading week" onClick={() => navigate("/reports")} />
-            <LookBack icon={<BellIcon size={20} aria-hidden />} label="Alerts" onClick={() => navigate("/reports/alerts")} />
+            <LinkTile Icon={FlagIcon} label="Flagged expenses" onClick={() => navigate("/expenses/flagged")} />
+            <LinkTile Icon={ChartBarIcon} label="The latest trading week" onClick={() => navigate("/reports")} />
+            <LinkTile Icon={BellIcon} label="Alerts" onClick={() => navigate("/reports/alerts")} />
           </div>
         </section>
       </div>
@@ -205,16 +199,3 @@ export function CashScreen() {
   );
 }
 
-function LookBack({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="pressable liftable flex items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
-    >
-      <span className="text-accent">{icon}</span>
-      <span className="grow text-body text-ink">{label}</span>
-      <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
-    </button>
-  );
-}

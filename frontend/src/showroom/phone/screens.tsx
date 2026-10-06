@@ -17,7 +17,7 @@
 import { GasPumpIcon, type IconProps, NotebookIcon, VaultIcon } from "@phosphor-icons/react";
 import type { ComponentType, ReactNode } from "react";
 import { LifecycleStrip } from "../../ui/lifecycle";
-import { Card, ListRow, Pill } from "../../ui/primitives";
+import { Card, ListCard, ListRow, Pill } from "../../ui/primitives";
 import { BANK, DAY, GAP, METER, SLIPS } from "../samples";
 
 /* --- small parts ------------------------------------------------------------------------- */
@@ -263,7 +263,7 @@ export function GapFocus({ closed }: { closed: boolean }) {
 
 export function BankFocus() {
   return (
-    <Card className="py-1 sm:py-1">
+    <ListCard>
       {BANK.map((line) => (
         <div data-beat key={line.narration} className="flex flex-col gap-2 border-b border-hairline py-3 last:border-b-0">
           <div className="flex items-baseline justify-between gap-3">
@@ -276,6 +276,6 @@ export function BankFocus() {
           </div>
         </div>
       ))}
-    </Card>
+    </ListCard>
   );
 }

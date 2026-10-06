@@ -28,7 +28,7 @@ import type { Schemas } from "../api/types";
 import { format } from "../lib/money";
 import { dateTime, nowLocalValue, toOffsetISO } from "../lib/time";
 import { SelectField, TextField, useForm } from "../ui/form";
-import { Card, Empty, ErrorCard, ListRow, Pill, SectionLabel, Skeleton } from "../ui/primitives";
+import { Card, Empty, ErrorCard, ListRow, Notice, Pill, SectionLabel, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 import { ScreenTitle } from "../app/chrome";
 import { AddAction, Fields, SaveButton, useSave } from "./admin";
@@ -235,9 +235,9 @@ function EntryForm({ kind, fuelTypes, onDone }: { kind: Kind; fuelTypes: FuelTyp
         hint="Rates revise at 06:00 IST. This is the moment it became live, not the moment you are typing it."
       />
       {backdated ? (
-        <p role="status" className="rounded-[var(--radius-control)] bg-warning-tint px-3.5 py-2.5 text-footnote text-warning">
+        <Notice role="status">
           This is in the past. A backdated entry can change what an already-closed shift was worth. It is allowed, and it is recorded against your name in the audit trail.
-        </p>
+        </Notice>
       ) : null}
       <SaveButton busy={busy} creating label={`Record ${kind.noun}`} onClick={submit} />
     </Fields>

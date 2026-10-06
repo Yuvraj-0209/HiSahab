@@ -12,7 +12,6 @@
  */
 
 import { useState } from "react";
-import { CaretRightIcon } from "@phosphor-icons/react";
 import { api } from "../api/client";
 import { useApiQuery } from "../api/queries";
 import type { Schemas } from "../api/types";
@@ -22,7 +21,7 @@ import { businessDate, todayAtOutlet } from "../lib/time";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { TextField, useForm } from "../ui/form";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, ListRow, Pill, RowLink, Skeleton } from "../ui/primitives";
 import { Sheet } from "../ui/Sheet";
 
 type Flagged = Schemas["FlaggedExpenseResponse"];
@@ -88,19 +87,13 @@ export function FlaggedExpensesScreen() {
                 ) : null}
                 <div className="mt-2">
                   {expenses.map((expense) => (
-                    <button
-                      key={expense.id}
-                      type="button"
-                      onClick={() => navigate(`/shifts/${expense.shift_id}/expenses`)}
-                      className="pressable flex w-full items-center gap-3 border-b border-hairline py-3 text-left last:border-b-0"
-                    >
+                    <RowLink key={expense.id} onClick={() => navigate(`/shifts/${expense.shift_id}/expenses`)}>
                       <span className="min-w-0 grow">
                         <span className="block truncate text-body text-ink">{expense.description}</span>
                         <span className="block text-footnote text-accent">Review on its shift</span>
                       </span>
                       <Amount value={expense.amount} />
-                      <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
-                    </button>
+                    </RowLink>
                   ))}
                 </div>
               </Card>

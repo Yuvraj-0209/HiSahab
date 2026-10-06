@@ -35,7 +35,7 @@ import { satisfies } from "../lib/roles";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { TextField, useForm } from "../ui/form";
-import { Button, Card, ErrorCard, ListRow, SectionLabel, Skeleton, TruncationNotice } from "../ui/primitives";
+import { Button, Card, ErrorCard, HeroFigure, ListCard, ListRow, SectionLabel, Skeleton, TruncationNotice } from "../ui/primitives";
 import { isLive, ReversalBadge, ReversalForm } from "../ui/reversal";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
@@ -90,10 +90,9 @@ export function CollectionsScreen() {
       <ScreenTitle title="Collections" subtitle={`Shift ${shift.data.sequence} · ${shift.data.status}`} />
       <div className="flex flex-col gap-5">
         <Card>
-          <p className="text-footnote font-medium text-ink-muted">Cash declared</p>
-          <p className="mt-1 text-figure text-ink">
+          <HeroFigure label="Cash declared">
             <Amount value={declared} absent="not declared" />
-          </p>
+          </HeroFigure>
           <p className="mt-3 max-w-[60ch] text-callout text-ink-muted">
             {declared === null
               ? "Nobody has declared cash for this shift yet. That is different from declaring zero: the shift cannot close until somebody answers."
@@ -141,7 +140,7 @@ export function CollectionsScreen() {
         {history.length ? (
           <section>
             <SectionLabel>Corrections</SectionLabel>
-            <Card className="py-1 sm:py-1">
+            <ListCard>
               {history.map((item) => (
                 <ListRow
                   key={item.id}
@@ -155,7 +154,7 @@ export function CollectionsScreen() {
                   }
                 />
               ))}
-            </Card>
+            </ListCard>
           </section>
         ) : null}
 

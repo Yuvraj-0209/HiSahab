@@ -10,7 +10,7 @@ import type { Schemas } from "../api/types";
 import { ScreenActions, ScreenTitle } from "../app/chrome";
 import { useFlipList } from "../motion/flip";
 import { Amount } from "../ui/Amount";
-import { Button, Card, Empty, TruncationNotice } from "../ui/primitives";
+import { Button, Card, Empty, HeroFigure, TruncationNotice } from "../ui/primitives";
 
 export function ShiftRowsFrame({
   title,
@@ -53,10 +53,9 @@ export function ShiftRowsFrame({
       ) : null}
       <div className="flex flex-col gap-5">
         <Card>
-          <p className="text-footnote font-medium text-ink-muted">{totalLabel}</p>
-          <p className="mt-1 text-figure text-ink">
+          <HeroFigure label={totalLabel}>
             <Amount value={total} />
-          </p>
+          </HeroFigure>
           {extra}
           <p className="mt-3 max-w-[60ch] text-callout text-ink-muted">{explanation}</p>
         </Card>

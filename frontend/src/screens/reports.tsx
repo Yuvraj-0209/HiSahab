@@ -25,7 +25,7 @@ import { businessDate } from "../lib/time";
 import { Amount } from "../ui/Amount";
 import { SalesBars, VarianceStrip } from "../ui/chart";
 import { useArrival } from "../ui/motion";
-import { Button, Card, Empty, ErrorCard, Pill, SectionLabel, Skeleton } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, ListCard, Pill, RowLink, SectionLabel, Skeleton } from "../ui/primitives";
 import { SOURCE_PILL } from "./days";
 
 function useWindow() {
@@ -81,17 +81,15 @@ export function ReportsScreen() {
         <section>
           <SectionLabel>Day by day</SectionLabel>
           {r.days.length ? (
-            <Card className="py-1 sm:py-1">
+            <ListCard>
               <div ref={list}>
                 {[...r.days].reverse().map((day) => {
                   const variance = varianceLabel(day.variance);
                   return (
-                    <button
+                    <RowLink
                       key={day.business_date}
-                      type="button"
                       data-arrive
                       onClick={(event) => navigate(`/days/${day.business_date}`, { shared: sharedSource(event) })}
-                      className="pressable flex w-full items-center gap-3 border-b border-hairline py-3 text-left last:border-b-0"
                     >
                       <div className="min-w-0 grow">
                         <p data-shared-source className="text-body text-ink">
@@ -110,12 +108,11 @@ export function ReportsScreen() {
                         </span>
                         <span className={`tabular text-footnote ${variance.className}`}>{variance.text}</span>
                       </div>
-                      <CaretRightIcon size={16} className="shrink-0 text-ink-faint" aria-hidden />
-                    </button>
+                    </RowLink>
                   );
                 })}
               </div>
-            </Card>
+            </ListCard>
           ) : (
             <Empty>No days in this window.</Empty>
           )}

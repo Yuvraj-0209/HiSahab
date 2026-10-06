@@ -34,7 +34,7 @@
  */
 
 import { type ChangeEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { ArrowLeftIcon, ArrowRightIcon, FileCsvIcon } from "@phosphor-icons/react";
+import { ArrowLeftIcon, FileCsvIcon, ListChecksIcon, ScalesIcon } from "@phosphor-icons/react";
 import { ApiError, api, explain, newIdempotencyKey, postMultipart } from "../api/client";
 import { useApiQuery, useRefreshApi } from "../api/queries";
 import { useRepeatableSubmission } from "../api/submission";
@@ -47,7 +47,7 @@ import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { CheckboxField, SelectField, useForm } from "../ui/form";
 import { useArrival } from "../ui/motion";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, SectionLabel, Skeleton, TruncationNotice } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, LinkTile, ListRow, Pill, SectionLabel, Skeleton, TruncationNotice } from "../ui/primitives";
 import { notify } from "../ui/toast";
 
 type Account = Schemas["BankAccountResponse"];
@@ -126,7 +126,7 @@ export function BankHubScreen() {
       <>
         <ScreenTitle title="Bank" />
         <Card>
-          <h2 className="text-lead font-semibold text-ink">No bank account yet</h2>
+          <h2 className="text-subhead text-ink">No bank account yet</h2>
           <p className="mt-1 text-body text-ink-muted">
             An admin adds the outlet's bank account on the Admin tab. A statement is imported against one account, so there has to be one first.
           </p>
@@ -143,14 +143,16 @@ export function BankHubScreen() {
         <ImportCard accounts={active} />
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <WayIn
-            title="Review what it found"
-            detail="Udhaar paid into the bank, and whether each debit was a cost"
+          <LinkTile
+            Icon={ListChecksIcon}
+            label="Review what it found"
+            hint="Udhaar paid into the bank, and whether each debit was a cost"
             onClick={() => navigate("/credit/bank/review")}
           />
-          <WayIn
-            title="Reconciliation"
-            detail="Paytm and cash deposits, against the days they came from"
+          <LinkTile
+            Icon={ScalesIcon}
+            label="Reconciliation"
+            hint="Paytm and cash deposits, against the days they came from"
             onClick={() => navigate("/credit/bank/reconciliation")}
           />
         </div>
@@ -187,21 +189,6 @@ export function BankHubScreen() {
   );
 }
 
-function WayIn({ title, detail, onClick }: { title: string; detail: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="pressable liftable flex items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3.5 text-left shadow-1"
-    >
-      <span className="min-w-0 grow">
-        <span className="block text-body font-semibold text-ink">{title}</span>
-        <span className="block text-footnote text-ink-muted">{detail}</span>
-      </span>
-      <ArrowRightIcon size={18} className="shrink-0 text-ink-faint" aria-hidden />
-    </button>
-  );
-}
 
 function ImportCard({ accounts }: { accounts: Account[] }) {
   const refresh = useRefreshApi();
@@ -250,7 +237,7 @@ function ImportCard({ accounts }: { accounts: Account[] }) {
    * the static mount, and the CSP's form-action 'none' blocks it anyway. Buttons only. */
   return (
     <Card>
-      <h2 className="text-lead font-semibold text-ink">Import a statement</h2>
+      <h2 className="text-subhead text-ink">Import a statement</h2>
       <div className="mt-3 flex flex-col gap-4">
         {accounts.length > 1 ? (
           <SelectField

@@ -9,7 +9,7 @@
  * his ledger is complete when it has not been started -- so the screen says which, in words.
  */
 
-import { type ReactNode, useMemo, useRef } from "react";
+import { useMemo, useRef } from "react";
 import { useParams } from "react-router";
 import { BankIcon, CaretRightIcon, HandCoinsIcon, ReceiptIcon } from "@phosphor-icons/react";
 import { useApiQuery } from "../api/queries";
@@ -22,7 +22,7 @@ import { satisfies } from "../lib/roles";
 import { businessDate } from "../lib/time";
 import { Amount } from "../ui/Amount";
 import { useArrival } from "../ui/motion";
-import { Button, Card, Empty, ErrorCard, ListRow, Pill, SectionLabel, Skeleton, TruncationNotice } from "../ui/primitives";
+import { Button, Card, Empty, ErrorCard, HeroFigure, LinkTile, ListCard, ListRow, Pill, SectionLabel, Skeleton, TruncationNotice } from "../ui/primitives";
 
 type Balance = Schemas["OpeningBalanceListItem"];
 
@@ -75,10 +75,10 @@ export function CreditHubScreen() {
       <ScreenTitle large title="Credit" subtitle={`${rows.length} customer${rows.length === 1 ? "" : "s"}`} />
       <div className="flex flex-col gap-5">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <HubLink icon={<HandCoinsIcon size={20} aria-hidden />} label="Record a bank payment" onClick={() => navigate("/credit/repayments")} />
+          <LinkTile Icon={HandCoinsIcon} label="Record a bank payment" onClick={() => navigate("/credit/repayments")} />
           {/* Phase 21: the fortnightly bill, checked before it goes out on the 1st and the 16th. */}
-          <HubLink icon={<ReceiptIcon size={20} aria-hidden />} label="Billing statement" onClick={() => navigate("/credit/statement")} />
-          <HubLink icon={<BankIcon size={20} aria-hidden />} label="Bank statement" onClick={() => navigate("/credit/bank")} />
+          <LinkTile Icon={ReceiptIcon} label="Billing statement" onClick={() => navigate("/credit/statement")} />
+          <LinkTile Icon={BankIcon} label="Bank statement" onClick={() => navigate("/credit/bank")} />
         </div>
 
         {unanchored ? (
@@ -135,19 +135,6 @@ export function CreditHubScreen() {
   );
 }
 
-function HubLink({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="pressable liftable flex items-center gap-3 rounded-[var(--radius-card)] border border-hairline bg-surface px-4 py-3 text-left shadow-1"
-    >
-      <span className="text-accent">{icon}</span>
-      <span className="grow text-body text-ink">{label}</span>
-      <CaretRightIcon size={16} className="text-ink-faint" aria-hidden />
-    </button>
-  );
-}
 
 /* --- one customer's account, newest first, with the balance beside every line ------------ */
 
@@ -189,10 +176,9 @@ export function CustomerLedgerScreen() {
       </ScreenActions>
       <div className="flex flex-col gap-5">
         <Card>
-          <p className="text-footnote font-medium text-ink-muted">Outstanding</p>
-          <p className="mt-1 text-figure text-ink">
+          <HeroFigure label="Outstanding">
             <Amount value={l.outstanding} />
-          </p>
+          </HeroFigure>
           <div className="mt-3">
             {/* Never `?? 0`: "not entered" and "0.00" are different facts (§6.8, §14). */}
             <ListRow label="Opening balance" value={<Amount value={l.opening_balance} absent="not entered" />} />
@@ -207,7 +193,7 @@ export function CustomerLedgerScreen() {
         </Card>
 
         {l.items.length ? (
-          <Card className="py-1 sm:py-1">
+          <ListCard>
             <div ref={list}>
               {l.items.map((entry) => (
                 <div key={entry.id} data-arrive className="flex items-center gap-3 border-b border-hairline py-3 last:border-b-0">
@@ -229,7 +215,7 @@ export function CustomerLedgerScreen() {
                 </div>
               ))}
             </div>
-          </Card>
+          </ListCard>
         ) : (
           <Empty>Nothing on this account yet.</Empty>
         )}
