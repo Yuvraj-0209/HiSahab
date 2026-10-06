@@ -104,10 +104,12 @@ export function TodayScreen() {
 export function ShiftByIdScreen() {
   const { shiftId = "" } = useParams();
   const shift = useApiQuery<Shift>(`/shifts/${shiftId}`);
+  // Titled as the shift it is, never "Today" (Phase 28 B6): this route opens last week's closed
+  // shift as readily as this morning's, and the title is what a reader checks first.
   if (shift.isPending) {
     return (
       <>
-        <ScreenTitle large title="Today" subtitle="Loading…" />
+        <ScreenTitle large title="Shift" />
         <Skeleton shape="cards" rows={6} />
       </>
     );
@@ -115,23 +117,23 @@ export function ShiftByIdScreen() {
   if (shift.isError || !shift.data) {
     return (
       <>
-        <ScreenTitle large title="Today" />
+        <ScreenTitle large title="Shift" />
         <ErrorCard error={shift.error} onRetry={() => void shift.refetch()} />
       </>
     );
   }
-  return <ShiftDetail shift={shift.data} />;
+  return <ShiftDetail shift={shift.data} title={`Shift ${shift.data.sequence}`} />;
 }
 
 /* --- one shift ------------------------------------------------------------------------- */
 
-function ShiftDetail({ shift }: { shift: Shift }) {
+function ShiftDetail({ shift, title = "Today" }: { shift: Shift; title?: string }) {
   const { me } = useSession();
   const isManager = satisfies(me.role, "manager");
 
   return (
     <>
-      <ScreenTitle large title="Today" subtitle={shiftSubtitle(shift)} />
+      <ScreenTitle large title={title} subtitle={shiftSubtitle(shift)} />
       <div className="flex flex-col gap-4">
         <ShiftHeader shift={shift} />
         {isManager ? <ShiftFigures shift={shift} /> : null}
@@ -385,6 +387,19 @@ const DAY_SOURCE_LABEL: Record<string, string> = {
   unavailable: "Not available.",
 };
 
+/**
+ * What a card's figure says when there is no figure (Phase 28 B5). Three different facts, and
+ * the card must not blur them: still loading ("…"), the read failed ("not loaded"), or the
+ * server answered with nothing -- which only the caller can word ("not declared" means nobody
+ * declared cash, a real answer). Before this, a failed read showed "…" forever, and a failed
+ * collections read claimed nobody had declared cash at all (§6.8, §14: never zero as an omission).
+ */
+function absentFor(query: { isPending: boolean; isError: boolean }, answered = "not loaded"): string {
+  if (query.isPending) return "…";
+  if (query.isError) return "not loaded";
+  return answered;
+}
+
 function ShiftFigures({ shift }: { shift: Shift }) {
   // Each read is independent: one section failing to load must not blank the page.
   const id = shift.id;
@@ -434,7 +449,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
         Icon={WalletIcon}
         title="Collections"
         caption="Declared cash and what came in by machine"
-        figure={<Amount value={collections.data?.declared_cash ?? null} absent={collections.isPending ? "…" : "not declared"} />}
+        figure={<Amount value={collections.data?.declared_cash ?? null} absent={absentFor(collections, "not declared")} />}
         lines={collectionLines(collections.data ?? null).slice(1)}
         loading={collections.isPending}
         onDetails={() => setOpen("collections")}
@@ -444,7 +459,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
         title="Expenses"
         caption={countLabel(expenses.data?.items.length, "item")}
         badge={unreviewed ? <Pill kind="review">{unreviewed} to review</Pill> : null}
-        figure={<Amount value={expenses.data?.total ?? null} absent="…" />}
+        figure={<Amount value={expenses.data?.total ?? null} absent={absentFor(expenses)} />}
         lines={expenseLines(expenses.data ?? null)}
         loading={expenses.isPending}
         onDetails={() => setOpen("expenses")}
@@ -453,7 +468,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
         Icon={NotebookIcon}
         title="Credit"
         caption={`${countLabel(creditSales.data?.items.length, "sale")}, ${countLabel(repayments.data?.items.length, "repayment")}`}
-        figure={<Amount value={creditSales.data?.total ?? null} absent="…" />}
+        figure={<Amount value={creditSales.data?.total ?? null} absent={absentFor(creditSales)} />}
         figureLabel="issued"
         lines={[
           { label: "Repaid", value: <Amount value={repayments.data?.total ?? null} absent="-" /> },
@@ -466,7 +481,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
         Icon={BankIcon}
         title="Bank deposits"
         caption={countLabel(deposits.data?.items.length, "deposit")}
-        figure={<Amount value={deposits.data?.total ?? null} absent="…" />}
+        figure={<Amount value={deposits.data?.total ?? null} absent={absentFor(deposits)} />}
         lines={[]}
         loading={deposits.isPending}
         onDetails={() => setOpen("deposits")}
@@ -482,7 +497,7 @@ function ShiftFigures({ shift }: { shift: Shift }) {
             </Pill>
           ) : null
         }
-        figure={<Amount value={dayCash?.expected_closing ?? null} absent={day.isPending ? "…" : "-"} />}
+        figure={<Amount value={dayCash?.expected_closing ?? null} absent={absentFor(day, "-")} />}
         figureLabel="expected closing"
         lines={dayCashLines(dayCash).filter((line) => !("note" in line)).slice(2)}
         loading={day.isPending}

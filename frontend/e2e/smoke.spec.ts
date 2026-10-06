@@ -302,6 +302,39 @@ test("today: an open shift, as a manager", async ({ page }, info) => {
   expect(problems).toEqual([]);
 });
 
+test("today: a card whose figures failed to load says so, never '…' and never 'not declared' (Phase 28 B5)", async ({ page }) => {
+  const failed = new Failure(500, "INTERNAL_ERROR");
+  await signedIn(page, {
+    role: "admin",
+    responses: {
+      ...todayResponses("open"),
+      [`GET /shifts/${SHIFT_ID}/collections`]: failed,
+      [`GET /shifts/${SHIFT_ID}/expenses`]: failed,
+      [`GET /shifts/${SHIFT_ID}/credit-sales`]: failed,
+      [`GET /shifts/${SHIFT_ID}/bank-deposits`]: failed,
+    },
+  });
+  await page.goto("/#/today");
+  await expect(page.getByText("₹3,02,827.45").first()).toBeVisible();
+  // A failed read is not an answer. "not declared" would claim nobody counted the cash; "…"
+  // would claim it is still coming, forever (§6.8: zero as an answer, never as an omission).
+  for (const title of ["Collections", "Expenses", "Credit", "Bank deposits"]) {
+    const card = page.getByRole("heading", { name: title, exact: true }).locator("xpath=ancestor::section[1]");
+    await expect(card.getByText("not loaded"), title).toBeVisible({ timeout: 10_000 });
+    await expect(card.getByText("…"), title).toHaveCount(0);
+  }
+  await expect(page.getByText("not declared")).toHaveCount(0);
+});
+
+test("a shift opened by its id is titled as that shift, not as Today (Phase 28 B6)", async ({ page }) => {
+  await signedIn(page, { role: "admin", responses: todayResponses("closed") });
+  await page.goto(`/#/shifts/${SHIFT_ID}`);
+  await expect(page.getByRole("button", { name: "Lock shift" })).toBeVisible();
+  // A closed shift from last week is not "Today", and the tab title is what a reader sees first.
+  await expect(page).toHaveTitle(/^Shift 1 · HiSahab$/);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(/^Shift 1/);
+});
+
 test("today: no open shift", async ({ page }) => {
   const problems = await watch(page);
   await signedIn(page, {
