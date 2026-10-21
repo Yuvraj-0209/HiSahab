@@ -375,6 +375,12 @@ export const flaggedPage: Schemas["FlaggedExpensePage"] = {
   ],
 };
 
+/** Phase 30: the date strip's counts. The queue opens on the oldest day waiting. */
+export const flaggedByDate: Schemas["FlaggedByDateResponse"] = {
+  items: [{ business_date: RECONCILED_DATE, count: 2, total_amount: "1250.00" }],
+  oldest_business_date: RECONCILED_DATE,
+};
+
 /* --- the Credit tab ----------------------------------------------------------------------- */
 
 export const CUSTOMER_2 = "c0ffee00-0000-4000-8000-000000000202";

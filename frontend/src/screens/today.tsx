@@ -54,7 +54,7 @@ import { useGo } from "../app/navigation";
 import { useSession } from "../app/session";
 import { format, quantity, reading, varianceLabel } from "../lib/money";
 import { satisfies } from "../lib/roles";
-import { businessDate, businessDateWeekday, timeOnly, todayAtOutlet } from "../lib/time";
+import { businessDate, businessDateWeekday, nextTradingDate, timeOnly, todayAtOutlet } from "../lib/time";
 import { Amount } from "../ui/Amount";
 import { reportFailure } from "../ui/feedback";
 import { SelectField, TextField, useForm } from "../ui/form";
@@ -166,7 +166,15 @@ function ShiftHeader({ shift }: { shift: Shift }) {
       await refresh();
       navigate(`/shifts/${shift.id}`, { replace: true });
     } catch (error) {
-      reportFailure(error);
+      // Phase 30: a lock refused for unreviewed flagged expenses is an instruction, not a dead
+      // end, so the toast carries the way to the queue, already on this shift's day. `shift`
+      // lets that screen offer the way back once the day is clear.
+      reportFailure(error, undefined, undefined, {
+        UNREVIEWED_EXPENSES_EXIST: {
+          label: "Review expenses",
+          onClick: () => navigate(`/expenses/flagged?date=${shift.business_date}&shift=${shift.id}`),
+        },
+      });
     } finally {
       setBusy(null);
     }
@@ -830,13 +838,27 @@ function NoShift() {
       </div>
 
       <Sheet open={opening} onClose={() => setOpening(false)} title="Open a shift">
-        <OpenShiftForm onDone={() => setOpening(false)} />
+        <OpenShiftSheetBody onDone={() => setOpening(false)} />
       </Sheet>
     </>
   );
 }
 
-function OpenShiftForm({ onDone }: { onDone: () => void }) {
+/** Looks up the chain's tip before the form mounts, so the date input starts on the right day.
+ * Rendering the form first and correcting it afterwards would flash today, which is exactly
+ * the date a hurried tap opens by mistake (§4.7). If the lookup fails the sheet still works:
+ * it falls back to today, the server enforces ordering either way. */
+function OpenShiftSheetBody({ onDone }: { onDone: () => void }) {
+  const latest = useApiQuery<Schemas["LatestShiftDate"]>("/shifts/latest-date");
+  if (latest.isLoading) {
+    return <p className="text-callout text-ink-muted">Checking the last day entered…</p>;
+  }
+  const today = todayAtOutlet();
+  const defaultDate = latest.isError ? today : nextTradingDate(latest.data?.business_date, today);
+  return <OpenShiftForm defaultDate={defaultDate} onDone={onDone} />;
+}
+
+function OpenShiftForm({ defaultDate, onDone }: { defaultDate: string; onDone: () => void }) {
   const { me } = useSession();
   const refresh = useRefreshApi();
   const isManager = satisfies(me.role, "manager");
@@ -844,7 +866,7 @@ function OpenShiftForm({ onDone }: { onDone: () => void }) {
   // refuses an attendant and POST /shifts refuses an attendant a foreign attendant_id anyway.
   const roster = useApiQuery<Schemas["UserListItem"][]>("/users", undefined, { enabled: isManager });
   const today = todayAtOutlet();
-  const form = useForm({ business_date: today, attendant_id: me.id });
+  const form = useForm({ business_date: defaultDate, attendant_id: me.id });
   const [busy, setBusy] = useState(false);
 
   async function submit() {
@@ -879,7 +901,7 @@ function OpenShiftForm({ onDone }: { onDone: () => void }) {
         type="date"
         max={today}
         required
-        hint="The trading day this shift belongs to, which is not necessarily the day it is typed in."
+        hint="The trading day this shift belongs to. Starts on the day after the last shift entered."
       />
       {isManager && people.length ? (
         <SelectField

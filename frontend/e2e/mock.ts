@@ -90,6 +90,7 @@ export function cashResponses(): Responses {
     "GET /salesman-shortfalls/outstanding": fixture.shortfallOutstanding,
     [`GET /salesman-shortfalls/${fixture.SALESMAN_ID}/ledger`]: fixture.shortfallLedger,
     "GET /expenses/flagged": fixture.flaggedPage,
+    "GET /expenses/flagged/by-date": fixture.flaggedByDate,
     [`GET /reports/daily/${fixture.PREVIOUS_DATE}`]: { ...fixture.dailyReport, business_date: fixture.PREVIOUS_DATE, shifts: [] },
   };
 }

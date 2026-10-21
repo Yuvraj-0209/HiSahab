@@ -662,3 +662,40 @@ async def test_the_list_can_be_filtered_to_one_business_date(
 
     assert response.status_code == 200
     assert [item["business_date"] for item in response.json()["items"]] == ["2026-03-04"]
+
+
+# --- the chain tip's date (open-shift sheet default) --------------------------
+
+
+async def test_latest_date_is_null_when_the_outlet_has_never_traded(
+    client: AsyncClient, make_user: Callable[..., UUID], auth_headers
+) -> None:
+    """Null, never today: the client decides what "nothing yet" means, not the server."""
+    attendant = make_user("attendant")
+
+    response = await client.get("/api/v1/shifts/latest-date", headers=auth_headers(attendant))
+
+    assert response.status_code == 200
+    assert response.json() == {"business_date": None}
+
+
+async def test_latest_date_is_the_chain_tip_not_the_callers_own_latest(
+    client: AsyncClient,
+    make_user: Callable[..., UUID],
+    auth_headers,
+    make_shift: Callable[..., UUID],
+) -> None:
+    """GET /shifts is attendant-scoped, so it cannot answer this for an attendant.
+
+    The tip is outlet-wide: opening a shift is ordered against everyone's, so an attendant's
+    default must be built from the same shift the server will compare against.
+    """
+    mine = make_user("attendant")
+    theirs = make_user("attendant")
+    make_shift(mine, business_date=date(2026, 3, 8), sequence=1, status="closed")
+    make_shift(theirs, business_date=date(2026, 3, 10), sequence=1, status="closed")
+
+    response = await client.get("/api/v1/shifts/latest-date", headers=auth_headers(mine))
+
+    assert response.status_code == 200
+    assert response.json() == {"business_date": "2026-03-10"}

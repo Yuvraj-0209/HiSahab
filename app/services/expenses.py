@@ -14,7 +14,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import and_, exists, func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
@@ -403,6 +403,18 @@ def apply_review_flags(
             row.requires_review = True
 
 
+def awaiting_review_clause() -> object:
+    """SQL predicate for "flagged, not yet reviewed, and not since cancelled".
+
+    One definition for everything that asks what is waiting for a manager: the lock
+    precondition below, the review queue and its per-day counts (Phase 30). Phase 30
+    exists because those were two definitions -- the queue listed a flagged row that a
+    reversal had cancelled, so an admin could be sent to review money the lock does not
+    count. A rule written once cannot drift.
+    """
+    return and_(Expense.requires_review.is_(True), ~_is_reversed())
+
+
 def unreviewed_flagged_expenses(db: Session, *, shift: Shift) -> list[Expense]:
     """§6.7's lock precondition predicate: this shift's own rows still needing a look.
 
@@ -421,16 +433,62 @@ def unreviewed_flagged_expenses(db: Session, *, shift: Shift) -> list[Expense]:
     return list(
         db.execute(
             select(Expense)
-            .where(
-                Expense.shift_id == shift.id,
-                Expense.requires_review.is_(True),
-                ~_is_reversed(),
-            )
+            .where(Expense.shift_id == shift.id, awaiting_review_clause())
             .order_by(Expense.created_at, Expense.id)
         )
         .scalars()
         .all()
     )
+
+
+@dataclass(frozen=True)
+class FlaggedDay:
+    business_date: date
+    count: int
+    total_amount: Decimal
+
+
+def flagged_by_date(
+    db: Session, *, outlet_id: UUID, date_from: date, date_to: date
+) -> list[FlaggedDay]:
+    """Rows awaiting review, counted and summed per business date, oldest first.
+
+    Phase 30's date strip. The total is summed here, in `Decimal`, because a sum of money is
+    not something the client may compute (§3 rule 1, §14). Dates with nothing waiting are
+    simply absent -- the caller reads absence as a count of zero, which is a true count, not
+    an omission.
+    """
+    rows = db.execute(
+        select(
+            Shift.business_date,
+            func.count(Expense.id),
+            func.coalesce(func.sum(Expense.amount), Decimal("0.00")),
+        )
+        .join(Shift, Shift.id == Expense.shift_id)
+        .where(
+            Shift.outlet_id == outlet_id,
+            Shift.business_date >= date_from,
+            Shift.business_date <= date_to,
+            awaiting_review_clause(),
+        )
+        .group_by(Shift.business_date)
+        .order_by(Shift.business_date)
+    ).all()
+    return [FlaggedDay(d, int(n), Decimal(total)) for d, n, total in rows]
+
+
+def oldest_flagged_date(db: Session, *, outlet_id: UUID) -> date | None:
+    """The earliest business date with a row awaiting review, across the whole outlet.
+
+    Not windowed: the screen opens on this date, and a backlog older than any window the
+    strip happens to show is exactly the thing that must not be missed.
+    """
+    return db.execute(
+        select(func.min(Shift.business_date))
+        .select_from(Expense)
+        .join(Shift, Shift.id == Expense.shift_id)
+        .where(Shift.outlet_id == outlet_id, awaiting_review_clause())
+    ).scalar_one()
 
 
 def reverse(
