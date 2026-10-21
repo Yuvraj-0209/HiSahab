@@ -1968,6 +1968,7 @@ the §5.0 decision, and retrofitting it into every endpoint later would be worse
 | Read the variance alerts (§13.23) | ❌ | ✅ | ✅ |
 | Read the range summary dashboard (§13.34) | ❌ | ✅ | ✅ |
 | Read the summary's expense drill-down (§13.44) | ❌ | ✅ | ✅ |
+| Read the flagged-expense queue, by day and as per-day counts (§6.7, §11 Phase 30) | ❌ | ✅ | ✅ |
 | Upload a bank statement; classify lines; confirm repayments (§5.3a) | ❌ | ✅ | ✅ |
 | Manage bank accounts | ❌ | ❌ | ✅ |
 | List expense categories (to fill a dropdown) | ✅ | ✅ | ✅ |
@@ -2811,6 +2812,42 @@ ahead — no empty modules for later phases.
 
     See `docs/phase-28-plan.md`.
 
+29. **The open-shift sheet starts on the day after the last one entered** — no migration, no
+    table, no business rule; one small read endpoint. The sheet used to default to today, and
+    §4.7 says the register is typed up after the fact, so today is nearly always the wrong day.
+    A hurried tap on it opened a shift that blocked the real day and had to be voided (§6.8).
+
+    `GET /shifts/latest-date` returns the chain tip's `business_date`, outlet-wide (a date, or
+    `null`; attendant floor, because `GET /shifts` is attendant-scoped and cannot answer it).
+    The client offers `min(tip + 1 day, today)`, and today when nothing has ever been opened. It
+    is only a default: the date stays editable, and `SHIFT_OUT_OF_SEQUENCE` and
+    `BUSINESS_DATE_IN_FUTURE` still decide what is accepted. Same anchor and clamp as §13.30.
+30. **Flagged expenses, one day at a time** — no migration, no table, no business rule; one
+    read endpoint and one filter. An admin locking a shift was refused with
+    `UNREVIEWED_EXPENSES_EXIST` and left to find the work by hand: Cash tab, an outlet-wide list
+    of every flagged row on every date, a tap through to the shift. The refusal named the way out
+    and offered no way to it.
+
+    **(a) The refusal carries the way.** The lock's toast gains a "Review expenses" button that
+    opens the queue on the shift's own `business_date`. It navigates and nothing more; the server
+    still decides whether the lock may proceed. `reportFailure` takes a map from error code to a
+    recovery, so the next refusal that names a way out needs a line, not a new mechanism.
+
+    **(b) The queue reads one day.** `GET /expenses/flagged` takes `business_date`, and
+    `GET /expenses/flagged/by-date` returns, per date in a window, how many rows wait and their
+    server-summed total, plus the outlet's oldest date still waiting. A day opens on the date it
+    was sent, or on that oldest date (§6.5's oldest-first), or on today when nothing waits.
+
+    **(c) One definition of "waiting".** The queue used to list a flagged row a reversal had
+    cancelled, which the lock ignores (§6.7), so an admin could be sent to review money that does
+    not block anything. `expenses.awaiting_review_clause()` is now the single predicate the lock,
+    the queue and the counts all use.
+
+    **(d) A date strip and in-place review.** `ui/DateStrip` shows ten days with the chosen one
+    centred and larger, a count on days with work, and the days after today shown but not
+    choosable so the centre never moves. A flagged row is reviewed in a sheet on the same
+    screen, using the one `ReviewForm` the shift's expenses screen uses.
+
 ---
 
 ## 12. Explicitly Out of Scope for V1
@@ -3497,6 +3534,17 @@ future reader must be able to tell the difference.
     past the samples test. Revisit if the drift starts to look like a different product. §13.28,
     §14
 
+47. **A flagged row's count on the date strip is a count, and a day with no entry is a true
+    zero.** Phase 30. The strip's badges come from `GET /expenses/flagged/by-date`, which omits
+    dates with nothing waiting, and the client reads absence as "none". That is not §6.8's
+    zero-as-an-omission case: the endpoint answers for the whole window, so a missing date was
+    asked about and has no rows. A *failed* counts request is shown as an error, never as a strip
+    of empty days.
+
+    The counts are windowed (31 days at most, 15 either side of the chosen day), so a day beyond
+    the strip is reached by choosing it, and the outlet's oldest waiting date comes back
+    separately and unwindowed for exactly that reason. §6.7, §13.23
+
 ---
 
 ## 14. Guardrails for Claude Code
@@ -3914,6 +3962,18 @@ to occur on this specific project.
   component's dependencies are a second animation engine, an icon set and a headless-UI library
   this codebase does not use, each one third-party code with the session token in reach (§13.19,
   Phase 28)
+- **Give a refusal that names the way out no way to it.** Phase 30. A 409 that says "review
+  these first" is an instruction, and a toast that only repeats it sends a person to hunt for the
+  screen. Register a recovery for the code in `reportFailure` — a button that navigates, and
+  nothing more. It must never perform the retried act itself: the server decides (§8)
+- **Keep two definitions of what is waiting for review.** Phase 30. The lock and the queue
+  disagreed about a reversed flagged row, and the disagreement sent an admin to review cancelled
+  money. Both read `expenses.awaiting_review_clause()` now; a new reader of the queue uses it too
+  (§6.7)
+- **Fade a visible, enabled control to show depth.** Phase 30. Opacity below 1 on a control a
+  person can press fails contrast, and the smoke suite waits for every node to reach full
+  opacity. The date strip carries depth by scale and an edge mask, and uses opacity only on
+  chips parked out of view (§14's motion rules)
 - "Improve" the schema mid-implementation without flagging it first
 
 **Do:**

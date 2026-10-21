@@ -191,6 +191,20 @@ class FlaggedExpensePage(BaseModel):
     next_cursor: str | None
 
 
+class FlaggedDayResponse(BaseModel):
+    business_date: str
+    count: int
+    total_amount: Decimal
+
+
+class FlaggedByDateResponse(BaseModel):
+    """Phase 30. `items` only carries dates inside the requested window that have work;
+    `oldest_business_date` is outlet-wide and is null only when nothing at all is waiting."""
+
+    items: list[FlaggedDayResponse]
+    oldest_business_date: str | None
+
+
 class ExpenseSummaryResponse(BaseModel):
     """§11's month-end category-wise expense summary. JSON only -- no screen exists until
     Phase 12.
@@ -805,12 +819,18 @@ def review_expense(
 
 @router.get("/expenses/flagged", response_model=FlaggedExpensePage)
 def list_flagged_expenses(
+    business_date: date | None = Query(default=None),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     cursor: str | None = Query(default=None),
     actor: Actor = Depends(require_role(Role.manager)),
     db: Session = Depends(get_db),
 ) -> FlaggedExpensePage:
-    """Every unreviewed flagged expense at this outlet, oldest first, cursor-paginated.
+    """Every unreviewed flagged expense at this outlet, cursor-paginated.
+
+    **Phase 30:** `business_date` narrows the queue to one trading day, which is how the
+    review screen shows it. A filtered day reads **oldest first** (the order the rows were
+    entered in); the unfiltered backlog stays newest first, as it has been. A row a reversal
+    has cancelled is excluded in both, to match what blocks the shift lock (§6.7).
 
     A backlog across days is genuinely unbounded, unlike a single shift's handful of rows
     (`GET /shifts/{id}/expenses`), so this is the one expenses endpoint that pages rather
@@ -823,20 +843,30 @@ def list_flagged_expenses(
     has had a partial review index since Phase 5 with no endpoint ever running the query
     it was built for; `expenses` does not repeat that.
     """
+    # One day reads in the order it was typed; the whole backlog reads newest first.
+    oldest_first = business_date is not None
     statement = (
         select(Expense)
         .join(Shift, Shift.id == Expense.shift_id)
         # Joined rather than looked up per row: this endpoint pages, so a per-row lookup
         # would be `limit` extra round trips on every scroll.
         .join(ExpenseCategory, ExpenseCategory.id == Expense.category_id)
-        .where(Shift.outlet_id == actor.outlet_id, Expense.requires_review.is_(True))
-        .order_by(Expense.created_at.desc(), Expense.id.desc())
+        .where(
+            Shift.outlet_id == actor.outlet_id,
+            expense_service.awaiting_review_clause(),
+        )
     )
+    if business_date is not None:
+        statement = statement.where(Shift.business_date == business_date)
+    if oldest_first:
+        statement = statement.order_by(Expense.created_at.asc(), Expense.id.asc())
+    else:
+        statement = statement.order_by(Expense.created_at.desc(), Expense.id.desc())
     if cursor is not None:
         last_created_at, last_id = decode_cursor(cursor)
-        statement = statement.where(
-            tuple_(Expense.created_at, Expense.id) < tuple_(last_created_at, last_id)
-        )
+        after = tuple_(Expense.created_at, Expense.id)
+        position = tuple_(last_created_at, last_id)
+        statement = statement.where(after > position if oldest_first else after < position)
 
     rows_with_shift = db.execute(
         statement.add_columns(Shift.business_date, ExpenseCategory.code).limit(limit + 1)
@@ -862,6 +892,53 @@ def list_flagged_expenses(
             if has_more and page
             else None
         ),
+    )
+
+
+# The strip shows ten days and the screen can step a few beyond it; a month is generous and
+# keeps the one grouped query bounded (§13.24's reasoning, for a cheaper read).
+_MAX_FLAGGED_WINDOW_DAYS = 31
+
+
+@router.get("/expenses/flagged/by-date", response_model=FlaggedByDateResponse)
+def flagged_expenses_by_date(
+    date_from: date = Query(alias="from"),
+    date_to: date = Query(alias="to"),
+    actor: Actor = Depends(require_role(Role.manager)),
+    db: Session = Depends(get_db),
+) -> FlaggedByDateResponse:
+    """How many expenses wait for review on each day, for the date strip. Manager floor.
+
+    Reads only: it is the same queue `GET /expenses/flagged` lists, counted. It writes
+    nothing and creates no flag -- a count is not a review.
+    """
+    if date_from > date_to:
+        raise AppError(
+            status_code=422,
+            code="INVALID_DATE_RANGE",
+            detail="`from` must not be after `to`.",
+        )
+    if (date_to - date_from).days > _MAX_FLAGGED_WINDOW_DAYS:
+        raise AppError(
+            status_code=422,
+            code="INVALID_DATE_RANGE",
+            detail=f"The range cannot exceed {_MAX_FLAGGED_WINDOW_DAYS} days.",
+        )
+
+    days = expense_service.flagged_by_date(
+        db, outlet_id=actor.outlet_id, date_from=date_from, date_to=date_to
+    )
+    oldest = expense_service.oldest_flagged_date(db, outlet_id=actor.outlet_id)
+    return FlaggedByDateResponse(
+        items=[
+            FlaggedDayResponse(
+                business_date=day.business_date.isoformat(),
+                count=day.count,
+                total_amount=day.total_amount,
+            )
+            for day in days
+        ],
+        oldest_business_date=oldest.isoformat() if oldest is not None else None,
     )
 
 

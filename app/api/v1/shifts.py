@@ -494,6 +494,34 @@ def read_current_shift(
     return _to_response(shift)
 
 
+class LatestShiftDate(BaseModel):
+    """The `business_date` of the chain's tip, or `None` if nothing has ever been opened."""
+
+    business_date: date | None
+
+
+@router.get("/shifts/latest-date", response_model=LatestShiftDate)
+def read_latest_shift_date(
+    actor: Actor = Depends(require_role(Role.attendant)),
+    db: Session = Depends(get_db),
+) -> LatestShiftDate:
+    """The most recent business date with a shift, outlet-wide.
+
+    Exists so the open-shift sheet can default to the day *after* the last one entered rather
+    than to today. §4.7 says days are typed in after the fact, so "today" is nearly always
+    wrong, and a hurried tap on it opens a shift that blocks the real day (§6.8, Phase 27).
+
+    `GET /shifts` cannot answer this: it is attendant-scoped, and an attendant's own latest
+    shift is not the tip `POST /shifts` orders against. Only a date leaves here -- no amounts,
+    no names. `None` means no shift has ever been opened, and is not coerced to today: what to
+    suggest in that case is the caller's decision.
+
+    Declared above /shifts/{shift_id} for the reason given at /shifts/current.
+    """
+    latest = shift_service.latest_shift(db, outlet_id=actor.outlet_id)
+    return LatestShiftDate(business_date=latest.business_date if latest else None)
+
+
 @router.get("/shifts", response_model=ShiftPage)
 def list_shifts(
     business_date: date | None = Query(default=None),

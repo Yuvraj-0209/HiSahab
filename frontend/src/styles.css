@@ -1109,3 +1109,75 @@ select.field-control {
 .statement-detail[data-collapsed="true"] {
   display: none;
 }
+
+/* ==========================================================================
+   The date strip (Phase 30)
+   --------------------------------------------------------------------------
+   Ten days, the chosen one centred and larger. Every chip carries its distance from the
+   centre as `--o` and CSS does the rest, so one engine owns each chip's transform: a chip
+   that moves, grows or fades is a CSS transition between two states React rendered, with the
+   gesture spring's own curve (§14, one element one engine). Nothing here runs on first
+   render -- a transition needs a previous state -- and reduced motion collapses it above.
+   ========================================================================== */
+.date-strip {
+  container-type: inline-size;
+  position: relative;
+  height: 5.75rem;
+  /* The ends of the strip melt away rather than stopping at a hard edge. A mask on the
+   * container, not a filter on the moving chips (§14). */
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 14%, #000 86%, transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 14%, #000 86%, transparent 100%);
+}
+.date-strip-chip {
+  --pitch: 10cqw;
+  position: absolute;
+  top: 50%;
+  /* Narrower than its slot, so the chosen day -- scaled up -- has air to grow into rather
+   * than sitting on its neighbours' labels. */
+  left: calc(50% - var(--pitch) * 0.4);
+  width: calc(var(--pitch) * 0.8);
+  height: 3.5rem;
+  margin-top: -1.75rem;
+  /* Distance from the centre, 0 = chosen. Scale and opacity step down with it. */
+  --d: max(var(--o), calc(var(--o) * -1));
+  --s: 1;
+  --a: 1;
+  transform: translate3d(calc(var(--o) * var(--pitch)), 0, 0) scale(var(--s));
+  opacity: var(--a);
+  transition:
+    transform var(--spring-ui-duration) var(--spring-ui),
+    opacity var(--dur-medium) var(--ease-enter);
+  will-change: transform, opacity;
+}
+.date-strip-chip[data-d="0"] { --s: 1.28; z-index: 3; }
+.date-strip-chip[data-d="1"] { --s: 0.98; z-index: 2; }
+.date-strip-chip[data-d="2"] { --s: 0.9; z-index: 1; }
+.date-strip-chip[data-d="3"] { --s: 0.82; }
+.date-strip-chip[data-d="4"] { --s: 0.74; }
+.date-strip-chip[data-d="5"] { --s: 0.68; }
+/* Beyond the ten visible: parked invisible so a chip arriving fades in from the edge. This is
+ * the only opacity in the strip -- a visible, enabled chip must stay at full opacity or its
+ * text stops meeting contrast, so depth is carried by scale and the edge mask instead. */
+.date-strip-chip[data-d="far"] { --s: 0.6; --a: 0; pointer-events: none; }
+
+/* One day's list replacing another's (Phase 30). It arrives from the side the date came from, so
+ * choosing a later day slides the list in from the right -- the same direction the strip moved.
+ * Applied only after a person chose a day, never on the screen's first paint. */
+.day-swap[data-dir="next"] {
+  animation: day-in-next var(--dur-medium) var(--ease-enter) backwards;
+}
+.day-swap[data-dir="prev"] {
+  animation: day-in-prev var(--dur-medium) var(--ease-enter) backwards;
+}
+@keyframes day-in-next {
+  from {
+    opacity: 0;
+    transform: translate3d(14px, 0, 0);
+  }
+}
+@keyframes day-in-prev {
+  from {
+    opacity: 0;
+    transform: translate3d(-14px, 0, 0);
+  }
+}

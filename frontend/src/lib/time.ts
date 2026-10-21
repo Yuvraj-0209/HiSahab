@@ -123,6 +123,26 @@ export function todayAtOutlet(): string {
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
+/** The business date the open-shift sheet should offer: the day after the last shift entered,
+ * never later than today. §4.7: the register is typed up after the fact, so today is nearly
+ * always the wrong default, and a hurried tap on it opens a shift that blocks the real day.
+ * `tip` is the chain's latest business_date, or null if nothing has ever been opened.
+ * Pure `YYYY-MM-DD` calendar arithmetic; the string comparison is valid for ISO dates. */
+export function nextTradingDate(tip: string | null | undefined, today: string): string {
+  if (!tip) return today;
+  const [year = 0, month = 1, day = 1] = tip.split("-").map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
+  return next > today ? today : next;
+}
+
+/** A business date `days` before (negative) or after it, as YYYY-MM-DD. Calendar arithmetic on
+ * a UTC-anchored date, never a local one: a local `Date` built from "2026-10-13" lands on the
+ * 12th for anybody west of UTC and the answer would depend on the phone. */
+export function addDays(value: string, days: number): string {
+  const [year = 0, month = 1, day = 1] = value.slice(0, 10).split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
 /** Relative phrasing for recent activity, falling back quickly to the date: §4.7 says the
  * register is typed up after the fact, so "3 days ago" is worse than the date itself. */
 export function relative(value: string | null | undefined, { absent = UNEXPLAINED }: Absent = {}): string {

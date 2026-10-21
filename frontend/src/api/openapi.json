@@ -3494,6 +3494,59 @@
         "title": "ExpenseUpdate",
         "type": "object"
       },
+      "FlaggedByDateResponse": {
+        "description": "Phase 30. `items` only carries dates inside the requested window that have work;\n`oldest_business_date` is outlet-wide and is null only when nothing at all is waiting.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FlaggedDayResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "oldest_business_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Business Date"
+          }
+        },
+        "required": [
+          "items",
+          "oldest_business_date"
+        ],
+        "title": "FlaggedByDateResponse",
+        "type": "object"
+      },
+      "FlaggedDayResponse": {
+        "properties": {
+          "business_date": {
+            "title": "Business Date",
+            "type": "string"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "total_amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Amount",
+            "type": "string"
+          }
+        },
+        "required": [
+          "business_date",
+          "count",
+          "total_amount"
+        ],
+        "title": "FlaggedDayResponse",
+        "type": "object"
+      },
       "FlaggedExpensePage": {
         "properties": {
           "items": {
@@ -4150,6 +4203,28 @@
           "closing_balance"
         ],
         "title": "ImportResponse",
+        "type": "object"
+      },
+      "LatestShiftDate": {
+        "description": "The `business_date` of the chain's tip, or `None` if nothing has ever been opened.",
+        "properties": {
+          "business_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Business Date"
+          }
+        },
+        "required": [
+          "business_date"
+        ],
+        "title": "LatestShiftDate",
         "type": "object"
       },
       "MeResponse": {
@@ -10556,9 +10631,26 @@
     },
     "/api/v1/expenses/flagged": {
       "get": {
-        "description": "Every unreviewed flagged expense at this outlet, oldest first, cursor-paginated.\n\nA backlog across days is genuinely unbounded, unlike a single shift's handful of rows\n(`GET /shifts/{id}/expenses`), so this is the one expenses endpoint that pages rather\nthan caps. Reuses `app/api/cursor.py`'s `encode_cursor` / `decode_cursor` on\n`(created_at, id)` -- the same pair `fuel_prices` and `fuel_margins` use on\n`effective_from`, since the sort key is a `(TIMESTAMPTZ, UUID)` tuple either way.\n\nManager floor, not attendant: this is the review queue, and \u00a78 gives review to\nmanagers and admins only. Retires a gap Phase 5 carried knowingly -- `nozzle_readings`\nhas had a partial review index since Phase 5 with no endpoint ever running the query\nit was built for; `expenses` does not repeat that.",
+        "description": "Every unreviewed flagged expense at this outlet, cursor-paginated.\n\n**Phase 30:** `business_date` narrows the queue to one trading day, which is how the\nreview screen shows it. A filtered day reads **oldest first** (the order the rows were\nentered in); the unfiltered backlog stays newest first, as it has been. A row a reversal\nhas cancelled is excluded in both, to match what blocks the shift lock (\u00a76.7).\n\nA backlog across days is genuinely unbounded, unlike a single shift's handful of rows\n(`GET /shifts/{id}/expenses`), so this is the one expenses endpoint that pages rather\nthan caps. Reuses `app/api/cursor.py`'s `encode_cursor` / `decode_cursor` on\n`(created_at, id)` -- the same pair `fuel_prices` and `fuel_margins` use on\n`effective_from`, since the sort key is a `(TIMESTAMPTZ, UUID)` tuple either way.\n\nManager floor, not attendant: this is the review queue, and \u00a78 gives review to\nmanagers and admins only. Retires a gap Phase 5 carried knowingly -- `nozzle_readings`\nhas had a partial review index since Phase 5 with no endpoint ever running the query\nit was built for; `expenses` does not repeat that.",
         "operationId": "list_flagged_expenses_api_v1_expenses_flagged_get",
         "parameters": [
+          {
+            "in": "query",
+            "name": "business_date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Business Date"
+            }
+          },
           {
             "in": "query",
             "name": "limit",
@@ -10616,6 +10708,65 @@
           }
         ],
         "summary": "List Flagged Expenses",
+        "tags": [
+          "expenses"
+        ]
+      }
+    },
+    "/api/v1/expenses/flagged/by-date": {
+      "get": {
+        "description": "How many expenses wait for review on each day, for the date strip. Manager floor.\n\nReads only: it is the same queue `GET /expenses/flagged` lists, counted. It writes\nnothing and creates no flag -- a count is not a review.",
+        "operationId": "flagged_expenses_by_date_api_v1_expenses_flagged_by_date_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "To",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlaggedByDateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Flagged Expenses By Date",
         "tags": [
           "expenses"
         ]
@@ -12189,6 +12340,33 @@
           }
         ],
         "summary": "Read Current Shift",
+        "tags": [
+          "shifts"
+        ]
+      }
+    },
+    "/api/v1/shifts/latest-date": {
+      "get": {
+        "description": "The most recent business date with a shift, outlet-wide.\n\nExists so the open-shift sheet can default to the day *after* the last one entered rather\nthan to today. \u00a74.7 says days are typed in after the fact, so \"today\" is nearly always\nwrong, and a hurried tap on it opens a shift that blocks the real day (\u00a76.8, Phase 27).\n\n`GET /shifts` cannot answer this: it is attendant-scoped, and an attendant's own latest\nshift is not the tip `POST /shifts` orders against. Only a date leaves here -- no amounts,\nno names. `None` means no shift has ever been opened, and is not coerced to today: what to\nsuggest in that case is the caller's decision.\n\nDeclared above /shifts/{shift_id} for the reason given at /shifts/current.",
+        "operationId": "read_latest_shift_date_api_v1_shifts_latest_date_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LatestShiftDate"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Latest Shift Date",
         "tags": [
           "shifts"
         ]

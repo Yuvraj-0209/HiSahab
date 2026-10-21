@@ -41,6 +41,7 @@ import { SelectField, TextField, useForm } from "../ui/form";
 import { Button, Card, Empty, ErrorCard, ListRow, Pill, SectionLabel, Skeleton, TruncationNotice } from "../ui/primitives";
 import { ReceiptButton } from "../ui/receipt";
 import { ReceiptUpload } from "../ui/ReceiptUpload";
+import { ReviewForm } from "../ui/ReviewExpense";
 import { isLive, ReversalBadge, ReversalForm } from "../ui/reversal";
 import { Sheet } from "../ui/Sheet";
 import { notify } from "../ui/toast";
@@ -351,51 +352,6 @@ function ExpenseForm({
       </p>
       <Button variant="primary" block disabled={busy} onClick={() => void submit()}>
         {busy ? "Saving…" : existing ? "Save" : "Record expense"}
-      </Button>
-    </div>
-  );
-}
-
-function ReviewForm({ shiftId, expense, onDone }: { shiftId: string; expense: Expense; onDone: () => void }) {
-  const refresh = useRefreshApi();
-  const form = useForm({ review_note: "" });
-  const [busy, setBusy] = useState(false);
-
-  async function submit() {
-    form.clearErrors();
-    setBusy(true);
-    try {
-      await api.patch(`/shifts/${shiftId}/expenses/${expense.id}/review`, form.values);
-      onDone();
-      notify.success("Reviewed.");
-      await refresh();
-    } catch (error) {
-      reportFailure(error, form);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="rounded-[var(--radius-control)] bg-surface-sunken px-4 py-3">
-        <p className="tabular text-amount text-ink">
-          <Amount value={expense.amount} />
-        </p>
-        <p className="text-footnote text-ink-muted">{expense.description}</p>
-      </div>
-      <p className="text-footnote text-ink-muted">
-        Flags are never cleared automatically, not even when a reversal drops the day's total back under the threshold.
-      </p>
-      <TextField
-        form={form}
-        name="review_note"
-        label="Review note"
-        required
-        hint="3 to 500 characters. Clearing a flag is a decision somebody signs their name to."
-      />
-      <Button variant="primary" block disabled={busy} onClick={() => void submit()}>
-        {busy ? "Saving…" : "Mark reviewed"}
       </Button>
     </div>
   );

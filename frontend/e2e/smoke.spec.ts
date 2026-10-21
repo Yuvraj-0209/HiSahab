@@ -36,9 +36,11 @@ async function settle(page: Page) {
     page.waitForFunction(
       () =>
         document.querySelector("[aria-busy='true']") === null &&
-        Array.from(document.querySelectorAll<HTMLElement>("main, main *, [data-arrive]")).every(
-          (node) => getComputedStyle(node).opacity === "1",
-        ) &&
+        Array.from(document.querySelectorAll<HTMLElement>("main, main *, [data-arrive]"))
+          // The date strip parks its out-of-window chips invisible on purpose (Phase 30); they are
+          // aria-hidden and never read, so they are not an entrance to wait for.
+          .filter((node) => node.closest(".date-strip-chip[data-d='far']") === null)
+          .every((node) => getComputedStyle(node).opacity === "1") &&
         document
           .getAnimations()
           // Only time-based animations finish. A scroll-driven one (the large titles) is tied to
@@ -367,6 +369,27 @@ test("today: no open shift", async ({ page }) => {
   // The browser logs the 404 for /shifts/current as a failed resource; that 404 is the API
   // saying "no open shift", which is the state under test.
   expect(problems.filter((p) => !p.includes("404"))).toEqual([]);
+});
+
+test("today: the open-shift sheet starts on the day after the last shift entered", async ({ page }) => {
+  // Days are typed in after the fact (§4.7); a sheet that opens on today invites a hurried tap
+  // that opens a shift blocking the real day. Ten days back keeps the test clear of midnight.
+  const day = (offset: number) => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - offset);
+    return d.toISOString().slice(0, 10);
+  };
+  await signedIn(page, {
+    role: "manager",
+    responses: {
+      "GET /shifts/current": new Failure(404, "NO_OPEN_SHIFT"),
+      "GET /shifts": { items: [], next_cursor: null },
+      "GET /shifts/latest-date": { business_date: day(10) },
+    },
+  });
+  await page.goto("/#/today");
+  await page.getByRole("button", { name: "Open a shift" }).click();
+  await expect(page.getByLabel("Business date")).toHaveValue(day(9));
 });
 
 /* --- voiding an empty shift (Phase 27, §6.8) --------------------------------------------- */
@@ -718,6 +741,21 @@ for (const [name, path] of [
     expect(problems).toEqual([]);
   });
 }
+
+test("flagged expenses: the date strip opens on the oldest waiting day and steps with the keyboard", async ({ page }) => {
+  const problems = await watch(page);
+  await signedIn(page, { role: "admin", responses: cashResponses() });
+  await page.goto("/#/expenses/flagged");
+
+  const chosen = page.getByRole("radio", { checked: true });
+  await expect(chosen).toHaveCount(1);
+  await expect(chosen).toHaveAccessibleName(/flagged$/);
+  const before = await chosen.getAttribute("aria-label");
+  await chosen.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByRole("radio", { checked: true })).not.toHaveAccessibleName(before ?? "");
+  expect(problems).toEqual([]);
+});
 
 test("cash: only the oldest unreconciled day can be reconciled, and reconciling writes the day", async ({ page }) => {
   const problems = await watch(page);
