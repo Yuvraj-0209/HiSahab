@@ -803,6 +803,23 @@ def reopen_shift(
     shift = access.shift
     _guard_transition(shift, ShiftStatus.open)
 
+    # §5.2: at most one open shift per outlet -- the same check `open_shift` makes above.
+    # Reopening was the one route back to `open` that skipped it. On 17 November 2026 an
+    # admin reopened 4 November while 6 November was open, and with two open shifts
+    # `shift_service.open_shift` raised MultipleResultsFound, so Today and Cash failed with
+    # a 500 (tests/test_shift_reopen_one_open.py). Close the open one first, then reopen.
+    already_open = shift_service.open_shift(db, outlet_id=shift.outlet_id)
+    if already_open is not None:
+        raise AppError(
+            status_code=409,
+            code="SHIFT_ALREADY_OPEN",
+            detail=(
+                f"Shift {already_open.sequence} on "
+                f"{already_open.business_date.isoformat()} is still open. "
+                "Close it first, then reopen this one."
+            ),
+        )
+
     before = _audit_snapshot(shift)
     shift.status = ShiftStatus.open.value
     shift.closed_by = None
